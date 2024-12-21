@@ -2,7 +2,6 @@ package rpc
 
 import (
 	"context"
-	"crypto/subtle"
 	"strings"
 
 	petname "github.com/dustinkirkland/golang-petname"
@@ -39,7 +38,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 
 	singleton.UserLock.RLock()
 	userId, ok := singleton.AgentSecretToUserId[clientSecret]
-	if !ok && subtle.ConstantTimeCompare([]byte(clientSecret), []byte(singleton.Conf.AgentSecretKey)) != 1 {
+	if !ok && clientSecret != singleton.Conf.AgentSecretKey {
 		singleton.UserLock.RUnlock()
 		model.BlockIP(singleton.DB, ip, model.WAFBlockReasonTypeAgentAuthFail, model.BlockIDgRPC)
 		return 0, status.Error(codes.Unauthenticated, "客户端认证失败")

@@ -11,12 +11,15 @@ var (
 	UserIdToAgentSecret map[uint64]string
 	AgentSecretToUserId map[string]uint64
 
+	UserRoleMap map[uint64]uint8
+
 	UserLock sync.RWMutex
 )
 
 func initUser() {
 	UserIdToAgentSecret = make(map[uint64]string)
 	AgentSecretToUserId = make(map[string]uint64)
+	UserRoleMap = make(map[uint64]uint8)
 
 	var users []model.User
 	DB.Find(&users)
@@ -24,6 +27,7 @@ func initUser() {
 	for _, u := range users {
 		UserIdToAgentSecret[u.ID] = u.AgentSecret
 		AgentSecretToUserId[u.AgentSecret] = u.ID
+		UserRoleMap[u.ID] = u.Role
 	}
 }
 
@@ -37,6 +41,7 @@ func OnUserUpdate(u *model.User) {
 
 	UserIdToAgentSecret[u.ID] = u.AgentSecret
 	AgentSecretToUserId[u.AgentSecret] = u.ID
+	UserRoleMap[u.ID] = u.Role
 }
 
 func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) error {
