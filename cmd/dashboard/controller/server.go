@@ -103,20 +103,18 @@ func updateServer(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/server [post]
 func batchDeleteServer(c *gin.Context) (any, error) {
-	var serversRaw []uint64
-	if err := c.ShouldBindJSON(&serversRaw); err != nil {
+	var servers []uint64
+	if err := c.ShouldBindJSON(&servers); err != nil {
 		return nil, err
 	}
 
-	var servers []uint64
 	singleton.ServerLock.RLock()
-	for _, sid := range serversRaw {
+	for _, sid := range servers {
 		if s, ok := singleton.ServerList[sid]; ok {
 			if !s.HasPermission(c) {
 				singleton.ServerLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			servers = append(servers, s.ID)
 		}
 	}
 	singleton.ServerLock.RUnlock()

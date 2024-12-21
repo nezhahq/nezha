@@ -177,21 +177,19 @@ func updateDDNS(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/ddns [post]
 func batchDeleteDDNS(c *gin.Context) (any, error) {
-	var ddnsConfigsr []uint64
+	var ddnsConfigs []uint64
 
-	if err := c.ShouldBindJSON(&ddnsConfigsr); err != nil {
+	if err := c.ShouldBindJSON(&ddnsConfigs); err != nil {
 		return nil, err
 	}
 
-	var ddnsConfigs []uint64
 	singleton.DDNSCacheLock.RLock()
-	for _, pid := range ddnsConfigsr {
+	for _, pid := range ddnsConfigs {
 		if p, ok := singleton.DDNSCache[pid]; ok {
 			if !p.HasPermission(c) {
 				singleton.DDNSCacheLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			ddnsConfigs = append(ddnsConfigs, p.ID)
 		}
 	}
 	singleton.DDNSCacheLock.RUnlock()

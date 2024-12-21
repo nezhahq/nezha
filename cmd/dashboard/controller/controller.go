@@ -129,7 +129,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/nat/:id", commonHandler(updateNAT))
 	auth.POST("/batch-delete/nat", commonHandler(batchDeleteNAT))
 
-	auth.GET("/waf", commonHandler(listBlockedAddress))
+	auth.GET("/waf", pCommonHandler(listBlockedAddress))
 	auth.POST("/batch-delete/waf", adminHandler(batchDeleteBlockedAddress))
 
 	auth.PATCH("/setting", adminHandler(updateConfig))
@@ -153,6 +153,7 @@ func newErrorResponse(err error) model.CommonResponse[any] {
 }
 
 type handlerFunc[T any] func(c *gin.Context) (T, error)
+type pHandlerFunc[S ~[]E, E any] func(c *gin.Context) (*model.Value[S], error)
 
 // There are many error types in gorm, so create a custom type to represent all
 // gorm errors here instead
@@ -244,6 +245,18 @@ func listHandler[S ~[]E, E model.CommonInterface](handler handlerFunc[S]) func(*
 		}
 
 		c.JSON(http.StatusOK, model.CommonResponse[S]{Success: true, Data: filter(c, data)})
+	}
+}
+
+func pCommonHandler[S ~[]E, E any](handler pHandlerFunc[S, E]) func(*gin.Context) {
+	return func(c *gin.Context) {
+		data, err := handler(c)
+		if err != nil {
+			c.JSON(http.StatusOK, newErrorResponse(err))
+			return
+		}
+
+		c.JSON(http.StatusOK, model.PaginatedResponse[S, E]{Success: true, Data: data})
 	}
 }
 

@@ -195,22 +195,20 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/notification-group [post]
 func batchDeleteNotificationGroup(c *gin.Context) (any, error) {
-	var ngnr []uint64
-	if err := c.ShouldBindJSON(&ngnr); err != nil {
+	var ngn []uint64
+	if err := c.ShouldBindJSON(&ngn); err != nil {
 		return nil, err
 	}
 
 	var ng []model.NotificationGroup
-	if err := singleton.DB.Where("id in (?)", ngnr).Find(&ng).Error; err != nil {
+	if err := singleton.DB.Where("id in (?)", ngn).Find(&ng).Error; err != nil {
 		return nil, err
 	}
 
-	var ngn []uint64
 	for _, n := range ng {
 		if !n.HasPermission(c) {
 			return nil, singleton.Localizer.ErrorT("permission denied")
 		}
-		ngn = append(ngn, n.ID)
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {

@@ -188,20 +188,18 @@ func manualTriggerCron(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/cron [post]
 func batchDeleteCron(c *gin.Context) (any, error) {
-	var crr []uint64
-	if err := c.ShouldBindJSON(&crr); err != nil {
+	var cr []uint64
+	if err := c.ShouldBindJSON(&cr); err != nil {
 		return nil, err
 	}
 
-	var cr []uint64
 	singleton.CronLock.RLock()
-	for _, crID := range crr {
+	for _, crID := range cr {
 		if crn, ok := singleton.Crons[crID]; ok {
 			if !crn.HasPermission(c) {
 				singleton.CronLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			cr = append(cr, crn.ID)
 		}
 	}
 	singleton.CronLock.RUnlock()

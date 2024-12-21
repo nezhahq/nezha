@@ -128,20 +128,18 @@ func updateNAT(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/nat [post]
 func batchDeleteNAT(c *gin.Context) (any, error) {
-	var nr []uint64
-	if err := c.ShouldBindJSON(&nr); err != nil {
+	var n []uint64
+	if err := c.ShouldBindJSON(&n); err != nil {
 		return nil, err
 	}
 
-	var n []uint64
 	singleton.NATCacheRwLock.RLock()
-	for _, id := range nr {
+	for _, id := range n {
 		if p, ok := singleton.NATCache[singleton.NATIDToDomain[id]]; ok {
 			if !p.HasPermission(c) {
 				singleton.NATCacheRwLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			n = append(n, p.ID)
 		}
 	}
 	singleton.NATCacheRwLock.RUnlock()

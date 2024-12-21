@@ -153,19 +153,17 @@ func updateNotification(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/notification [post]
 func batchDeleteNotification(c *gin.Context) (any, error) {
-	var nr []uint64
-	if err := c.ShouldBindJSON(&nr); err != nil {
+	var n []uint64
+	if err := c.ShouldBindJSON(&n); err != nil {
 		return nil, err
 	}
 
-	var n []uint64
 	singleton.NotificationsLock.RLock()
-	for _, nid := range nr {
+	for _, nid := range n {
 		if ns, ok := singleton.NotificationMap[nid]; ok {
 			if !ns.HasPermission(c) {
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			n = append(n, ns.ID)
 		}
 	}
 	singleton.NotificationsLock.RUnlock()

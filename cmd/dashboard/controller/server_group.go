@@ -192,22 +192,20 @@ func updateServerGroup(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/server-group [post]
 func batchDeleteServerGroup(c *gin.Context) (any, error) {
-	var sgsr []uint64
-	if err := c.ShouldBindJSON(&sgsr); err != nil {
+	var sgs []uint64
+	if err := c.ShouldBindJSON(&sgs); err != nil {
 		return nil, err
 	}
 
 	var sg []model.ServerGroup
-	if err := singleton.DB.Where("id in (?)", sgsr).Find(&sg).Error; err != nil {
+	if err := singleton.DB.Where("id in (?)", sgs).Find(&sg).Error; err != nil {
 		return nil, err
 	}
 
-	var sgs []uint64
 	for _, s := range sg {
 		if !s.HasPermission(c) {
 			return nil, singleton.Localizer.ErrorT("permission denied")
 		}
-		sgs = append(sgs, s.ID)
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {

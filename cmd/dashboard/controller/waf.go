@@ -20,7 +20,7 @@ import (
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
 // @Router /waf [get]
-func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
+func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
 	limit, err := strconv.Atoi(c.Query("limit"))
 	if err != nil || limit < 1 {
 		limit = 25
@@ -36,7 +36,19 @@ func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
 		return nil, err
 	}
 
-	return waf, nil
+	var total int64
+	if err := singleton.DB.Model(&model.WAF{}).Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	return &model.Value[[]*model.WAF]{
+		Value: waf,
+		Pagination: model.Pagination{
+			Offset: offset,
+			Limit:  limit,
+			Total:  total,
+		},
+	}, nil
 }
 
 // Batch delete blocked addresses

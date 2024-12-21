@@ -322,20 +322,18 @@ func updateService(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/service [post]
 func batchDeleteService(c *gin.Context) (any, error) {
-	var idsr []uint64
-	if err := c.ShouldBindJSON(&idsr); err != nil {
+	var ids []uint64
+	if err := c.ShouldBindJSON(&ids); err != nil {
 		return nil, err
 	}
 
-	var ids []uint64
 	singleton.ServiceSentinelShared.ServicesLock.RLock()
-	for _, id := range idsr {
+	for _, id := range ids {
 		if ss, ok := singleton.ServiceSentinelShared.Services[id]; ok {
 			if !ss.HasPermission(c) {
 				singleton.ServiceSentinelShared.ServicesLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
-			ids = append(ids, ss.ID)
 		}
 	}
 	singleton.ServiceSentinelShared.ServicesLock.RUnlock()
