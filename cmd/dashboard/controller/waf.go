@@ -18,7 +18,7 @@ import (
 // @Param limit query uint false "Page limit"
 // @Param offset query uint false "Page offset"
 // @Produce json
-// @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
+// @Success 200 {object} model.PaginatedResponse[[]model.WAFApiMock, model.WAFApiMock]
 // @Router /waf [get]
 func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
 	limit, err := strconv.Atoi(c.Query("limit"))

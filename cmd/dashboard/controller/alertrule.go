@@ -62,7 +62,7 @@ func createAlertRule(c *gin.Context) (uint64, error) {
 	r.TriggerMode = arf.TriggerMode
 	r.Enable = &enable
 
-	if err := validateRule(c, &r); err != nil {
+	if err := validateRule(&r); err != nil {
 		return 0, err
 	}
 
@@ -116,7 +116,7 @@ func updateAlertRule(c *gin.Context) (any, error) {
 	r.TriggerMode = arf.TriggerMode
 	r.Enable = &enable
 
-	if err := validateRule(c, &r); err != nil {
+	if err := validateRule(&r); err != nil {
 		return 0, err
 	}
 
@@ -164,34 +164,9 @@ func batchDeleteAlertRule(c *gin.Context) (any, error) {
 	return nil, nil
 }
 
-func validateRule(c *gin.Context, r *model.AlertRule) error {
+func validateRule(r *model.AlertRule) error {
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
-			singleton.ServerLock.RLock()
-			isCoverAll := rule.Cover == model.RuleCoverAll
-			isCoverIgnoreAll := rule.Cover == model.RuleCoverIgnoreAll
-			for s, enabled := range rule.Ignore {
-				if isCoverAll {
-					for id, server := range singleton.ServerList {
-						if enabled && id == s {
-							continue
-						}
-						if !server.HasPermission(c) {
-							singleton.ServerLock.RUnlock()
-							return singleton.Localizer.ErrorT("permission denied")
-						}
-					}
-				} else if isCoverIgnoreAll && enabled {
-					if server, ok := singleton.ServerList[s]; ok {
-						if !server.HasPermission(c) {
-							singleton.ServerLock.RUnlock()
-							return singleton.Localizer.ErrorT("permission denied")
-						}
-					}
-				}
-			}
-			singleton.ServerLock.RUnlock()
-
 			if !rule.IsTransferDurationRule() {
 				if rule.Duration < 3 {
 					return singleton.Localizer.ErrorT("duration need to be at least 3")

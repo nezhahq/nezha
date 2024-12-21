@@ -100,12 +100,28 @@ func DispatchTask(serviceSentinelDispatchBus <-chan model.Service) {
 				continue
 			}
 			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
-				singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				var role uint8 = model.RoleMember
+				server := singleton.SortedServerList[workedServerIndex]
+				if err := singleton.DB.Model(&model.User{}).Select("role").Where("id = ?", task.UserID).Limit(1).Scan(&role).Error; err != nil {
+					workedServerIndex++
+					continue
+				}
+				if task.UserID == server.UserID || role == model.RoleAdmin {
+					singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				}
 				workedServerIndex++
 				continue
 			}
 			if task.Cover == model.ServiceCoverAll && !task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
-				singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				var role uint8 = model.RoleMember
+				server := singleton.SortedServerList[workedServerIndex]
+				if err := singleton.DB.Model(&model.User{}).Select("role").Where("id = ?", task.UserID).Limit(1).Scan(&role).Error; err != nil {
+					workedServerIndex++
+					continue
+				}
+				if task.UserID == server.UserID || role == model.RoleAdmin {
+					singleton.SortedServerList[workedServerIndex].TaskStream.Send(task.PB())
+				}
 				workedServerIndex++
 				continue
 			}
