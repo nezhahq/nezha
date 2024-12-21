@@ -19,6 +19,10 @@ type User struct {
 }
 
 func (u *User) BeforeSave(tx *gorm.DB) error {
+	if u.AgentSecret != "" {
+		return nil
+	}
+
 	key, err := utils.GenerateRandomString(32)
 	if err != nil {
 		return err

@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"strconv"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
@@ -13,12 +15,21 @@ import (
 // @Schemes
 // @Description List server
 // @Tags auth required
+// @Param page query uint false "Page number"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
 // @Router /waf [get]
 func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
+	const pageSize = 25
+
+	page, err := strconv.ParseUint(c.Query("page"), 10, 64)
+	if err != nil || page < 1 {
+		page = 1
+	}
+	offset := (page - 1) * pageSize
+
 	var waf []*model.WAF
-	if err := singleton.DB.Find(&waf).Error; err != nil {
+	if err := singleton.DB.Limit(pageSize).Offset(int(offset)).Find(&waf).Error; err != nil {
 		return nil, err
 	}
 

@@ -88,18 +88,21 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 		}
 
 		var user model.User
+		realip := c.GetString(model.CtxKeyRealIPStr)
 		if err := singleton.DB.Select("id", "password").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeLoginFail)
+				model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
 			}
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginVals.Password)); err != nil {
-			model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeLoginFail)
+			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			return nil, jwt.ErrFailedAuthentication
 		}
 
+		model.ClearIP(singleton.DB, realip, model.BlockIDUnknownUser)
+		model.ClearIP(singleton.DB, realip, int64(user.ID))
 		return utils.Itoa(user.ID), nil
 	}
 }
@@ -169,10 +172,10 @@ func optionalAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 		identity := mw.IdentityHandler(c)
 
 		if identity != nil {
-			model.ClearIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr))
+			model.ClearIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
 		} else {
-			if err := model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeBruteForceToken); err != nil {
+			if err := model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken); err != nil {
 				waf.ShowBlockPage(c, err)
 				return
 			}
