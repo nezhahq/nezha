@@ -23,19 +23,19 @@ const (
 )
 
 type WAFApiMock struct {
-	ID              uint64 `json:"id,omitempty"`
 	IP              string `json:"ip,omitempty"`
+	BlockIdentifier int64  `json:"block_identifier,omitempty"`
 	BlockReason     uint8  `json:"block_reason,omitempty"`
 	BlockTimestamp  uint64 `json:"block_timestamp,omitempty"`
-	BlockIdentifier uint64 `json:"block_identifier,omitempty"`
+	Count           uint64 `json:"count,omitempty"`
 }
 
 type WAF struct {
-	ID              uint64 `gorm:"primaryKey" json:"id,omitempty"`
-	IP              []byte `gorm:"type:binary(16);index:idx_block_identifier" json:"ip,omitempty"`
+	IP              []byte `gorm:"type:binary(16);primaryKey" json:"ip,omitempty"`
+	BlockIdentifier int64  `gorm:"primaryKey" json:"block_identifier,omitempty"`
 	BlockReason     uint8  `json:"block_reason,omitempty"`
-	BlockTimestamp  uint64 `json:"block_timestamp,omitempty"`
-	BlockIdentifier int64  `gorm:"index:idx_block_identifier" json:"block_identifier,omitempty"`
+	BlockTimestamp  uint64 `gorm:"index" json:"block_timestamp,omitempty"`
+	Count           uint64 `json:"count,omitempty"`
 }
 
 func (w *WAF) TableName() string {
@@ -52,7 +52,7 @@ func CheckIP(db *gorm.DB, ip string) error {
 	}
 
 	var blockTimestamp uint64
-	result := db.Model(&WAF{}).Select("block_timestamp").Order("id desc").Where("ip = ?", ipBinary).Limit(1).Find(&blockTimestamp)
+	result := db.Model(&WAF{}).Order("block_timestamp desc").Select("block_timestamp").Where("ip = ?", ipBinary).Limit(1).Find(&blockTimestamp)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -62,8 +62,8 @@ func CheckIP(db *gorm.DB, ip string) error {
 		return nil
 	}
 
-	var count int64
-	if err := db.Model(&WAF{}).Where("ip = ?", ipBinary).Count(&count).Error; err != nil {
+	var count uint64
+	if err := db.Model(&WAF{}).Select("SUM(count)").Where("ip = ?", ipBinary).Scan(&count).Error; err != nil {
 		return err
 	}
 
@@ -110,18 +110,17 @@ func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 	}
 	w := WAF{
 		IP:              ipBinary,
-		BlockReason:     reason,
-		BlockTimestamp:  uint64(time.Now().Unix()),
 		BlockIdentifier: uid,
 	}
+	now := uint64(time.Now().Unix())
 	return db.Transaction(func(tx *gorm.DB) error {
-		var lastRecord WAF
-		if err := tx.Model(&WAF{}).Order("id desc").Where("ip = ?", ipBinary).First(&lastRecord).Error; err != nil {
-			if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return err
-			}
+		if err := tx.Where(&w).Attrs(WAF{
+			BlockReason:    reason,
+			BlockTimestamp: now,
+		}).FirstOrCreate(&w).Error; err != nil {
+			return err
 		}
-		return tx.Create(&w).Error
+		return tx.Exec("UPDATE nz_waf SET count = count + 1, block_reason = ?, block_timestamp = ? WHERE ip = ? and block_identifier = ?", reason, now, ipBinary, uid).Error
 	})
 }
 
