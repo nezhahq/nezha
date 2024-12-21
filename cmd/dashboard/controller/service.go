@@ -364,20 +364,8 @@ func validateServers(c *gin.Context, ss *model.Service) error {
 	singleton.ServerLock.RLock()
 	defer singleton.ServerLock.RUnlock()
 
-	isCoverAll := ss.Cover == model.ServiceCoverAll
-	isCoverIgnoreAll := ss.Cover == model.ServiceCoverIgnoreAll
-
 	for s, enabled := range ss.SkipServers {
-		if isCoverAll {
-			for id, server := range singleton.ServerList {
-				if enabled && id == s {
-					continue
-				}
-				if !server.HasPermission(c) {
-					return singleton.Localizer.ErrorT("permission denied")
-				}
-			}
-		} else if isCoverIgnoreAll && enabled {
+		if enabled {
 			if server, ok := singleton.ServerList[s]; ok {
 				if !server.HasPermission(c) {
 					return singleton.Localizer.ErrorT("permission denied")
