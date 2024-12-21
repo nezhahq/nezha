@@ -52,7 +52,7 @@ type CommonInterface interface {
 	HasPermission(*gin.Context) bool
 }
 
-func FindUserID[S ~[]E, E CommonInterface](s S, uid uint64) []uint64 {
+func FindByUserID[S ~[]E, E CommonInterface](s S, uid uint64) []uint64 {
 	var list []uint64
 	for _, v := range s {
 		if v.GetUserID() == uid {

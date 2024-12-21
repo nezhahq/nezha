@@ -55,7 +55,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 	for _, uid := range id {
 		err := DB.Transaction(func(tx *gorm.DB) error {
 			CronLock.RLock()
-			crons = model.FindUserID(CronList, uid)
+			crons = model.FindByUserID(CronList, uid)
 			CronLock.RUnlock()
 
 			cron = len(crons) > 0
@@ -66,7 +66,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 			}
 
 			SortedServerLock.RLock()
-			servers = model.FindUserID(SortedServerList, uid)
+			servers = model.FindByUserID(SortedServerList, uid)
 			SortedServerLock.RUnlock()
 
 			server = len(servers) > 0

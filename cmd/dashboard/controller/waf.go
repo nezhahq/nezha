@@ -27,8 +27,8 @@ func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
 	}
 
 	offset, err := strconv.Atoi(c.Query("offset"))
-	if err != nil || offset < 1 {
-		offset = 1
+	if err != nil || offset < 0 {
+		offset = 0
 	}
 
 	var waf []*model.WAF
