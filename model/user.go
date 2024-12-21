@@ -18,6 +18,12 @@ type User struct {
 	AgentSecret string `json:"agent_secret,omitempty" gorm:"type:char(32)"`
 }
 
+type UserInfo struct {
+	Role        uint8
+	_           [3]byte
+	AgentSecret string
+}
+
 func (u *User) BeforeSave(tx *gorm.DB) error {
 	if u.AgentSecret != "" {
 		return nil

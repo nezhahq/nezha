@@ -144,9 +144,11 @@ func checkStatus() {
 		for _, server := range ServerList {
 			// 监测点
 			UserLock.RLock()
-			role, ok := UserRoleMap[alert.UserID]
-			if !ok {
+			var role uint8
+			if u, ok := UserInfoMap[server.UserID]; !ok {
 				role = model.RoleMember
+			} else {
+				role = u.Role
 			}
 			UserLock.RUnlock()
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.

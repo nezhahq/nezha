@@ -102,9 +102,11 @@ func DispatchTask(serviceSentinelDispatchBus <-chan model.Service) {
 			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
 				server := singleton.SortedServerList[workedServerIndex]
 				singleton.UserLock.RLock()
-				role, ok := singleton.UserRoleMap[server.UserID]
-				if !ok {
+				var role uint8
+				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
 					role = model.RoleMember
+				} else {
+					role = u.Role
 				}
 				singleton.UserLock.RUnlock()
 				if task.UserID == server.UserID || role == model.RoleAdmin {
@@ -116,9 +118,11 @@ func DispatchTask(serviceSentinelDispatchBus <-chan model.Service) {
 			if task.Cover == model.ServiceCoverAll && !task.SkipServers[singleton.SortedServerList[workedServerIndex].ID] {
 				server := singleton.SortedServerList[workedServerIndex]
 				singleton.UserLock.RLock()
-				role, ok := singleton.UserRoleMap[server.UserID]
-				if !ok {
+				var role uint8
+				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
 					role = model.RoleMember
+				} else {
+					role = u.Role
 				}
 				singleton.UserLock.RUnlock()
 				if task.UserID == server.UserID || role == model.RoleAdmin {

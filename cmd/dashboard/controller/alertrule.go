@@ -168,13 +168,11 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
 			singleton.ServerLock.RLock()
-			for s, enabled := range rule.Ignore {
-				if enabled {
-					if server, ok := singleton.ServerList[s]; ok {
-						if !server.HasPermission(c) {
-							singleton.ServerLock.RUnlock()
-							return singleton.Localizer.ErrorT("permission denied")
-						}
+			for s := range rule.Ignore {
+				if server, ok := singleton.ServerList[s]; ok {
+					if !server.HasPermission(c) {
+						singleton.ServerLock.RUnlock()
+						return singleton.Localizer.ErrorT("permission denied")
 					}
 				}
 			}

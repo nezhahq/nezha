@@ -8,26 +8,25 @@ import (
 )
 
 var (
-	UserIdToAgentSecret map[uint64]string
+	UserInfoMap         map[uint64]model.UserInfo
 	AgentSecretToUserId map[string]uint64
-
-	UserRoleMap map[uint64]uint8
 
 	UserLock sync.RWMutex
 )
 
 func initUser() {
-	UserIdToAgentSecret = make(map[uint64]string)
+	UserInfoMap = make(map[uint64]model.UserInfo)
 	AgentSecretToUserId = make(map[string]uint64)
-	UserRoleMap = make(map[uint64]uint8)
 
 	var users []model.User
 	DB.Find(&users)
 
 	for _, u := range users {
-		UserIdToAgentSecret[u.ID] = u.AgentSecret
+		UserInfoMap[u.ID] = model.UserInfo{
+			Role:        u.Role,
+			AgentSecret: u.AgentSecret,
+		}
 		AgentSecretToUserId[u.AgentSecret] = u.ID
-		UserRoleMap[u.ID] = u.Role
 	}
 }
 
@@ -39,9 +38,11 @@ func OnUserUpdate(u *model.User) {
 		return
 	}
 
-	UserIdToAgentSecret[u.ID] = u.AgentSecret
+	UserInfoMap[u.ID] = model.UserInfo{
+		Role:        u.Role,
+		AgentSecret: u.AgentSecret,
+	}
 	AgentSecretToUserId[u.AgentSecret] = u.ID
-	UserRoleMap[u.ID] = u.Role
 }
 
 func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) error {
@@ -117,9 +118,9 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 			OnServerDelete(servers)
 		}
 
-		secret := UserIdToAgentSecret[uid]
+		secret := UserInfoMap[uid].AgentSecret
 		delete(AgentSecretToUserId, secret)
-		delete(UserIdToAgentSecret, uid)
+		delete(UserInfoMap, uid)
 	}
 
 	if cron {
