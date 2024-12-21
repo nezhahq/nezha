@@ -15,21 +15,24 @@ import (
 // @Schemes
 // @Description List server
 // @Tags auth required
-// @Param page query uint false "Page number"
+// @Param limit query uint false "Page limit"
+// @Param offset query uint false "Page offset"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
 // @Router /waf [get]
 func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
-	const pageSize = 25
-
-	page, err := strconv.ParseUint(c.Query("page"), 10, 64)
-	if err != nil || page < 1 {
-		page = 1
+	limit, err := strconv.ParseUint(c.Query("limit"), 10, 64)
+	if err != nil || limit < 1 {
+		limit = 25
 	}
-	offset := (page - 1) * pageSize
+
+	offset, err := strconv.ParseUint(c.Query("offset"), 10, 64)
+	if err != nil || offset < 1 {
+		offset = 1
+	}
 
 	var waf []*model.WAF
-	if err := singleton.DB.Limit(pageSize).Offset(int(offset)).Find(&waf).Error; err != nil {
+	if err := singleton.DB.Limit(int(limit)).Offset(int(offset)).Find(&waf).Error; err != nil {
 		return nil, err
 	}
 

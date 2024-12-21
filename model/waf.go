@@ -52,8 +52,8 @@ func CheckIP(db *gorm.DB, ip string) error {
 	}
 
 	var blockTimestamp uint64
-	result := db.Model(&WAF{}).Select("block_timestamp").Order("id desc").Where("ip = ?", ipBinary).First(&blockTimestamp)
-	if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+	result := db.Model(&WAF{}).Select("block_timestamp").Order("id desc").Where("ip = ?", ipBinary).Limit(1).Find(&blockTimestamp)
+	if result.Error != nil {
 		return result.Error
 	}
 
