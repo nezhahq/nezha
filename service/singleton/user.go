@@ -39,50 +39,65 @@ func OnUserUpdate(u *model.User) {
 	AgentSecretToUserId[u.AgentSecret] = u.ID
 }
 
-func OnUserDelete(id []uint64) {
+func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) error {
 	UserLock.Lock()
 	defer UserLock.Unlock()
 
 	if len(id) < 1 {
-		return
+		return Localizer.ErrorT("user id not specified")
 	}
 
 	var (
-		cron   bool
-		server bool
+		cron, server   bool
+		crons, servers []uint64
 	)
 
 	for _, uid := range id {
-		secret := UserIdToAgentSecret[uid]
-		delete(AgentSecretToUserId, secret)
-		delete(UserIdToAgentSecret, uid)
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			CronLock.RLock()
+			crons = model.FindUserID(CronList, uid)
+			CronLock.RUnlock()
 
-		CronLock.RLock()
-		crons := model.FindUserID(CronList, uid)
-		CronLock.RUnlock()
+			cron = len(crons) > 0
+			if cron {
+				if err := tx.Unscoped().Delete(&model.Cron{}, "id in (?)", crons).Error; err != nil {
+					return err
+				}
+			}
 
-		cron = len(crons) > 0
-		if cron {
-			DB.Unscoped().Delete(&model.Cron{}, "id in (?)", crons)
-			OnDeleteCron(crons)
-		}
+			SortedServerLock.RLock()
+			servers = model.FindUserID(SortedServerList, uid)
+			SortedServerLock.RUnlock()
 
-		SortedServerLock.RLock()
-		servers := model.FindUserID(SortedServerList, uid)
-		SortedServerLock.RUnlock()
-
-		server = len(servers) > 0
-		if server {
-			DB.Transaction(func(tx *gorm.DB) error {
+			server = len(servers) > 0
+			if server {
 				if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", servers).Error; err != nil {
 					return err
 				}
 				if err := tx.Unscoped().Delete(&model.ServerGroupServer{}, "server_id in (?)", servers).Error; err != nil {
 					return err
 				}
-				return nil
-			})
+			}
 
+			if err := tx.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", servers).Error; err != nil {
+				return err
+			}
+
+			if err := tx.Where("id IN (?)", id).Delete(&model.User{}).Error; err != nil {
+				return err
+			}
+			return nil
+		})
+
+		if err != nil {
+			return errorFunc("%v", err)
+		}
+
+		if cron {
+			OnDeleteCron(crons)
+		}
+
+		if server {
 			AlertsLock.Lock()
 			for _, sid := range servers {
 				for _, alert := range Alerts {
@@ -93,10 +108,13 @@ func OnUserDelete(id []uint64) {
 					}
 				}
 			}
-			DB.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", servers)
 			AlertsLock.Unlock()
 			OnServerDelete(servers)
 		}
+
+		secret := UserIdToAgentSecret[uid]
+		delete(AgentSecretToUserId, secret)
+		delete(UserIdToAgentSecret, uid)
 	}
 
 	if cron {
@@ -106,4 +124,6 @@ func OnUserDelete(id []uint64) {
 	if server {
 		ReSortServer()
 	}
+
+	return nil
 }

@@ -151,6 +151,6 @@ func batchDeleteUser(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("can't delete yourself")
 	}
 
-	singleton.OnUserDelete(ids)
-	return nil, singleton.DB.Where("id IN (?)", ids).Delete(&model.User{}).Error
+	err := singleton.OnUserDelete(ids, newGormError)
+	return nil, err
 }
