@@ -21,18 +21,18 @@ import (
 // @Success 200 {object} model.CommonResponse[[]model.WAFApiMock]
 // @Router /waf [get]
 func listBlockedAddress(c *gin.Context) ([]*model.WAF, error) {
-	limit, err := strconv.ParseUint(c.Query("limit"), 10, 64)
+	limit, err := strconv.Atoi(c.Query("limit"))
 	if err != nil || limit < 1 {
 		limit = 25
 	}
 
-	offset, err := strconv.ParseUint(c.Query("offset"), 10, 64)
+	offset, err := strconv.Atoi(c.Query("offset"))
 	if err != nil || offset < 1 {
 		offset = 1
 	}
 
 	var waf []*model.WAF
-	if err := singleton.DB.Limit(int(limit)).Offset(int(offset)).Find(&waf).Error; err != nil {
+	if err := singleton.DB.Limit(limit).Offset(offset).Find(&waf).Error; err != nil {
 		return nil, err
 	}
 
