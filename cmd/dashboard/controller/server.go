@@ -56,6 +56,17 @@ func updateServer(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
+	singleton.DDNSCacheLock.RLock()
+	for _, pid := range sf.DDNSProfiles {
+		if p, ok := singleton.DDNSCache[pid]; ok {
+			if !p.HasPermission(c) {
+				singleton.DDNSCacheLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.DDNSCacheLock.RUnlock()
+
 	var s model.Server
 	if err := singleton.DB.First(&s, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)

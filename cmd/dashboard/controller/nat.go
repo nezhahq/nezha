@@ -51,6 +51,15 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
+	singleton.ServerLock.RLock()
+	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+		if !server.HasPermission(c) {
+			singleton.ServerLock.RUnlock()
+			return 0, singleton.Localizer.ErrorT("permission denied")
+		}
+	}
+	singleton.ServerLock.RUnlock()
+
 	uid := getUid(c)
 
 	n.UserID = uid
@@ -92,6 +101,15 @@ func updateNAT(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&nf); err != nil {
 		return nil, err
 	}
+
+	singleton.ServerLock.RLock()
+	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+		if !server.HasPermission(c) {
+			singleton.ServerLock.RUnlock()
+			return nil, singleton.Localizer.ErrorT("permission denied")
+		}
+	}
+	singleton.ServerLock.RUnlock()
 
 	var n model.NAT
 	if err = singleton.DB.First(&n, id).Error; err != nil {

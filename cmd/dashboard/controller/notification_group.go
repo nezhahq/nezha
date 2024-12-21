@@ -68,6 +68,17 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 	}
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
+	singleton.NotificationsLock.RLock()
+	for _, nid := range ngf.Notifications {
+		if n, ok := singleton.NotificationMap[nid]; ok {
+			if !n.HasPermission(c) {
+				singleton.NotificationsLock.RUnlock()
+				return 0, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NotificationsLock.RUnlock()
+
 	uid := getUid(c)
 
 	var ng model.NotificationGroup
@@ -132,6 +143,18 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&ngf); err != nil {
 		return nil, err
 	}
+
+	singleton.NotificationsLock.RLock()
+	for _, nid := range ngf.Notifications {
+		if n, ok := singleton.NotificationMap[nid]; ok {
+			if !n.HasPermission(c) {
+				singleton.NotificationsLock.RUnlock()
+				return nil, singleton.Localizer.ErrorT("permission denied")
+			}
+		}
+	}
+	singleton.NotificationsLock.RUnlock()
+
 	var ngDB model.NotificationGroup
 	if err := singleton.DB.First(&ngDB, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("group id %d does not exist", id)
