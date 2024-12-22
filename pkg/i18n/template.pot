@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-11-23 23:56+0800\n"
+"POT-Creation-Date: 2024-12-22 11:55+0800\n"
 "PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
 "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
 "Language-Team: LANGUAGE <LL@li.org>\n"
@@ -17,204 +17,248 @@ msgstr ""
 "Content-Type: text/plain; charset=CHARSET\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: cmd/dashboard/controller/alertrule.go:100
+#: cmd/dashboard/controller/alertrule.go:103
 #, c-format
 msgid "alert id %d does not exist"
 msgstr ""
 
+#: cmd/dashboard/controller/alertrule.go:107
 #: cmd/dashboard/controller/alertrule.go:155
+#: cmd/dashboard/controller/alertrule.go:175
+#: cmd/dashboard/controller/controller.go:211
+#: cmd/dashboard/controller/cron.go:57 cmd/dashboard/controller/cron.go:123
+#: cmd/dashboard/controller/cron.go:135 cmd/dashboard/controller/cron.go:194
+#: cmd/dashboard/controller/cron.go:223 cmd/dashboard/controller/ddns.go:130
+#: cmd/dashboard/controller/ddns.go:191 cmd/dashboard/controller/fm.go:43
+#: cmd/dashboard/controller/nat.go:58 cmd/dashboard/controller/nat.go:109
+#: cmd/dashboard/controller/nat.go:120 cmd/dashboard/controller/nat.go:159
+#: cmd/dashboard/controller/notification.go:111
+#: cmd/dashboard/controller/notification.go:165
+#: cmd/dashboard/controller/notification_group.go:76
+#: cmd/dashboard/controller/notification_group.go:152
+#: cmd/dashboard/controller/notification_group.go:164
+#: cmd/dashboard/controller/notification_group.go:233
+#: cmd/dashboard/controller/server.go:64 cmd/dashboard/controller/server.go:76
+#: cmd/dashboard/controller/server.go:127
+#: cmd/dashboard/controller/server.go:191
+#: cmd/dashboard/controller/server_group.go:75
+#: cmd/dashboard/controller/server_group.go:150
+#: cmd/dashboard/controller/server_group.go:229
+#: cmd/dashboard/controller/service.go:272
+#: cmd/dashboard/controller/service.go:343
+#: cmd/dashboard/controller/service.go:370
+#: cmd/dashboard/controller/terminal.go:41
+msgid "permission denied"
+msgstr ""
+
+#: cmd/dashboard/controller/alertrule.go:183
 msgid "duration need to be at least 3"
 msgstr ""
 
-#: cmd/dashboard/controller/alertrule.go:159
+#: cmd/dashboard/controller/alertrule.go:187
 msgid "cycle_interval need to be at least 1"
 msgstr ""
 
-#: cmd/dashboard/controller/alertrule.go:162
+#: cmd/dashboard/controller/alertrule.go:190
 msgid "cycle_start is not set"
 msgstr ""
 
-#: cmd/dashboard/controller/alertrule.go:165
+#: cmd/dashboard/controller/alertrule.go:193
 msgid "cycle_start is a future value"
 msgstr ""
 
-#: cmd/dashboard/controller/alertrule.go:170
+#: cmd/dashboard/controller/alertrule.go:198
 msgid "need to configure at least a single rule"
 msgstr ""
 
-#: cmd/dashboard/controller/controller.go:195
+#: cmd/dashboard/controller/controller.go:205
+#: cmd/dashboard/controller/server_group.go:162
+#: cmd/dashboard/controller/service.go:95 cmd/dashboard/controller/user.go:26
+#: cmd/dashboard/controller/user.go:53
+msgid "unauthorized"
+msgstr ""
+
+#: cmd/dashboard/controller/controller.go:228
 msgid "database error"
 msgstr ""
 
-#: cmd/dashboard/controller/cron.go:63 cmd/dashboard/controller/cron.go:122
+#: cmd/dashboard/controller/cron.go:74 cmd/dashboard/controller/cron.go:148
 msgid "scheduled tasks cannot be triggered by alarms"
 msgstr ""
 
-#: cmd/dashboard/controller/cron.go:161
+#: cmd/dashboard/controller/cron.go:131 cmd/dashboard/controller/cron.go:189
 #, c-format
 msgid "task id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/ddns.go:56 cmd/dashboard/controller/ddns.go:120
+#: cmd/dashboard/controller/ddns.go:56 cmd/dashboard/controller/ddns.go:121
 msgid "the retry count must be an integer between 1 and 10"
 msgstr ""
 
-#: cmd/dashboard/controller/ddns.go:79 cmd/dashboard/controller/ddns.go:148
+#: cmd/dashboard/controller/ddns.go:80 cmd/dashboard/controller/ddns.go:153
 msgid "error parsing %s: %v"
 msgstr ""
 
-#: cmd/dashboard/controller/ddns.go:125 cmd/dashboard/controller/nat.go:95
+#: cmd/dashboard/controller/ddns.go:126 cmd/dashboard/controller/nat.go:116
 #, c-format
 msgid "profile id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/fm.go:45 cmd/dashboard/controller/terminal.go:43
+#: cmd/dashboard/controller/fm.go:39 cmd/dashboard/controller/terminal.go:37
 msgid "server not found or not connected"
 msgstr ""
 
-#: cmd/dashboard/controller/notification.go:67
-#: cmd/dashboard/controller/notification.go:125
+#: cmd/dashboard/controller/notification.go:68
+#: cmd/dashboard/controller/notification.go:130
 msgid "a test message"
 msgstr ""
 
-#: cmd/dashboard/controller/notification.go:106
+#: cmd/dashboard/controller/notification.go:107
 #, c-format
 msgid "notification id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/notification_group.go:80
-#: cmd/dashboard/controller/notification_group.go:142
+#: cmd/dashboard/controller/notification_group.go:94
+#: cmd/dashboard/controller/notification_group.go:175
 msgid "have invalid notification id"
 msgstr ""
 
-#: cmd/dashboard/controller/notification_group.go:131
-#: cmd/dashboard/controller/server_group.go:130
+#: cmd/dashboard/controller/notification_group.go:160
+#: cmd/dashboard/controller/server_group.go:158
 #, c-format
 msgid "group id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/server.go:60
+#: cmd/dashboard/controller/server.go:72
 #, c-format
 msgid "server id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/server_group.go:78
-#: cmd/dashboard/controller/server_group.go:139
+#: cmd/dashboard/controller/server_group.go:92
+#: cmd/dashboard/controller/server_group.go:172
 msgid "have invalid server id"
 msgstr ""
 
-#: cmd/dashboard/controller/service.go:79
-#: cmd/dashboard/controller/service.go:155
+#: cmd/dashboard/controller/service.go:88
+#: cmd/dashboard/controller/service.go:164
 msgid "server not found"
 msgstr ""
 
-#: cmd/dashboard/controller/service.go:86 cmd/dashboard/controller/user.go:23
-msgid "unauthorized"
-msgstr ""
-
-#: cmd/dashboard/controller/service.go:247
+#: cmd/dashboard/controller/service.go:268
 #, c-format
 msgid "service id %d does not exist"
 msgstr ""
 
-#: cmd/dashboard/controller/user.go:66
+#: cmd/dashboard/controller/user.go:58
+msgid "incorrect password"
+msgstr ""
+
+#: cmd/dashboard/controller/user.go:110
 msgid "password length must be greater than 6"
 msgstr ""
 
-#: cmd/dashboard/controller/user.go:69
+#: cmd/dashboard/controller/user.go:113
 msgid "username can't be empty"
 msgstr ""
 
-#: service/rpc/io_stream.go:122
-msgid "timeout: no connection established"
-msgstr ""
-
-#: service/rpc/io_stream.go:125
-msgid "timeout: user connection not established"
+#: cmd/dashboard/controller/user.go:152
+msgid "can't delete yourself"
 msgstr ""
 
 #: service/rpc/io_stream.go:128
+msgid "timeout: no connection established"
+msgstr ""
+
+#: service/rpc/io_stream.go:131
+msgid "timeout: user connection not established"
+msgstr ""
+
+#: service/rpc/io_stream.go:134
 msgid "timeout: agent connection not established"
 msgstr ""
 
-#: service/rpc/nezha.go:58
+#: service/rpc/nezha.go:69
 msgid "Scheduled Task Executed Successfully"
 msgstr ""
 
-#: service/rpc/nezha.go:62
+#: service/rpc/nezha.go:73
 msgid "Scheduled Task Executed Failed"
 msgstr ""
 
-#: service/rpc/nezha.go:217
+#: service/rpc/nezha.go:245
 msgid "IP Changed"
 msgstr ""
 
-#: service/singleton/alertsentinel.go:159
+#: service/singleton/alertsentinel.go:167
 msgid "Incident"
 msgstr ""
 
-#: service/singleton/alertsentinel.go:169
+#: service/singleton/alertsentinel.go:177
 msgid "Resolved"
 msgstr ""
 
-#: service/singleton/crontask.go:53
+#: service/singleton/crontask.go:54
 msgid "Tasks failed to register: ["
 msgstr ""
 
-#: service/singleton/crontask.go:60
+#: service/singleton/crontask.go:61
 msgid ""
 "] These tasks will not execute properly. Fix them in the admin dashboard."
 msgstr ""
 
-#: service/singleton/crontask.go:146 service/singleton/crontask.go:171
+#: service/singleton/crontask.go:144 service/singleton/crontask.go:169
 #, c-format
 msgid "[Task failed] %s: server %s is offline and cannot execute the task"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:439
+#: service/singleton/servicesentinel.go:468
 #, c-format
 msgid "[Latency] %s %2f > %2f, Reporter: %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:446
+#: service/singleton/servicesentinel.go:475
 #, c-format
 msgid "[Latency] %s %2f < %2f, Reporter: %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:472
+#: service/singleton/servicesentinel.go:501
 #, c-format
 msgid "[%s] %s Reporter: %s, Error: %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:515
+#: service/singleton/servicesentinel.go:544
 #, c-format
 msgid "[TLS] Fetch cert info failed, Reporter: %s, Error: %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:555
+#: service/singleton/servicesentinel.go:584
 #, c-format
 msgid "The TLS certificate will expire within seven days. Expiration time: %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:568
+#: service/singleton/servicesentinel.go:597
 #, c-format
 msgid ""
 "TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, "
 "expires at %s"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:604
+#: service/singleton/servicesentinel.go:633
 msgid "No Data"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:606
+#: service/singleton/servicesentinel.go:635
 msgid "Good"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:608
+#: service/singleton/servicesentinel.go:637
 msgid "Low Availability"
 msgstr ""
 
-#: service/singleton/servicesentinel.go:610
+#: service/singleton/servicesentinel.go:639
 msgid "Down"
+msgstr ""
+
+#: service/singleton/user.go:53
+msgid "user id not specified"
 msgstr ""
