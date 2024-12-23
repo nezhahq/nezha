@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unsafe"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nezhahq/nezha/pkg/utils"
@@ -71,7 +70,7 @@ func SearchByIDCtx[S ~[]E, E CommonInterface](c *gin.Context, x S) S {
 	switch any(x).(type) {
 	case []*Server:
 		l := searchByIDCtxServer(c, any(x).([]*Server))
-		return unsafe.Slice((*E)(unsafe.Pointer(unsafe.SliceData(l))), len(l))
+		return any(l).(S)
 	default:
 		var s S
 		for _, idStr := range strings.Split(c.Query("id"), ",") {
