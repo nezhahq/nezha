@@ -17,6 +17,7 @@ import (
 // @Description List DDNS profiles
 // @Security BearerAuth
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.DDNSProfile]
 // @Router /ddns [get]

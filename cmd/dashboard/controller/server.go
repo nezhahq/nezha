@@ -19,6 +19,7 @@ import (
 // @Schemes
 // @Description List server
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.Server]
 // @Router /server [get]

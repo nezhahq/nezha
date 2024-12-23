@@ -16,6 +16,7 @@ import (
 // @Schemes
 // @Description List schedule tasks
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.Cron]
 // @Router /cron [get]

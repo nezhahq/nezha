@@ -17,6 +17,7 @@ import (
 // @Schemes
 // @Description List Alert rules
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.AlertRule]
 // @Router /alert-rule [get]

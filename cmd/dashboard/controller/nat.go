@@ -16,6 +16,7 @@ import (
 // @Description List NAT profiles
 // @Security BearerAuth
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.NAT]
 // @Router /nat [get]

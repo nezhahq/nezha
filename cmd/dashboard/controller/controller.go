@@ -247,7 +247,8 @@ func listHandler[S ~[]E, E model.CommonInterface](handler handlerFunc[S]) func(*
 			return
 		}
 
-		c.JSON(http.StatusOK, model.CommonResponse[S]{Success: true, Data: filter(c, data)})
+		filtered := filter(c, data)
+		c.JSON(http.StatusOK, model.CommonResponse[S]{Success: true, Data: model.SearchByIDCtx(c, filtered)})
 	}
 }
 

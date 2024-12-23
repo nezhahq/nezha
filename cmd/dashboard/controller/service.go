@@ -50,6 +50,7 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 // @Schemes
 // @Description List service
 // @Tags auth required
+// @Param id query uint false "Resource ID"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[[]model.Service]
 // @Router /service [get]
