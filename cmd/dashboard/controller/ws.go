@@ -112,7 +112,6 @@ func serverStream(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, newWsError("%v", err)
 	}
-	defer conn.Close()
 
 	userIp := c.GetString(model.CtxKeyRealIPStr)
 	if userIp == "" {
@@ -124,27 +123,43 @@ func serverStream(c *gin.Context) (any, error) {
 		ConnectedAt: time.Now(),
 		Conn:        conn,
 	})
-	defer singleton.RemoveOnlineUser(connId)
+	done := make(chan struct{})
+	go func() {
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				close(done)
+				singleton.RemoveOnlineUser(connId)
+				_ = conn.Close()
+				return
+			}
+		}
+	}()
 
 	count := 0
 	for {
-		stat, err := getServerStat(c, count == 0)
-		if err != nil {
-			continue
-		}
-		if err := conn.WriteMessage(websocket.TextMessage, stat); err != nil {
-			break
-		}
-		count += 1
-		if count%4 == 0 {
-			err = conn.WriteMessage(websocket.PingMessage, []byte{})
+		select {
+		case <-done:
+			return nil, newWsError("connection closed")
+		default:
+			stat, err := getServerStat(c, count == 0)
 			if err != nil {
-				break
+				continue
 			}
+			if err := conn.WriteMessage(websocket.TextMessage, stat); err != nil {
+				singleton.RemoveOnlineUser(connId)
+				return nil, newWsError("write error: %v", err)
+			}
+			count += 1
+			if count%4 == 0 {
+				err = conn.WriteMessage(websocket.PingMessage, []byte{})
+				if err != nil {
+					singleton.RemoveOnlineUser(connId)
+					return nil, newWsError("ping error: %v", err)
+				}
+			}
+			time.Sleep(time.Second * 2)
 		}
-		time.Sleep(time.Second * 2)
 	}
-	return nil, newWsError("")
 }
 
 var requestGroup singleflight.Group
