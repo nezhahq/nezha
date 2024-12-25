@@ -26,7 +26,15 @@ body:
   - type: textarea
     attributes:
       label: 复现步骤
-      description: 在这里输入你的配置信息及复现问题的步骤
+      description: 在这里输入复现问题的步骤
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 配置信息
+      description: 在这里输入你的配置信息
       value: |
         <details></details>
     validations:

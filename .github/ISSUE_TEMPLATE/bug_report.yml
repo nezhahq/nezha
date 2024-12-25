@@ -26,7 +26,15 @@ body:
   - type: textarea
     attributes:
       label: To Reproduce
-      description: Input your configuration and the steps to reproduce the bug here.
+      description: Input the steps to reproduce the bug here.
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Configuration
+      description: Input your configuration here.
       value: |
         <details></details>
     validations:
