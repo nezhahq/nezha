@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 )
 
 var (
@@ -45,10 +46,7 @@ func BlockByIPs(ipList []string) error {
 func GetOnlineUsers(limit, offset int) []*model.OnlineUser {
 	OnlineUserMapLock.Lock()
 	defer OnlineUserMapLock.Unlock()
-	var users []*model.OnlineUser
-	for _, user := range OnlineUserMap {
-		users = append(users, user)
-	}
+	users := utils.MapValuesToSlice(OnlineUserMap)
 	slices.SortFunc(users, func(i, j *model.OnlineUser) int {
 		return i.ConnectedAt.Compare(j.ConnectedAt)
 	})

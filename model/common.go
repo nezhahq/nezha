@@ -79,11 +79,7 @@ func SearchByIDCtx[S ~[]E, E CommonInterface](c *gin.Context, x S) S {
 				continue
 			}
 
-			if i, ok := slices.BinarySearchFunc(x, id, func(e E, t uint64) int {
-				return cmp.Compare(e.GetID(), t)
-			}); ok {
-				s = append(s, x[i])
-			}
+			s = appendBinarySearch(s, x, id)
 		}
 		return utils.IfOr(len(s) > 0, s, x)
 	}
@@ -99,25 +95,19 @@ func searchByIDCtxServer(c *gin.Context, x []*Server) []*Server {
 			continue
 		}
 
-		if i, ok := slices.BinarySearchFunc(list1, id, func(e *Server, t uint64) int {
-			return cmp.Compare(e.ID, t)
-		}); ok {
-			clist1 = append(clist1, list1[i])
-		}
-
-		if i, ok := slices.BinarySearchFunc(list2, id, func(e *Server, t uint64) int {
-			return cmp.Compare(e.ID, t)
-		}); ok {
-			clist2 = append(clist2, list2[i])
-		}
+		clist1 = appendBinarySearch(clist1, list1, id)
+		clist2 = appendBinarySearch(clist2, list2, id)
 	}
 
 	l := slices.Concat(clist1, clist2)
 	return utils.IfOr(len(l) > 0, l, x)
 }
 
-type Response struct {
-	Code    int         `json:"code,omitempty"`
-	Message string      `json:"message,omitempty"`
-	Result  interface{} `json:"result,omitempty"`
+func appendBinarySearch[S ~[]E, E CommonInterface](x, y S, target uint64) S {
+	if i, ok := slices.BinarySearchFunc(y, target, func(e E, t uint64) int {
+		return cmp.Compare(e.GetID(), t)
+	}); ok {
+		x = append(x, y[i])
+	}
+	return x
 }
