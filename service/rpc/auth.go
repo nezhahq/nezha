@@ -38,7 +38,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 
 	singleton.UserLock.RLock()
 	userId, ok := singleton.AgentSecretToUserId[clientSecret]
-	if !ok && clientSecret != singleton.Conf.AgentSecretKey {
+	if !ok {
 		singleton.UserLock.RUnlock()
 		model.BlockIP(singleton.DB, ip, model.WAFBlockReasonTypeAgentAuthFail, model.BlockIDgRPC)
 		return 0, status.Error(codes.Unauthenticated, "客户端认证失败")
