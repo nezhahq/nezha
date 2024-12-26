@@ -64,15 +64,8 @@ func (r *AlertRule) Enabled() bool {
 }
 
 // Snapshot 对传入的Server进行该报警规则下所有type的检查 返回每项检查结果
-func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB, role uint8) []bool {
+func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) []bool {
 	point := make([]bool, len(r.Rules))
-	for i := range point {
-		point[i] = true
-	}
-
-	if r.UserID != server.UserID && role != RoleAdmin {
-		return point
-	}
 
 	for i, rule := range r.Rules {
 		point[i] = rule.Snapshot(cycleTransferStats, server, db)

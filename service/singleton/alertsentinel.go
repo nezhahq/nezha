@@ -151,8 +151,11 @@ func checkStatus() {
 				role = u.Role
 			}
 			UserLock.RUnlock()
+			if alert.UserID != server.UserID && role != model.RoleAdmin {
+				continue
+			}
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.
-				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB, role))
+				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB))
 			// 发送通知，分为触发报警和恢复通知
 			max, passed := alert.Check(alertsStore[alert.ID][server.ID])
 			// 保存当前服务器状态信息
