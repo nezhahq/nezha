@@ -1,8 +1,6 @@
 package model
 
 import (
-	"slices"
-
 	"github.com/nezhahq/nezha/pkg/utils"
 	"gorm.io/gorm"
 )
@@ -83,13 +81,10 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			if maxDuration < 1 {
 				maxDuration = 1
 			}
-		LOOP:
-			for _, point := range points {
-				for _, check := range slices.Backward(point) {
-					if !check {
-						failCount++
-						break LOOP
-					}
+			for j := len(points) - 1; j >= 0; j-- {
+				if !points[j][i] {
+					failCount++
+					break
 				}
 			}
 		} else {
