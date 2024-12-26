@@ -168,7 +168,7 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
 	var count int64
-	if err := singleton.DB.Model(&model.Server{}).Where("id in (?)", ngf.Notifications).Count(&count).Error; err != nil {
+	if err := singleton.DB.Model(&model.Notification{}).Where("id in (?)", ngf.Notifications).Count(&count).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 	if count != int64(len(ngf.Notifications)) {

@@ -85,8 +85,8 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 			if maxDuration < 1 {
 				maxDuration = 1
 			}
-			for j := len(points[i]) - 1; j >= 0; j-- {
-				if !points[i][j] {
+			for j := len(points) - 1; j >= 0; j-- {
+				if !points[j][i] {
 					failCount++
 					break
 				}
