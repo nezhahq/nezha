@@ -21,6 +21,13 @@ func initUser() {
 	var users []model.User
 	DB.Find(&users)
 
+	// for backward compatibility
+	UserInfoMap[0] = model.UserInfo{
+		Role:        model.RoleAdmin,
+		AgentSecret: Conf.AgentSecretKey,
+	}
+	AgentSecretToUserId[Conf.AgentSecretKey] = 0
+
 	for _, u := range users {
 		UserInfoMap[u.ID] = model.UserInfo{
 			Role:        u.Role,
