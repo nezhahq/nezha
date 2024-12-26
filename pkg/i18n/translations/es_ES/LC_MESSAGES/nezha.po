@@ -8,16 +8,16 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2024-12-22 11:55+0800\n"
-"PO-Revision-Date: 2024-12-17 04:52+0000\n"
+"PO-Revision-Date: 2024-12-26 06:07+0000\n"
 "Last-Translator: UUBulb <uub@kuzu.uk>\n"
-"Language-Team: Spanish <https://hosted.weblate.org/projects/nezha/nezha-"
-"dashboard/es/>\n"
+"Language-Team: Spanish <https://hosted.weblate.org/projects/nezha/"
+"nezha-dashboard/es/>\n"
 "Language: es_ES\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.9\n"
+"X-Generator: Weblate 5.10-dev\n"
 
 #: cmd/dashboard/controller/alertrule.go:103
 #, c-format
@@ -51,7 +51,7 @@ msgstr "el ID de alerta %d no existe"
 #: cmd/dashboard/controller/service.go:370
 #: cmd/dashboard/controller/terminal.go:41
 msgid "permission denied"
-msgstr ""
+msgstr "permiso denegado"
 
 #: cmd/dashboard/controller/alertrule.go:183
 msgid "duration need to be at least 3"
@@ -153,7 +153,7 @@ msgstr "el ID de servicio %d no existe"
 
 #: cmd/dashboard/controller/user.go:58
 msgid "incorrect password"
-msgstr ""
+msgstr "contraseña incorrecta"
 
 #: cmd/dashboard/controller/user.go:110
 msgid "password length must be greater than 6"
@@ -165,7 +165,7 @@ msgstr "el nombre de usuario no puede estar vacío"
 
 #: cmd/dashboard/controller/user.go:152
 msgid "can't delete yourself"
-msgstr ""
+msgstr "no puedes eliminarte a ti mismo"
 
 #: service/rpc/io_stream.go:128
 msgid "timeout: no connection established"
@@ -274,4 +274,4 @@ msgstr "Fallo"
 
 #: service/singleton/user.go:53
 msgid "user id not specified"
-msgstr ""
+msgstr "id de usuario no especificado"
