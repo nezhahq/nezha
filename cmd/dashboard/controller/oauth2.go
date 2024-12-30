@@ -80,7 +80,7 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 	return &model.Oauth2LoginResponse{Redirect: url}, nil
 }
 
-func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config, provider string, callbackData model.Oauth2Callback) (string, error) {
+func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config, provider string, callbackData model.Oauth2Callback, typ Oauth2LoginType) (string, error) {
 	// 验证登录跳转时的 State
 	stateKey, err := c.Cookie("nz-o2s")
 	if err != nil {
@@ -91,7 +91,7 @@ func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config, provider stri
 		return "", singleton.Localizer.ErrorT("invalid state key")
 	}
 
-	o2conf := o2confRaw.Setup(getRedirectURL(c, provider, rTypeLogin))
+	o2conf := o2confRaw.Setup(getRedirectURL(c, provider, typ))
 
 	ctx := context.Background()
 
@@ -110,7 +110,7 @@ func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config, provider stri
 		return "", err
 	}
 
-	return gjson.Get(string(body), o2confRaw.UserIDPath).String(), nil
+	return gjson.GetBytes(body, o2confRaw.UserIDPath).String(), nil
 }
 
 // @Summary Oauth2 Callback
@@ -132,7 +132,6 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 		if !has {
 			return nil, singleton.Localizer.ErrorT("provider not found")
 		}
-		provider = strings.ToLower(provider)
 
 		var callbackData model.Oauth2Callback
 		if err := c.ShouldBind(&callbackData); err != nil {
@@ -146,14 +145,14 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 			return nil, singleton.Localizer.ErrorT("code is required")
 		}
 
-		openId, err := exchangeOpenId(c, o2confRaw, provider, callbackData)
+		openId, err := exchangeOpenId(c, o2confRaw, provider, callbackData, rTypeLogin)
 		if err != nil {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
 			return nil, err
 		}
 
 		var bind model.Oauth2Bind
-		if err := singleton.DB.Where("provider = ? AND open_id = ?", provider, openId).First(&bind).Error; err != nil {
+		if err := singleton.DB.Where("provider = ? AND open_id = ?", strings.ToLower(provider), openId).First(&bind).Error; err != nil {
 			return nil, singleton.Localizer.ErrorT("oauth2 user not binded yet")
 		}
 
@@ -187,14 +186,14 @@ func bindOauth2(c *gin.Context) (any, error) {
 	if !has {
 		return nil, singleton.Localizer.ErrorT("provider not found")
 	}
-	provider = strings.ToLower(provider)
 
-	openId, err := exchangeOpenId(c, o2conf, provider, bindData)
+	openId, err := exchangeOpenId(c, o2conf, provider, bindData, rTypeBind)
 	if err != nil {
 		return nil, err
 	}
 
 	u := c.MustGet(model.CtxKeyAuthorizedUser).(*model.User)
+	provider = strings.ToLower(provider)
 
 	var bind model.Oauth2Bind
 	result := singleton.DB.Where("provider = ? AND open_id = ?", provider, openId).Limit(1).Find(&bind)
