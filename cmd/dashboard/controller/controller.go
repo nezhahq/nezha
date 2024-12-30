@@ -303,7 +303,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 	}
 	return func(c *gin.Context) {
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
-			c.JSON(http.StatusOK, newErrorResponse(errors.New("404 Not Found")))
+			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			return
 		}
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard") {
@@ -311,18 +311,24 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 			localFilePath := path.Join(singleton.Conf.AdminTemplate, stripPath)
 			if checkLocalFileOrFs(c, frontendDist, localFilePath) {
 				return
+			} else {
+				c.Status(http.StatusNotFound)
+				c.Writer.WriteHeaderNow();
 			}
 			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate+"/index.html") {
-				c.JSON(http.StatusOK, newErrorResponse(errors.New("404 Not Found")))
+				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
 		}
 		localFilePath := path.Join(singleton.Conf.UserTemplate, c.Request.URL.Path)
 		if checkLocalFileOrFs(c, frontendDist, localFilePath) {
 			return
+		} else {
+			c.Status(http.StatusNotFound)
+			c.Writer.WriteHeaderNow();
 		}
 		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate+"/index.html") {
-			c.JSON(http.StatusOK, newErrorResponse(errors.New("404 Not Found")))
+			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}
 }
