@@ -19,7 +19,7 @@ type User struct {
 	Password       string `json:"password,omitempty" gorm:"type:char(72)"`
 	Role           uint8  `json:"role,omitempty"`
 	AgentSecret    string `json:"agent_secret,omitempty" gorm:"type:char(32)"`
-	RejectPassword bool   `json:"reject_password,omitempty"`
+	RejectPassword bool   `json:"reject_password,omitempty" validate:"optional"`
 }
 
 type UserInfo struct {
