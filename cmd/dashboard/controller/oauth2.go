@@ -146,6 +146,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 		}
 
 		var bind model.Oauth2Bind
+		state.Provider = strings.ToLower(state.Provider)
 		switch state.Action {
 		case model.RTypeBind:
 			u, authorized := c.Get(model.CtxKeyAuthorizedUser)
@@ -154,7 +155,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 			}
 			user := u.(*model.User)
 
-			result := singleton.DB.Where("provider = ? AND open_id = ?", strings.ToLower(state.Provider), openId).Limit(1).Find(&bind)
+			result := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).Limit(1).Find(&bind)
 			if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
 				return nil, newGormError("%v", result.Error)
 			}
@@ -171,7 +172,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 				return nil, newGormError("%v", result.Error)
 			}
 		default:
-			if err := singleton.DB.Where("provider = ? AND open_id = ?", strings.ToLower(state.Provider), openId).First(&bind).Error; err != nil {
+			if err := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).First(&bind).Error; err != nil {
 				return nil, singleton.Localizer.ErrorT("oauth2 user not binded yet")
 			}
 		}
