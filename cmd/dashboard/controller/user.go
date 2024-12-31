@@ -73,8 +73,18 @@ func updateProfile(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
+	var bindCount int64
+	if err := singleton.DB.Where("user_id = ?", auth.(*model.User).ID).Count(&bindCount).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+
+	if pf.RejectPassword && bindCount < 1 {
+		return nil, singleton.Localizer.ErrorT("you don't have any oauth2 bindings")
+	}
+
 	user.Username = pf.NewUsername
 	user.Password = string(hash)
+	user.RejectPassword = pf.RejectPassword
 	if err := singleton.DB.Save(&user).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}

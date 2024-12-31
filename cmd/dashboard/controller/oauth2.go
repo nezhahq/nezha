@@ -42,7 +42,7 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 		return nil, singleton.Localizer.ErrorT("provider is required")
 	}
 
-	rTypeInt, err := strconv.Atoi(c.Query("type"))
+	rTypeInt, err := strconv.ParseUint(c.Query("type"), 10, 8)
 	if err != nil {
 		return nil, err
 	}
@@ -87,10 +87,23 @@ func unbindOauth2(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("provider not found")
 	}
 	provider = strings.ToLower(provider)
+
 	u := c.MustGet(model.CtxKeyAuthorizedUser).(*model.User)
-	if err := singleton.DB.Where("provider = ? AND user_id = ?", provider, u.ID).Delete(&model.Oauth2Bind{}).Error; err != nil {
+	query := singleton.DB.Where("provider = ? AND user_id = ?", provider, u.ID)
+
+	var bindCount int64
+	if err := query.Model(&model.Oauth2Bind{}).Count(&bindCount).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
+
+	if bindCount < 2 && u.RejectPassword {
+		return nil, singleton.Localizer.ErrorT("operation not permitted")
+	}
+
+	if err := query.Delete(&model.Oauth2Bind{}).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+
 	return nil, nil
 }
 
