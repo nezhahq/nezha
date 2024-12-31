@@ -50,11 +50,6 @@ jobs:
         with:
           go-version: "1.23.1"
 
-      - name: patch net/http/fs.go
-        run: |
-          patch -p0 --forward `go env GOROOT`/src/net/http/fs.go < ./script/patch/fs.patch || true
-          patch -p0 --forward `go env GOMODCACHE`/github.com/gin-gonic/gin@v1.10.0/context.go < ./script/patch/gin-context.patch || true
-
       - name: generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest

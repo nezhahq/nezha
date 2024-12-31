@@ -29,20 +29,6 @@ jobs:
         with:
           go-version: "1.23.1"
 
-      - name: patch net/http/fs.go
-        if: runner.os != 'Windows'
-        run: |
-          sudo patch -p0 --forward `go env GOROOT`/src/net/http/fs.go < ./script/patch/fs.patch || true
-          sudo patch -p0 --forward `go env GOMODCACHE`/github.com/gin-gonic/gin@v1.10.0/context.go < ./script/patch/gin-context.patch || true
-
-      - name: patch net/http/fs.go (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          $GOROOT = & go env GOROOT
-          $GOMODCACHE = & go env GOMODCACHE
-          Get-Content ./script/patch/fs.patch | & patch -p0 --forward "$GOROOT/src/net/http/fs.go"
-          Get-Content ./script/patch/gin-context.patch | & patch -p0 --forward "$GOMODCACHE/github.com/gin-gonic/gin@v1.10.0/context.go"
-
       - name: generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
