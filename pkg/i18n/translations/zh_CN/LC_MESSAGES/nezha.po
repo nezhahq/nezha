@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-22 11:55+0800\n"
-"PO-Revision-Date: 2024-12-22 04:33+0000\n"
+"POT-Creation-Date: 2024-12-31 21:25+0800\n"
+"PO-Revision-Date: 2024-12-31 15:18+0000\n"
 "Last-Translator: UUBulb <uub@kuzu.uk>\n"
 "Language-Team: Chinese (Simplified Han script) <https://hosted.weblate.org/"
 "projects/nezha/nezha-dashboard/zh_Hans/>\n"
@@ -19,89 +19,90 @@ msgstr ""
 "Plural-Forms: nplurals=1; plural=0;\n"
 "X-Generator: Weblate 5.10-dev\n"
 
-#: cmd/dashboard/controller/alertrule.go:103
+#: cmd/dashboard/controller/alertrule.go:104
 #, c-format
 msgid "alert id %d does not exist"
 msgstr "告警 ID %d 不存在"
 
-#: cmd/dashboard/controller/alertrule.go:107
-#: cmd/dashboard/controller/alertrule.go:155
-#: cmd/dashboard/controller/alertrule.go:175
-#: cmd/dashboard/controller/controller.go:211
-#: cmd/dashboard/controller/cron.go:57 cmd/dashboard/controller/cron.go:123
-#: cmd/dashboard/controller/cron.go:135 cmd/dashboard/controller/cron.go:194
-#: cmd/dashboard/controller/cron.go:223 cmd/dashboard/controller/ddns.go:130
-#: cmd/dashboard/controller/ddns.go:191 cmd/dashboard/controller/fm.go:43
-#: cmd/dashboard/controller/nat.go:58 cmd/dashboard/controller/nat.go:109
-#: cmd/dashboard/controller/nat.go:120 cmd/dashboard/controller/nat.go:159
-#: cmd/dashboard/controller/notification.go:111
-#: cmd/dashboard/controller/notification.go:165
+#: cmd/dashboard/controller/alertrule.go:108
+#: cmd/dashboard/controller/alertrule.go:156
+#: cmd/dashboard/controller/alertrule.go:176
+#: cmd/dashboard/controller/controller.go:216
+#: cmd/dashboard/controller/cron.go:58 cmd/dashboard/controller/cron.go:124
+#: cmd/dashboard/controller/cron.go:136 cmd/dashboard/controller/cron.go:195
+#: cmd/dashboard/controller/cron.go:224 cmd/dashboard/controller/ddns.go:131
+#: cmd/dashboard/controller/ddns.go:192 cmd/dashboard/controller/fm.go:43
+#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:110
+#: cmd/dashboard/controller/nat.go:121 cmd/dashboard/controller/nat.go:160
+#: cmd/dashboard/controller/notification.go:112
+#: cmd/dashboard/controller/notification.go:166
 #: cmd/dashboard/controller/notification_group.go:76
 #: cmd/dashboard/controller/notification_group.go:152
 #: cmd/dashboard/controller/notification_group.go:164
 #: cmd/dashboard/controller/notification_group.go:233
-#: cmd/dashboard/controller/server.go:64 cmd/dashboard/controller/server.go:76
-#: cmd/dashboard/controller/server.go:127
-#: cmd/dashboard/controller/server.go:191
+#: cmd/dashboard/controller/server.go:65 cmd/dashboard/controller/server.go:77
+#: cmd/dashboard/controller/server.go:128
+#: cmd/dashboard/controller/server.go:192
 #: cmd/dashboard/controller/server_group.go:75
 #: cmd/dashboard/controller/server_group.go:150
 #: cmd/dashboard/controller/server_group.go:229
-#: cmd/dashboard/controller/service.go:272
-#: cmd/dashboard/controller/service.go:343
-#: cmd/dashboard/controller/service.go:370
+#: cmd/dashboard/controller/service.go:273
+#: cmd/dashboard/controller/service.go:344
+#: cmd/dashboard/controller/service.go:371
 #: cmd/dashboard/controller/terminal.go:41
 msgid "permission denied"
 msgstr "权限不够"
 
-#: cmd/dashboard/controller/alertrule.go:183
+#: cmd/dashboard/controller/alertrule.go:184
 msgid "duration need to be at least 3"
 msgstr "duration 至少为 3"
 
-#: cmd/dashboard/controller/alertrule.go:187
+#: cmd/dashboard/controller/alertrule.go:188
 msgid "cycle_interval need to be at least 1"
 msgstr "cycle_interval 至少为 1"
 
-#: cmd/dashboard/controller/alertrule.go:190
+#: cmd/dashboard/controller/alertrule.go:191
 msgid "cycle_start is not set"
 msgstr "cycle_start 未设置"
 
-#: cmd/dashboard/controller/alertrule.go:193
+#: cmd/dashboard/controller/alertrule.go:194
 msgid "cycle_start is a future value"
 msgstr "cycle_start 是未来值"
 
-#: cmd/dashboard/controller/alertrule.go:198
+#: cmd/dashboard/controller/alertrule.go:199
 msgid "need to configure at least a single rule"
 msgstr "需要至少定义一条规则"
 
-#: cmd/dashboard/controller/controller.go:205
+#: cmd/dashboard/controller/controller.go:210
+#: cmd/dashboard/controller/oauth2.go:152
 #: cmd/dashboard/controller/server_group.go:162
-#: cmd/dashboard/controller/service.go:95 cmd/dashboard/controller/user.go:26
-#: cmd/dashboard/controller/user.go:53
+#: cmd/dashboard/controller/service.go:96 cmd/dashboard/controller/user.go:27
+#: cmd/dashboard/controller/user.go:63
 msgid "unauthorized"
 msgstr "未授权"
 
-#: cmd/dashboard/controller/controller.go:228
+#: cmd/dashboard/controller/controller.go:233
 msgid "database error"
 msgstr "数据库错误"
 
-#: cmd/dashboard/controller/cron.go:74 cmd/dashboard/controller/cron.go:148
+#: cmd/dashboard/controller/cron.go:75 cmd/dashboard/controller/cron.go:149
 msgid "scheduled tasks cannot be triggered by alarms"
 msgstr "计划任务不能被告警触发"
 
-#: cmd/dashboard/controller/cron.go:131 cmd/dashboard/controller/cron.go:189
+#: cmd/dashboard/controller/cron.go:132 cmd/dashboard/controller/cron.go:190
 #, c-format
 msgid "task id %d does not exist"
 msgstr "任务 id %d 不存在"
 
-#: cmd/dashboard/controller/ddns.go:56 cmd/dashboard/controller/ddns.go:121
+#: cmd/dashboard/controller/ddns.go:57 cmd/dashboard/controller/ddns.go:122
 msgid "the retry count must be an integer between 1 and 10"
 msgstr "重试次数必须为大于 1 且不超过 10 的整数"
 
-#: cmd/dashboard/controller/ddns.go:80 cmd/dashboard/controller/ddns.go:153
+#: cmd/dashboard/controller/ddns.go:81 cmd/dashboard/controller/ddns.go:154
 msgid "error parsing %s: %v"
 msgstr "解析 %s 时发生错误：%v"
 
-#: cmd/dashboard/controller/ddns.go:126 cmd/dashboard/controller/nat.go:116
+#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:117
 #, c-format
 msgid "profile id %d does not exist"
 msgstr "配置 id %d 不存在"
@@ -110,12 +111,12 @@ msgstr "配置 id %d 不存在"
 msgid "server not found or not connected"
 msgstr "服务器未找到或仍未连接"
 
-#: cmd/dashboard/controller/notification.go:68
-#: cmd/dashboard/controller/notification.go:130
+#: cmd/dashboard/controller/notification.go:69
+#: cmd/dashboard/controller/notification.go:131
 msgid "a test message"
 msgstr "一条测试信息"
 
-#: cmd/dashboard/controller/notification.go:107
+#: cmd/dashboard/controller/notification.go:108
 #, c-format
 msgid "notification id %d does not exist"
 msgstr "通知方式 id %d 不存在"
@@ -131,7 +132,34 @@ msgstr "通知方式 id 无效"
 msgid "group id %d does not exist"
 msgstr "组 id %d 不存在"
 
-#: cmd/dashboard/controller/server.go:72
+#: cmd/dashboard/controller/oauth2.go:42 cmd/dashboard/controller/oauth2.go:83
+msgid "provider is required"
+msgstr "需要提供者"
+
+#: cmd/dashboard/controller/oauth2.go:52 cmd/dashboard/controller/oauth2.go:87
+#: cmd/dashboard/controller/oauth2.go:132
+msgid "provider not found"
+msgstr "未找到提供者"
+
+#: cmd/dashboard/controller/oauth2.go:100
+msgid "operation not permitted"
+msgstr "不允许该操作"
+
+#: cmd/dashboard/controller/oauth2.go:138
+msgid "code is required"
+msgstr "需要 code"
+
+#: cmd/dashboard/controller/oauth2.go:174
+msgid "oauth2 user not binded yet"
+msgstr "oauth2 用户仍未绑定"
+
+#: cmd/dashboard/controller/oauth2.go:215
+#: cmd/dashboard/controller/oauth2.go:221
+#: cmd/dashboard/controller/oauth2.go:226
+msgid "invalid state key"
+msgstr "不正确的 state key"
+
+#: cmd/dashboard/controller/server.go:73
 #, c-format
 msgid "server id %d does not exist"
 msgstr "服务器 id %d 不存在"
@@ -141,29 +169,37 @@ msgstr "服务器 id %d 不存在"
 msgid "have invalid server id"
 msgstr "服务器 id 无效"
 
-#: cmd/dashboard/controller/service.go:88
-#: cmd/dashboard/controller/service.go:164
+#: cmd/dashboard/controller/service.go:89
+#: cmd/dashboard/controller/service.go:165
 msgid "server not found"
 msgstr "未找到服务器"
 
-#: cmd/dashboard/controller/service.go:268
+#: cmd/dashboard/controller/service.go:269
 #, c-format
 msgid "service id %d does not exist"
 msgstr "服务 id %d 不存在"
 
-#: cmd/dashboard/controller/user.go:58
+#: cmd/dashboard/controller/user.go:68
 msgid "incorrect password"
 msgstr "密码错误"
 
-#: cmd/dashboard/controller/user.go:110
+#: cmd/dashboard/controller/user.go:82
+msgid "you don't have any oauth2 bindings"
+msgstr "你没有任何 oauth2 绑定关系"
+
+#: cmd/dashboard/controller/user.go:130
 msgid "password length must be greater than 6"
 msgstr "密码长度必须大于 6"
 
-#: cmd/dashboard/controller/user.go:113
+#: cmd/dashboard/controller/user.go:133
 msgid "username can't be empty"
 msgstr "用户名不能为空"
 
-#: cmd/dashboard/controller/user.go:152
+#: cmd/dashboard/controller/user.go:136
+msgid "invalid role"
+msgstr "不正确的角色"
+
+#: cmd/dashboard/controller/user.go:175
 msgid "can't delete yourself"
 msgstr "无法删除自己"
 
@@ -191,11 +227,11 @@ msgstr "计划任务执行失败"
 msgid "IP Changed"
 msgstr "IP 变更"
 
-#: service/singleton/alertsentinel.go:167
+#: service/singleton/alertsentinel.go:170
 msgid "Incident"
 msgstr "事件"
 
-#: service/singleton/alertsentinel.go:177
+#: service/singleton/alertsentinel.go:180
 msgid "Resolved"
 msgstr "恢复"
 
@@ -262,6 +298,6 @@ msgstr "低可用"
 msgid "Down"
 msgstr "故障"
 
-#: service/singleton/user.go:53
+#: service/singleton/user.go:60
 msgid "user id not specified"
 msgstr "用户 ID 未指定"
