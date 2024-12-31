@@ -74,7 +74,7 @@ func updateProfile(c *gin.Context) (any, error) {
 	}
 
 	var bindCount int64
-	if err := singleton.DB.Where("user_id = ?", auth.(*model.User).ID).Count(&bindCount).Error; err != nil {
+	if err := singleton.DB.Model(&model.Oauth2Bind{}).Where("user_id = ?", auth.(*model.User).ID).Count(&bindCount).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 
