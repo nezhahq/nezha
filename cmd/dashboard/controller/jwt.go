@@ -99,7 +99,7 @@ func authenticator() func(c *gin.Context) (interface{}, error) {
 
 		if user.RejectPassword {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
-			return nil, jwt.ErrForbidden
+			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginVals.Password)); err != nil {
