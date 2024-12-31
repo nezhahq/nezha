@@ -18,21 +18,30 @@ jobs:
       fail-fast: true
       matrix:
         os: [ubuntu, windows, macos]
-        
+
     runs-on: ${{ matrix.os }}-latest
     env:
       GO111MODULE: on
     steps:
       - uses: actions/checkout@v4
-        
+
       - uses: actions/setup-go@v5
         with:
           go-version: "1.23.1"
 
       - name: patch net/http/fs.go
+        if: runner.os != 'Windows'
         run: |
           patch -p0 --forward `go env GOROOT`/src/net/http/fs.go < ./script/patch/fs.patch || true
           patch -p0 --forward `go env GOMODCACHE`/github.com/gin-gonic/gin@v1.10.0/context.go < ./script/patch/gin-context.patch || true
+
+      - name: patch net/http/fs.go (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          $GOROOT = & go env GOROOT
+          $GOMODCACHE = & go env GOMODCACHE
+          Get-Content ./script/patch/fs.patch | & patch -p0 --forward "$GOROOT/src/net/http/fs.go"
+          Get-Content ./script/patch/gin-context.patch | & patch -p0 --forward "$GOMODCACHE/github.com/gin-gonic/gin@v1.10.0/context.go"
 
       - name: generate swagger docs
         run: |
@@ -40,14 +49,14 @@ jobs:
           touch ./cmd/dashboard/user-dist/a
           touch ./cmd/dashboard/admin-dist/a
           swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
-          
+
       - name: Unit test
         run: |
           go test -v ./...
-          
+
       - name: Build test
         run: go build -v ./cmd/dashboard
-          
+
       - name: Run Gosec Security Scanner
         if: runner.os == 'Linux'
         uses: securego/gosec@master
