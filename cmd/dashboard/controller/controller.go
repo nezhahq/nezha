@@ -285,10 +285,31 @@ func getUid(c *gin.Context) uint64 {
 	return user.ID
 }
 
+type ginCustomWriter struct {
+	gin.ResponseWriter
+
+	customCode int
+}
+
+func newCustomWriter(c *gin.Context, code int) *ginCustomWriter {
+	return &ginCustomWriter{
+		ResponseWriter: c.Writer,
+		customCode:     code,
+	}
+}
+
+func (w *ginCustomWriter) WriteHeader(code int) {
+	w.ResponseWriter.WriteHeader(w.customCode)
+}
+
+func fileWithCustomStatusCode(c *gin.Context, filepath string, customCode int) {
+	http.ServeFile(newCustomWriter(c, customCode), c.Request, filepath)
+}
+
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string, customStatusCode int) bool {
 		if _, err := os.Stat(path); err == nil {
-			c.FileWithCustomStatusCode(path, customStatusCode)
+			fileWithCustomStatusCode(c, path, customStatusCode)
 			return true
 		}
 		f, err := fs.Open(path)
@@ -303,7 +324,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if fileStat.IsDir() {
 			return false
 		}
-		http.ServeContentCustomStatusCode(c.Writer, c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker), customStatusCode)
+		http.ServeContent(newCustomWriter(c, customStatusCode), c.Request, path, fileStat.ModTime(), f.(io.ReadSeeker))
 		return true
 	}
 	return func(c *gin.Context) {
