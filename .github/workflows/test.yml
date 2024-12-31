@@ -32,8 +32,8 @@ jobs:
       - name: patch net/http/fs.go
         if: runner.os != 'Windows'
         run: |
-          patch -p0 --forward `go env GOROOT`/src/net/http/fs.go < ./script/patch/fs.patch || true
-          patch -p0 --forward `go env GOMODCACHE`/github.com/gin-gonic/gin@v1.10.0/context.go < ./script/patch/gin-context.patch || true
+          sudo patch -p0 --forward `go env GOROOT`/src/net/http/fs.go < ./script/patch/fs.patch || true
+          sudo patch -p0 --forward `go env GOMODCACHE`/github.com/gin-gonic/gin@v1.10.0/context.go < ./script/patch/gin-context.patch || true
 
       - name: patch net/http/fs.go (Windows)
         if: runner.os == 'Windows'
