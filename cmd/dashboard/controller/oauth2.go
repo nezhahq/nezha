@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
@@ -181,6 +182,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 		}
 
 		jwtConfig.SetCookie(c, tokenString)
+		c.Redirect(http.StatusFound, utils.IfOr(state.Action == model.RTypeBind, "/dashboard/profile", "/dashboard/login?oauth2=true"))
 
 		return &model.LoginResponse{Token: tokenString, Expire: expire.Format(time.RFC3339)}, nil
 	}
