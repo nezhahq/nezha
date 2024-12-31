@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
@@ -114,10 +113,10 @@ func unbindOauth2(c *gin.Context) (any, error) {
 // @Produce json
 // @Param state query string true "state"
 // @Param code query string true "code"
-// @Success 200 {object} model.LoginResponse
+// @Success 200 {object} model.CommonResponse[any]
 // @Router /api/v1/oauth2/callback [get]
-func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*model.LoginResponse, error) {
-	return func(c *gin.Context) (*model.LoginResponse, error) {
+func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, error) {
+	return func(c *gin.Context) (any, error) {
 		callbackData := &model.Oauth2Callback{
 			State: c.Query("state"),
 			Code:  c.Query("code"),
@@ -177,7 +176,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 			}
 		}
 
-		tokenString, expire, err := jwtConfig.TokenGenerator(fmt.Sprintf("%d", bind.UserID))
+		tokenString, _, err := jwtConfig.TokenGenerator(fmt.Sprintf("%d", bind.UserID))
 		if err != nil {
 			return nil, err
 		}
@@ -185,7 +184,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (*mode
 		jwtConfig.SetCookie(c, tokenString)
 		c.Redirect(http.StatusFound, utils.IfOr(state.Action == model.RTypeBind, "/dashboard/profile?oauth2=true", "/dashboard/login?oauth2=true"))
 
-		return &model.LoginResponse{Token: tokenString, Expire: expire.Format(time.RFC3339)}, nil
+		return nil, errNoop
 	}
 }
 

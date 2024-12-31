@@ -197,6 +197,8 @@ func (we *wsError) Error() string {
 	return fmt.Sprintf(we.msg, we.a...)
 }
 
+var errNoop = errors.New("wrote")
+
 func commonHandler[T any](handler handlerFunc[T]) func(*gin.Context) {
 	return func(c *gin.Context) {
 		handle(c, handler)
@@ -239,7 +241,9 @@ func handle[T any](c *gin.Context, handler handlerFunc[T]) {
 		}
 		return
 	default:
-		c.JSON(http.StatusOK, newErrorResponse(err))
+		if !errors.Is(err, errNoop) {
+			c.JSON(http.StatusOK, newErrorResponse(err))
+		}
 		return
 	}
 }
