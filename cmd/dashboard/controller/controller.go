@@ -303,7 +303,7 @@ func (w *ginCustomWriter) WriteHeader(code int) {
 }
 
 func fileWithCustomStatusCode(c *gin.Context, filepath string, customCode int) {
-	http.ServeFile(newCustomWriter(c, customCode), c.Request, filepath)
+	http.ServeFile(newCustomWriter(c, customCode), c.Request, path.Clean(filepath))
 }
 
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
@@ -344,7 +344,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 			}
 			return
 		}
-		localFilePath := path.Join(singleton.Conf.UserTemplate, c.Request.URL.Path)
+		localFilePath := path.Join(singleton.Conf.UserTemplate, path.Clean(c.Request.URL.Path))
 		if checkLocalFileOrFs(c, frontendDist, localFilePath, http.StatusOK) {
 			return
 		}
