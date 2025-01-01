@@ -89,6 +89,7 @@ func updateProfile(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
+	singleton.OnUserUpdate(&user)
 	return nil, nil
 }
 
