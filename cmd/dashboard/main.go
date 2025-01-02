@@ -28,7 +28,7 @@ import (
 type DashboardCliParam struct {
 	Version          bool   // 当前版本号
 	ConfigFile       string // 配置文件路径
-	DatebaseLocation string // Sqlite3 数据库文件路径
+	DatabaseLocation string // Sqlite3 数据库文件路径
 }
 
 var (
@@ -95,7 +95,7 @@ func initSystem() {
 func main() {
 	flag.BoolVar(&dashboardCliParam.Version, "v", false, "查看当前版本号")
 	flag.StringVar(&dashboardCliParam.ConfigFile, "c", "data/config.yaml", "配置文件路径")
-	flag.StringVar(&dashboardCliParam.DatebaseLocation, "db", "data/sqlite.db", "Sqlite3数据库文件路径")
+	flag.StringVar(&dashboardCliParam.DatabaseLocation, "db", "data/sqlite.db", "Sqlite3数据库文件路径")
 	flag.Parse()
 
 	if dashboardCliParam.Version {
@@ -107,7 +107,7 @@ func main() {
 	singleton.InitFrontendTemplates()
 	singleton.InitConfigFromPath(dashboardCliParam.ConfigFile)
 	singleton.InitTimezoneAndCache()
-	singleton.InitDBFromPath(dashboardCliParam.DatebaseLocation)
+	singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation)
 	initSystem()
 
 	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort))
