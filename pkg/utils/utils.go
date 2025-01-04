@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/rand"
 	"errors"
+	"iter"
 	"maps"
 	"math/big"
 	"net/netip"
@@ -163,4 +164,14 @@ func Unique[T comparable](s []T) []T {
 		}
 	}
 	return ret
+}
+
+func Map[T, U any](seq iter.Seq[T], f func(e T) U) iter.Seq[U] {
+	return func(yield func(U) bool) {
+		for e := range seq {
+			if !yield(f(e)) {
+				return
+			}
+		}
+	}
 }

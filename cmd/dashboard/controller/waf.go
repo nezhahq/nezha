@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"net"
+	"slices"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -21,7 +23,7 @@ import (
 // @Produce json
 // @Success 200 {object} model.PaginatedResponse[[]model.WAFApiMock, model.WAFApiMock]
 // @Router /waf [get]
-func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
+func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAFApiMock], error) {
 	limit, err := strconv.Atoi(c.Query("limit"))
 	if err != nil || limit < 1 {
 		limit = 25
@@ -42,8 +44,16 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAF], error) {
 		return nil, err
 	}
 
-	return &model.Value[[]*model.WAF]{
-		Value: waf,
+	return &model.Value[[]*model.WAFApiMock]{
+		Value: slices.Collect(utils.Map(slices.Values(waf), func(e *model.WAF) *model.WAFApiMock {
+			return &model.WAFApiMock{
+				IP:              net.IP(e.IP).String(),
+				BlockIdentifier: e.BlockIdentifier,
+				BlockReason:     e.BlockReason,
+				BlockTimestamp:  e.BlockTimestamp,
+				Count:           e.Count,
+			}
+		})),
 		Pagination: model.Pagination{
 			Offset: offset,
 			Limit:  limit,
