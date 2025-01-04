@@ -166,7 +166,7 @@ func Unique[T comparable](s []T) []T {
 	return ret
 }
 
-func Map[T, U any](seq iter.Seq[T], f func(e T) U) iter.Seq[U] {
+func ConvertSeq[T, U any](seq iter.Seq[T], f func(e T) U) iter.Seq[U] {
 	return func(yield func(U) bool) {
 		for e := range seq {
 			if !yield(f(e)) {

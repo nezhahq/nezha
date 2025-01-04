@@ -45,7 +45,7 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAFApiMock], erro
 	}
 
 	return &model.Value[[]*model.WAFApiMock]{
-		Value: slices.Collect(utils.Map(slices.Values(waf), func(e *model.WAF) *model.WAFApiMock {
+		Value: slices.Collect(utils.ConvertSeq(slices.Values(waf), func(e *model.WAF) *model.WAFApiMock {
 			return &model.WAFApiMock{
 				IP:              net.IP(e.IP).String(),
 				BlockIdentifier: e.BlockIdentifier,
