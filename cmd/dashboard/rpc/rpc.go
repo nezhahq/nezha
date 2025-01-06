@@ -57,7 +57,8 @@ func getRealIp(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
 	} else {
 		vals := metadata.ValueFromIncomingContext(ctx, singleton.Conf.RealIPHeader)
 		if len(vals) == 0 {
-			return nil, fmt.Errorf("real ip header not found")
+			// 如果没有找到指定的 Header，使用NZ::Use-Peer-IP
+			return handler(ctx, req)
 		}
 		var err error
 		ip, err = utils.GetIPFromHeader(vals[0])
