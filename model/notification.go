@@ -70,7 +70,7 @@ func (ns *NotificationServerBundle) reqBody(message string) (string, error) {
 			return string(msgBytes)[1 : len(msgBytes)-1]
 		}), nil
 	case NotificationRequestTypeForm:
-		data, err := utils.GjsonParseStringMap(n.RequestBody)
+		data, err := utils.GjsonIter(n.RequestBody)
 		if err != nil {
 			return "", err
 		}
@@ -98,7 +98,7 @@ func (n *Notification) setRequestHeader(req *http.Request) error {
 	if n.RequestHeader == "" {
 		return nil
 	}
-	m, err := utils.GjsonParseStringMap(n.RequestHeader)
+	m, err := utils.GjsonIter(n.RequestHeader)
 	if err != nil {
 		return err
 	}
