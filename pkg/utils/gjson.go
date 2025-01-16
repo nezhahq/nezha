@@ -12,6 +12,8 @@ var (
 	ErrGjsonWrongType = errors.New("wrong type")
 )
 
+var emptyIterator = func(yield func(string, string) bool) {}
+
 func GjsonGet(json []byte, path string) (gjson.Result, error) {
 	result := gjson.GetBytes(json, path)
 	if !result.Exists() {
@@ -23,7 +25,7 @@ func GjsonGet(json []byte, path string) (gjson.Result, error) {
 
 func GjsonIter(json string) (iter.Seq2[string, string], error) {
 	if json == "" {
-		return nil, nil
+		return emptyIterator, nil
 	}
 
 	result := gjson.Parse(json)
