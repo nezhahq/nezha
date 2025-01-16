@@ -48,11 +48,11 @@ func (provider *Provider) UpdateDomain(ctx context.Context) {
 	for _, domain := range provider.DDNSProfile.Domains {
 		for retries := 0; retries < int(provider.DDNSProfile.MaxRetries); retries++ {
 			provider.domain = domain
-			log.Printf("NEZHA>> 正在尝试更新域名(%s)DDNS(%d/%d)", provider.domain, retries+1, provider.DDNSProfile.MaxRetries)
+			log.Printf("NEZHA>> Updating DNS Record of domain %s: %d/%d", provider.domain, retries+1, provider.DDNSProfile.MaxRetries)
 			if err := provider.updateDomain(); err != nil {
-				log.Printf("NEZHA>> 尝试更新域名(%s)DDNS失败: %v", provider.domain, err)
+				log.Printf("NEZHA>> Failed to update DNS record of domain %s: %v", provider.domain, err)
 			} else {
-				log.Printf("NEZHA>> 尝试更新域名(%s)DDNS成功", provider.domain)
+				log.Printf("NEZHA>> Update DNS record of domain %s succeed", provider.domain)
 				break
 			}
 		}

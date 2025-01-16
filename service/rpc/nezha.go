@@ -239,7 +239,7 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 				}(provider)
 			}
 		} else {
-			log.Printf("NEZHA>> 获取DDNS配置时发生错误: %v", err)
+			log.Printf("NEZHA>> Failed to retrieve DDNS configuration: %v", err)
 		}
 	}
 

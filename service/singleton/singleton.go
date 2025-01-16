@@ -112,7 +112,7 @@ func RecordTransferHourlyUsage() {
 	if len(txs) == 0 {
 		return
 	}
-	log.Println("NEZHA>> Cron 流量统计入库", len(txs), DB.Create(txs).Error)
+	log.Printf("NEZHA>> Saved traffic metrics to database. Affected %d row(s), Error: %v", len(txs), DB.Create(txs).Error)
 }
 
 // CleanServiceHistory 清理无效或过时的 监控记录 和 流量记录

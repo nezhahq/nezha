@@ -74,20 +74,20 @@ func AlertSentinelStart() {
 	AlertsLock.Unlock()
 
 	time.Sleep(time.Second * 10)
-	var lastPrint time.Time
+	lastPrint := time.Now()
 	var checkCount uint64
+	ticker := time.Tick(3 * time.Second) // 3秒钟检查一次
 	for {
-		startedAt := time.Now()
+		startedAt := <-ticker
 		checkStatus()
 		checkCount++
 		if lastPrint.Before(startedAt.Add(-1 * time.Hour)) {
 			if Conf.Debug {
-				log.Println("NEZHA>> 报警规则检测每小时", checkCount, "次", startedAt, time.Now())
+				log.Printf("NEZHA>> Checking alert rules %d times each hour %v %v", checkCount, startedAt, time.Now())
 			}
 			checkCount = 0
 			lastPrint = startedAt
 		}
-		time.Sleep(time.Until(startedAt.Add(time.Second * 3))) // 3秒钟检查一次
 	}
 }
 

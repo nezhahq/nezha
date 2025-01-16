@@ -247,7 +247,7 @@ func SendNotification(notificationGroupID uint64, desc string, muteLabel *string
 
 		if !flag {
 			if Conf.Debug {
-				log.Println("NEZHA>> 静音的重复通知：", desc, muteLabel)
+				log.Println("NEZHA>> Muted repeated notification", desc, muteLabel)
 			}
 			return
 		}
@@ -256,7 +256,7 @@ func SendNotification(notificationGroupID uint64, desc string, muteLabel *string
 	NotificationsLock.RLock()
 	defer NotificationsLock.RUnlock()
 	for _, n := range NotificationList[notificationGroupID] {
-		log.Println("NEZHA>> 尝试通知", n.Name)
+		log.Printf("NEZHA>> Try to notify %s", n.Name)
 	}
 	for _, n := range NotificationList[notificationGroupID] {
 		ns := model.NotificationServerBundle{
@@ -268,9 +268,9 @@ func SendNotification(notificationGroupID uint64, desc string, muteLabel *string
 			ns.Server = ext[0]
 		}
 		if err := ns.Send(desc); err != nil {
-			log.Println("NEZHA>> 向 ", n.Name, " 发送通知失败：", err)
+			log.Printf("NEZHA>> Sending notification to %s failed: %v", n.Name, err)
 		} else {
-			log.Println("NEZHA>> 向 ", n.Name, " 发送通知成功：")
+			log.Printf("NEZHA>> Sending notification to %s succeed", n.Name)
 		}
 	}
 }

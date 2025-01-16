@@ -102,15 +102,15 @@ func (r *AlertRule) Check(points [][]bool) (maxDuration int, passed bool) {
 				hasPassedRule = true
 				continue
 			}
-			total, fail := 0.0, 0.0
-			for timeTick := len(points) - duration; timeTick < len(points); timeTick++ {
+			total, fail := 0, 0
+			for _, point := range points[len(points)-duration:] {
 				total++
-				if !points[timeTick][ruleId] {
+				if !point[ruleId] {
 					fail++
 				}
 			}
 			// 当70%以上的采样点未通过规则判断时 才认为当前检查未通过
-			if fail/total <= 0.7 {
+			if fail*100/total*100 <= 70 {
 				hasPassedRule = true
 			}
 		}

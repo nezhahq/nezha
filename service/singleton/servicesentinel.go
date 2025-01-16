@@ -359,7 +359,7 @@ func (ss *ServiceSentinel) worker() {
 	// 从服务状态汇报管道获取汇报的服务数据
 	for r := range ss.serviceReportChannel {
 		if ss.Services[r.Data.GetId()] == nil || ss.Services[r.Data.GetId()].ID == 0 {
-			log.Printf("NEZHA>> 错误的服务监控上报 %+v", r)
+			log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
 			continue
 		}
 		mh := r.Data
@@ -383,7 +383,7 @@ func (ss *ServiceSentinel) worker() {
 					Data:      mh.Data,
 					ServerID:  r.Reporter,
 				}).Error; err != nil {
-					log.Println("NEZHA>> 服务监控数据持久化失败：", err)
+					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 				}
 			}
 			serviceTcpMap[r.Reporter] = ts
@@ -450,7 +450,7 @@ func (ss *ServiceSentinel) worker() {
 				Up:        ss.serviceResponseDataStoreCurrentUp[mh.GetId()],
 				Down:      ss.serviceResponseDataStoreCurrentDown[mh.GetId()],
 			}).Error; err != nil {
-				log.Println("NEZHA>> 服务监控数据持久化失败：", err)
+				log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 			}
 		}
 
