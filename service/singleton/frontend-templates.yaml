@@ -11,6 +11,12 @@
   author: "hamster1963"
   version: "v1.12.5"
   isofficial: true
+- path: "nezha-ascii-dist"
+  name: "Nezha-ASCII"
+  repository: "https://github.com/hamster1963/nezha-ascii"
+  author: "hamster1963"
+  version: "v1.0.0"
+  isofficial: true
 - path: "nazhua-dist"
   name: "Nazhua"
   repository: "https://github.com/hi2shark/nazhua"
