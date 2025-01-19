@@ -16,7 +16,7 @@
   repository: "https://github.com/hamster1963/nezha-ascii"
   author: "hamster1963"
   version: "v1.0.0"
-  isofficial: true
+  isofficial: false
 - path: "nazhua-dist"
   name: "Nazhua"
   repository: "https://github.com/hi2shark/nazhua"
