@@ -33,7 +33,7 @@ type DashboardCliParam struct {
 
 var (
 	dashboardCliParam DashboardCliParam
-	//go:embed *-dist
+	//go:embed all:*-dist
 	frontendDist embed.FS
 )
 
