@@ -84,11 +84,19 @@ func updateServer(c *gin.Context) (any, error) {
 	s.HideForGuest = sf.HideForGuest
 	s.EnableDDNS = sf.EnableDDNS
 	s.DDNSProfiles = sf.DDNSProfiles
+	s.OverrideDDNSDomains = sf.OverrideDDNSDomains
+
 	ddnsProfilesRaw, err := utils.Json.Marshal(s.DDNSProfiles)
 	if err != nil {
 		return nil, err
 	}
 	s.DDNSProfilesRaw = string(ddnsProfilesRaw)
+
+	overrideDomainsRaw, err := utils.Json.Marshal(sf.OverrideDDNSDomains)
+	if err != nil {
+		return nil, err
+	}
+	s.OverrideDDNSDomainsRaw = string(overrideDomainsRaw)
 
 	if err := singleton.DB.Save(&s).Error; err != nil {
 		return nil, newGormError("%v", err)

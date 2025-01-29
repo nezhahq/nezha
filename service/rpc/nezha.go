@@ -231,11 +231,13 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 		(server.GeoIP == nil || server.GeoIP.IP != geoip.IP) {
 		ipv4 := geoip.IP.IPv4Addr
 		ipv6 := geoip.IP.IPv6Addr
+
 		providers, err := singleton.GetDDNSProvidersFromProfiles(server.DDNSProfiles, &ddns.IP{Ipv4Addr: ipv4, Ipv6Addr: ipv6})
 		if err == nil {
 			for _, provider := range providers {
+				domains := server.OverrideDDNSDomains[provider.GetProfileID()]
 				go func(provider *ddns.Provider) {
-					provider.UpdateDomain(context.Background())
+					provider.UpdateDomain(context.Background(), domains...)
 				}(provider)
 			}
 		} else {
