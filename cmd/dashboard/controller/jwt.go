@@ -148,7 +148,7 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 	})
 }
 
-func optionalAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
+func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		claims, err := mw.GetClaimsFromJWT(c)
 		if err != nil {
