@@ -48,7 +48,8 @@ type Config struct {
 	ListenHost     string `mapstructure:"listen_host" json:"listen_host,omitempty"`
 	InstallHost    string `mapstructure:"install_host" json:"install_host,omitempty"`
 	TLS            bool   `mapstructure:"tls" json:"tls,omitempty"`
-	Location       string `mapstructure:"location" json:"location,omitempty"` // 时区，默认为 Asia/Shanghai
+	Location       string `mapstructure:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
+	ForceAuth      bool   `mapstructure:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
 
 	EnablePlainIPInNotification bool `mapstructure:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
 
