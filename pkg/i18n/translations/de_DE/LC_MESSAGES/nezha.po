@@ -7,11 +7,11 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-31 21:25+0800\n"
+"POT-Creation-Date: 2025-01-30 21:58+0800\n"
 "PO-Revision-Date: 2025-01-03 07:07+0000\n"
 "Last-Translator: UUBulb <uub@kuzu.uk>\n"
-"Language-Team: German <https://hosted.weblate.org/projects/nezha/"
-"nezha-dashboard/de/>\n"
+"Language-Team: German <https://hosted.weblate.org/projects/nezha/nezha-"
+"dashboard/de/>\n"
 "Language: de_DE\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
@@ -27,28 +27,28 @@ msgstr "benachrichtigungs ID %d existiert nicht"
 #: cmd/dashboard/controller/alertrule.go:108
 #: cmd/dashboard/controller/alertrule.go:156
 #: cmd/dashboard/controller/alertrule.go:176
-#: cmd/dashboard/controller/controller.go:216
+#: cmd/dashboard/controller/controller.go:226
 #: cmd/dashboard/controller/cron.go:58 cmd/dashboard/controller/cron.go:124
 #: cmd/dashboard/controller/cron.go:136 cmd/dashboard/controller/cron.go:195
 #: cmd/dashboard/controller/cron.go:224 cmd/dashboard/controller/ddns.go:131
 #: cmd/dashboard/controller/ddns.go:192 cmd/dashboard/controller/fm.go:43
-#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:110
-#: cmd/dashboard/controller/nat.go:121 cmd/dashboard/controller/nat.go:160
+#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:111
+#: cmd/dashboard/controller/nat.go:122 cmd/dashboard/controller/nat.go:162
 #: cmd/dashboard/controller/notification.go:112
 #: cmd/dashboard/controller/notification.go:166
 #: cmd/dashboard/controller/notification_group.go:76
 #: cmd/dashboard/controller/notification_group.go:152
 #: cmd/dashboard/controller/notification_group.go:164
 #: cmd/dashboard/controller/notification_group.go:233
-#: cmd/dashboard/controller/server.go:65 cmd/dashboard/controller/server.go:77
-#: cmd/dashboard/controller/server.go:128
-#: cmd/dashboard/controller/server.go:192
+#: cmd/dashboard/controller/server.go:66 cmd/dashboard/controller/server.go:78
+#: cmd/dashboard/controller/server.go:137
+#: cmd/dashboard/controller/server.go:201
 #: cmd/dashboard/controller/server_group.go:75
 #: cmd/dashboard/controller/server_group.go:150
 #: cmd/dashboard/controller/server_group.go:229
-#: cmd/dashboard/controller/service.go:273
-#: cmd/dashboard/controller/service.go:344
-#: cmd/dashboard/controller/service.go:371
+#: cmd/dashboard/controller/service.go:271
+#: cmd/dashboard/controller/service.go:342
+#: cmd/dashboard/controller/service.go:369
 #: cmd/dashboard/controller/terminal.go:41
 msgid "permission denied"
 msgstr "zugriff verweigert"
@@ -73,15 +73,15 @@ msgstr "cycle_start ist ein zukünftiger wert"
 msgid "need to configure at least a single rule"
 msgstr "mindestens eine Regel muss konfiguriert sein"
 
-#: cmd/dashboard/controller/controller.go:210
-#: cmd/dashboard/controller/oauth2.go:152
+#: cmd/dashboard/controller/controller.go:220
+#: cmd/dashboard/controller/oauth2.go:153
 #: cmd/dashboard/controller/server_group.go:162
-#: cmd/dashboard/controller/service.go:96 cmd/dashboard/controller/user.go:27
+#: cmd/dashboard/controller/service.go:97 cmd/dashboard/controller/user.go:27
 #: cmd/dashboard/controller/user.go:63
 msgid "unauthorized"
 msgstr "nicht autorisiert"
 
-#: cmd/dashboard/controller/controller.go:233
+#: cmd/dashboard/controller/controller.go:243
 msgid "database error"
 msgstr "datenbankfehler"
 
@@ -102,7 +102,7 @@ msgstr "der retry_count muss eine Zahl zwischen 1 und 10 sein"
 msgid "error parsing %s: %v"
 msgstr "fehler beim parsen von %s: %v"
 
-#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:117
+#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:118
 #, c-format
 msgid "profile id %d does not exist"
 msgstr "profil ID %d existiert nicht"
@@ -149,32 +149,46 @@ msgstr "operation nicht erlaubt"
 msgid "code is required"
 msgstr "code ist erforderlich"
 
-#: cmd/dashboard/controller/oauth2.go:174
+#: cmd/dashboard/controller/oauth2.go:175
 msgid "oauth2 user not binded yet"
 msgstr "oauth2-benutzer noch nicht verbunden"
 
-#: cmd/dashboard/controller/oauth2.go:215
-#: cmd/dashboard/controller/oauth2.go:221
-#: cmd/dashboard/controller/oauth2.go:226
+#: cmd/dashboard/controller/oauth2.go:217
+#: cmd/dashboard/controller/oauth2.go:223
+#: cmd/dashboard/controller/oauth2.go:228
 msgid "invalid state key"
 msgstr "invalider zustandsschlüssel"
 
-#: cmd/dashboard/controller/server.go:73
+#: cmd/dashboard/controller/server.go:74
 #, c-format
 msgid "server id %d does not exist"
 msgstr "server ID %d existiert nicht"
+
+#: cmd/dashboard/controller/server.go:250
+#, fuzzy
+#| msgid "operation not permitted"
+msgid "operation timeout"
+msgstr "operation nicht erlaubt"
+
+#: cmd/dashboard/controller/server.go:257
+msgid "get server config failed: %v"
+msgstr ""
+
+#: cmd/dashboard/controller/server.go:261
+msgid "get server config failed"
+msgstr ""
 
 #: cmd/dashboard/controller/server_group.go:92
 #: cmd/dashboard/controller/server_group.go:172
 msgid "have invalid server id"
 msgstr "haben ungültige Server ID"
 
-#: cmd/dashboard/controller/service.go:89
+#: cmd/dashboard/controller/service.go:90
 #: cmd/dashboard/controller/service.go:165
 msgid "server not found"
 msgstr "server nicht gefunden"
 
-#: cmd/dashboard/controller/service.go:269
+#: cmd/dashboard/controller/service.go:267
 #, c-format
 msgid "service id %d does not exist"
 msgstr "service ID %d existiert nicht"
@@ -187,19 +201,19 @@ msgstr "falsches passwort"
 msgid "you don't have any oauth2 bindings"
 msgstr "keine oauth2 Verbindungen vorhanden"
 
-#: cmd/dashboard/controller/user.go:130
+#: cmd/dashboard/controller/user.go:131
 msgid "password length must be greater than 6"
 msgstr "passwort muss länger als 6 Zeichen sein"
 
-#: cmd/dashboard/controller/user.go:133
+#: cmd/dashboard/controller/user.go:134
 msgid "username can't be empty"
 msgstr "benutzername darf nicht leer sein"
 
-#: cmd/dashboard/controller/user.go:136
+#: cmd/dashboard/controller/user.go:137
 msgid "invalid role"
 msgstr "fehlerhafte Rolle"
 
-#: cmd/dashboard/controller/user.go:175
+#: cmd/dashboard/controller/user.go:176
 msgid "can't delete yourself"
 msgstr "du kannst dich selbst nicht löschen"
 
@@ -215,23 +229,23 @@ msgstr "timeout: Benutzerverbindung nicht etabliert"
 msgid "timeout: agent connection not established"
 msgstr "timeout: Agent-Verbindung nicht etabliert"
 
-#: service/rpc/nezha.go:69
+#: service/rpc/nezha.go:71
 msgid "Scheduled Task Executed Successfully"
 msgstr "geplante Aufgabe erfolgreich ausgeführt"
 
-#: service/rpc/nezha.go:73
+#: service/rpc/nezha.go:75
 msgid "Scheduled Task Executed Failed"
 msgstr "geplante Aufgabe fehlgeschlagen"
 
-#: service/rpc/nezha.go:245
+#: service/rpc/nezha.go:274
 msgid "IP Changed"
 msgstr "IP geändert"
 
-#: service/singleton/alertsentinel.go:170
+#: service/singleton/alertsentinel.go:169
 msgid "Incident"
 msgstr "Vorfall"
 
-#: service/singleton/alertsentinel.go:180
+#: service/singleton/alertsentinel.go:179
 msgid "Resolved"
 msgstr "Gelöst"
 

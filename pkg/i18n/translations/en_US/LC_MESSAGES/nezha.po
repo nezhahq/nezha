@@ -7,15 +7,17 @@ msgid ""
 msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2025-01-30 14:31+0800\n"
-"PO-Revision-Date: 2025-01-30 14:31+0800\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"POT-Creation-Date: 2025-01-30 21:58+0800\n"
+"PO-Revision-Date: 2025-01-31 07:10+0000\n"
+"Last-Translator: UUBulb <uub@kuzu.uk>\n"
+"Language-Team: English (United States) <https://hosted.weblate.org/projects/"
+"nezha/nezha-dashboard/en_US/>\n"
 "Language: en_US\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.10-dev\n"
 
 #: cmd/dashboard/controller/alertrule.go:104
 #, c-format
@@ -162,9 +164,17 @@ msgstr "invalid state key"
 msgid "server id %d does not exist"
 msgstr "server id %d does not exist"
 
-#: cmd/dashboard/controller/server.go:251
+#: cmd/dashboard/controller/server.go:250
 msgid "operation timeout"
 msgstr "operation timeout"
+
+#: cmd/dashboard/controller/server.go:257
+msgid "get server config failed: %v"
+msgstr "get server config failed: %v"
+
+#: cmd/dashboard/controller/server.go:261
+msgid "get server config failed"
+msgstr "get server config failed"
 
 #: cmd/dashboard/controller/server_group.go:92
 #: cmd/dashboard/controller/server_group.go:172
@@ -217,15 +227,15 @@ msgstr "timeout: user connection not established"
 msgid "timeout: agent connection not established"
 msgstr "timeout: agent connection not established"
 
-#: service/rpc/nezha.go:70
+#: service/rpc/nezha.go:71
 msgid "Scheduled Task Executed Successfully"
 msgstr "Scheduled Task Executed Successfully"
 
-#: service/rpc/nezha.go:74
+#: service/rpc/nezha.go:75
 msgid "Scheduled Task Executed Failed"
 msgstr "Scheduled Task Executed Failed"
 
-#: service/rpc/nezha.go:268
+#: service/rpc/nezha.go:274
 msgid "IP Changed"
 msgstr "IP Changed"
 

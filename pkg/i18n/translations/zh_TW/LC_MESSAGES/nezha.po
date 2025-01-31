@@ -7,8 +7,8 @@ msgid ""
 msgstr ""
 "Project-Id-Version: \n"
 "Report-Msgid-Bugs-To: \n"
-"POT-Creation-Date: 2024-12-31 21:25+0800\n"
-"PO-Revision-Date: 2024-12-31 15:18+0000\n"
+"POT-Creation-Date: 2025-01-30 21:58+0800\n"
+"PO-Revision-Date: 2025-01-31 07:10+0000\n"
 "Last-Translator: UUBulb <uub@kuzu.uk>\n"
 "Language-Team: Chinese (Traditional Han script) <https://hosted.weblate.org/"
 "projects/nezha/nezha-dashboard/zh_Hant/>\n"
@@ -27,28 +27,28 @@ msgstr "告警 ID %d 不存在"
 #: cmd/dashboard/controller/alertrule.go:108
 #: cmd/dashboard/controller/alertrule.go:156
 #: cmd/dashboard/controller/alertrule.go:176
-#: cmd/dashboard/controller/controller.go:216
+#: cmd/dashboard/controller/controller.go:226
 #: cmd/dashboard/controller/cron.go:58 cmd/dashboard/controller/cron.go:124
 #: cmd/dashboard/controller/cron.go:136 cmd/dashboard/controller/cron.go:195
 #: cmd/dashboard/controller/cron.go:224 cmd/dashboard/controller/ddns.go:131
 #: cmd/dashboard/controller/ddns.go:192 cmd/dashboard/controller/fm.go:43
-#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:110
-#: cmd/dashboard/controller/nat.go:121 cmd/dashboard/controller/nat.go:160
+#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:111
+#: cmd/dashboard/controller/nat.go:122 cmd/dashboard/controller/nat.go:162
 #: cmd/dashboard/controller/notification.go:112
 #: cmd/dashboard/controller/notification.go:166
 #: cmd/dashboard/controller/notification_group.go:76
 #: cmd/dashboard/controller/notification_group.go:152
 #: cmd/dashboard/controller/notification_group.go:164
 #: cmd/dashboard/controller/notification_group.go:233
-#: cmd/dashboard/controller/server.go:65 cmd/dashboard/controller/server.go:77
-#: cmd/dashboard/controller/server.go:128
-#: cmd/dashboard/controller/server.go:192
+#: cmd/dashboard/controller/server.go:66 cmd/dashboard/controller/server.go:78
+#: cmd/dashboard/controller/server.go:137
+#: cmd/dashboard/controller/server.go:201
 #: cmd/dashboard/controller/server_group.go:75
 #: cmd/dashboard/controller/server_group.go:150
 #: cmd/dashboard/controller/server_group.go:229
-#: cmd/dashboard/controller/service.go:273
-#: cmd/dashboard/controller/service.go:344
-#: cmd/dashboard/controller/service.go:371
+#: cmd/dashboard/controller/service.go:271
+#: cmd/dashboard/controller/service.go:342
+#: cmd/dashboard/controller/service.go:369
 #: cmd/dashboard/controller/terminal.go:41
 msgid "permission denied"
 msgstr "權限不夠"
@@ -73,15 +73,15 @@ msgstr "cycle_start 是未來值"
 msgid "need to configure at least a single rule"
 msgstr "需要至少定義一條規則"
 
-#: cmd/dashboard/controller/controller.go:210
-#: cmd/dashboard/controller/oauth2.go:152
+#: cmd/dashboard/controller/controller.go:220
+#: cmd/dashboard/controller/oauth2.go:153
 #: cmd/dashboard/controller/server_group.go:162
-#: cmd/dashboard/controller/service.go:96 cmd/dashboard/controller/user.go:27
+#: cmd/dashboard/controller/service.go:97 cmd/dashboard/controller/user.go:27
 #: cmd/dashboard/controller/user.go:63
 msgid "unauthorized"
 msgstr "未授權"
 
-#: cmd/dashboard/controller/controller.go:233
+#: cmd/dashboard/controller/controller.go:243
 msgid "database error"
 msgstr "資料庫錯誤"
 
@@ -102,7 +102,7 @@ msgstr "重試次數必須為大於 1 且不超過 10 的整數"
 msgid "error parsing %s: %v"
 msgstr "解析 %s 時發生錯誤：%v"
 
-#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:117
+#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:118
 #, c-format
 msgid "profile id %d does not exist"
 msgstr "配置 id %d 不存在"
@@ -149,32 +149,44 @@ msgstr "不允許該操作"
 msgid "code is required"
 msgstr "需要 code"
 
-#: cmd/dashboard/controller/oauth2.go:174
+#: cmd/dashboard/controller/oauth2.go:175
 msgid "oauth2 user not binded yet"
 msgstr "oauth2 使用者仍未繫結"
 
-#: cmd/dashboard/controller/oauth2.go:215
-#: cmd/dashboard/controller/oauth2.go:221
-#: cmd/dashboard/controller/oauth2.go:226
+#: cmd/dashboard/controller/oauth2.go:217
+#: cmd/dashboard/controller/oauth2.go:223
+#: cmd/dashboard/controller/oauth2.go:228
 msgid "invalid state key"
 msgstr "不正确的 state key"
 
-#: cmd/dashboard/controller/server.go:73
+#: cmd/dashboard/controller/server.go:74
 #, c-format
 msgid "server id %d does not exist"
 msgstr "伺服器 id %d 不存在"
+
+#: cmd/dashboard/controller/server.go:250
+msgid "operation timeout"
+msgstr "操作超時"
+
+#: cmd/dashboard/controller/server.go:257
+msgid "get server config failed: %v"
+msgstr "獲取伺服器配置失敗: %v"
+
+#: cmd/dashboard/controller/server.go:261
+msgid "get server config failed"
+msgstr "獲取伺服器配置失"
 
 #: cmd/dashboard/controller/server_group.go:92
 #: cmd/dashboard/controller/server_group.go:172
 msgid "have invalid server id"
 msgstr "伺服器 id 無效"
 
-#: cmd/dashboard/controller/service.go:89
+#: cmd/dashboard/controller/service.go:90
 #: cmd/dashboard/controller/service.go:165
 msgid "server not found"
 msgstr "未找到伺服器"
 
-#: cmd/dashboard/controller/service.go:269
+#: cmd/dashboard/controller/service.go:267
 #, c-format
 msgid "service id %d does not exist"
 msgstr "服務 id %d 不存在"
@@ -187,19 +199,19 @@ msgstr "密碼錯誤"
 msgid "you don't have any oauth2 bindings"
 msgstr "你沒有任何 oauth2 繫結關係"
 
-#: cmd/dashboard/controller/user.go:130
+#: cmd/dashboard/controller/user.go:131
 msgid "password length must be greater than 6"
 msgstr "密碼長度必須大於 6"
 
-#: cmd/dashboard/controller/user.go:133
+#: cmd/dashboard/controller/user.go:134
 msgid "username can't be empty"
 msgstr "使用者名稱不能為空"
 
-#: cmd/dashboard/controller/user.go:136
+#: cmd/dashboard/controller/user.go:137
 msgid "invalid role"
 msgstr "不正確的角色"
 
-#: cmd/dashboard/controller/user.go:175
+#: cmd/dashboard/controller/user.go:176
 msgid "can't delete yourself"
 msgstr "無法刪除自己"
 
@@ -215,23 +227,23 @@ msgstr "超時：使用者連線未建立"
 msgid "timeout: agent connection not established"
 msgstr "超時：agent 連線未建立"
 
-#: service/rpc/nezha.go:69
+#: service/rpc/nezha.go:71
 msgid "Scheduled Task Executed Successfully"
 msgstr "排程任務執行成功"
 
-#: service/rpc/nezha.go:73
+#: service/rpc/nezha.go:75
 msgid "Scheduled Task Executed Failed"
 msgstr "排程任務執行失敗"
 
-#: service/rpc/nezha.go:245
+#: service/rpc/nezha.go:274
 msgid "IP Changed"
 msgstr "IP 變更"
 
-#: service/singleton/alertsentinel.go:170
+#: service/singleton/alertsentinel.go:169
 msgid "Incident"
 msgstr "事件"
 
-#: service/singleton/alertsentinel.go:180
+#: service/singleton/alertsentinel.go:179
 msgid "Resolved"
 msgstr "恢復"
 
