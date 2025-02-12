@@ -54,6 +54,12 @@ func loadNotifications() {
 		panic(err)
 	}
 
+	var groups []model.NotificationGroup
+	DB.Find(&groups)
+	for _, grp := range groups {
+		NotificationGroup[grp.ID] = grp.Name
+	}
+
 	NotificationMap = make(map[uint64]*model.Notification, len(NotificationListSorted))
 	for i := range NotificationListSorted {
 		NotificationMap[NotificationListSorted[i].ID] = NotificationListSorted[i]

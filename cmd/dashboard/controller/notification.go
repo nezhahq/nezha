@@ -163,6 +163,7 @@ func batchDeleteNotification(c *gin.Context) (any, error) {
 	for _, nid := range n {
 		if ns, ok := singleton.NotificationMap[nid]; ok {
 			if !ns.HasPermission(c) {
+				singleton.NotificationsLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
