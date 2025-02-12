@@ -50,16 +50,14 @@ func createCron(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	singleton.ServerLock.RLock()
+	m := singleton.ServerShared.GetList()
 	for _, sid := range cf.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
+		if server, ok := m[sid]; ok {
 			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
 				return 0, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	cr.UserID = getUid(c)
 	cr.TaskType = cf.TaskType
@@ -116,16 +114,14 @@ func updateCron(c *gin.Context) (any, error) {
 		return 0, err
 	}
 
-	singleton.ServerLock.RLock()
+	m := singleton.ServerShared.GetList()
 	for _, sid := range cf.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
+		if server, ok := m[sid]; ok {
 			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	var cr model.Cron
 	if err := singleton.DB.First(&cr, id).Error; err != nil {

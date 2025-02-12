@@ -3,69 +3,89 @@ package singleton
 import (
 	"cmp"
 	"slices"
-	"sync"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
-var (
-	NATCache       = make(map[string]*model.NAT)
-	NATCacheRwLock sync.RWMutex
+type NATClass struct {
+	class[string, *model.NAT]
 
-	NATIDToDomain = make(map[uint64]string)
-	NATList       []*model.NAT
-	NATListLock   sync.RWMutex
-)
+	idToDomain map[uint64]string
+}
 
-func initNAT() {
-	DB.Find(&NATList)
-	NATCache = make(map[string]*model.NAT)
-	for i := 0; i < len(NATList); i++ {
-		NATCache[NATList[i].Domain] = NATList[i]
-		NATIDToDomain[NATList[i].ID] = NATList[i].Domain
+func NewNATClass() *NATClass {
+	var sortedList []*model.NAT
+
+	DB.Find(&sortedList)
+	list := make(map[string]*model.NAT, len(sortedList))
+	idToDomain := make(map[uint64]string, len(sortedList))
+	for _, profile := range list {
+		list[profile.Domain] = profile
+		idToDomain[profile.ID] = profile.Domain
+	}
+
+	return &NATClass{
+		class: class[string, *model.NAT]{
+			list:       list,
+			sortedList: sortedList,
+		},
+		idToDomain: idToDomain,
 	}
 }
 
-func OnNATUpdate(n *model.NAT) {
-	NATCacheRwLock.Lock()
-	defer NATCacheRwLock.Unlock()
+func (c *NATClass) Update(n *model.NAT) {
+	c.listMu.Lock()
 
-	if oldDomain, ok := NATIDToDomain[n.ID]; ok && oldDomain != n.Domain {
-		delete(NATCache, oldDomain)
+	if oldDomain, ok := c.idToDomain[n.ID]; ok && oldDomain != n.Domain {
+		delete(c.list, oldDomain)
 	}
 
-	NATCache[n.Domain] = n
-	NATIDToDomain[n.ID] = n.Domain
+	c.list[n.Domain] = n
+	c.idToDomain[n.ID] = n.Domain
+
+	c.listMu.Unlock()
+	c.sortList()
 }
 
-func OnNATDelete(id []uint64) {
-	NATCacheRwLock.Lock()
-	defer NATCacheRwLock.Unlock()
+func (c *NATClass) Delete(idList []uint64) {
+	c.listMu.Lock()
 
-	for _, i := range id {
-		if domain, ok := NATIDToDomain[i]; ok {
-			delete(NATCache, domain)
-			delete(NATIDToDomain, i)
+	for _, id := range idList {
+		if domain, ok := c.idToDomain[id]; ok {
+			delete(c.list, domain)
+			delete(c.idToDomain, id)
 		}
 	}
+
+	c.listMu.Unlock()
+	c.sortList()
 }
 
-func UpdateNATList() {
-	NATCacheRwLock.RLock()
-	defer NATCacheRwLock.RUnlock()
+func (c *NATClass) GetNATConfigByDomain(domain string) *model.NAT {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
 
-	NATListLock.Lock()
-	defer NATListLock.Unlock()
+	return c.list[domain]
+}
 
-	NATList = utils.MapValuesToSlice(NATCache)
-	slices.SortFunc(NATList, func(a, b *model.NAT) int {
+func (c *NATClass) GetDomain(id uint64) string {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	return c.idToDomain[id]
+}
+
+func (c *NATClass) sortList() {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	sortedList := utils.MapValuesToSlice(c.list)
+	slices.SortFunc(sortedList, func(a, b *model.NAT) int {
 		return cmp.Compare(a.ID, b.ID)
 	})
-}
 
-func GetNATConfigByDomain(domain string) *model.NAT {
-	NATCacheRwLock.RLock()
-	defer NATCacheRwLock.RUnlock()
-	return NATCache[domain]
+	c.sortedListMu.Lock()
+	defer c.sortedListMu.Unlock()
+	c.sortedList = sortedList
 }

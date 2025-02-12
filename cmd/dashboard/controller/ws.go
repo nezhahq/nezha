@@ -158,14 +158,11 @@ var requestGroup singleflight.Group
 
 func getServerStat(withPublicNote, authorized bool) ([]byte, error) {
 	v, err, _ := requestGroup.Do(fmt.Sprintf("serverStats::%t", authorized), func() (interface{}, error) {
-		singleton.SortedServerLock.RLock()
-		defer singleton.SortedServerLock.RUnlock()
-
 		var serverList []*model.Server
 		if authorized {
-			serverList = singleton.SortedServerList
+			serverList = singleton.ServerShared.GetSortedList()
 		} else {
-			serverList = singleton.SortedServerListForGuest
+			serverList = singleton.ServerShared.GetSortedListForGuest()
 		}
 
 		servers := make([]model.StreamServer, 0, len(serverList))

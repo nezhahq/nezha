@@ -65,6 +65,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 		crons, servers []uint64
 	)
 
+	list := ServerShared.GetSortedList()
 	for _, uid := range id {
 		err := DB.Transaction(func(tx *gorm.DB) error {
 			CronLock.RLock()
@@ -78,10 +79,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 				}
 			}
 
-			SortedServerLock.RLock()
-			servers = model.FindByUserID(SortedServerList, uid)
-			SortedServerLock.RUnlock()
-
+			servers = model.FindByUserID(list, uid)
 			server = len(servers) > 0
 			if server {
 				if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", servers).Error; err != nil {
@@ -122,7 +120,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 				}
 			}
 			AlertsLock.Unlock()
-			OnServerDelete(servers)
+			ServerShared.Delete(servers)
 		}
 
 		secret := UserInfoMap[uid].AgentSecret
@@ -133,10 +131,5 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...interface{}) error) err
 	if cron {
 		UpdateCronList()
 	}
-
-	if server {
-		ReSortServer()
-	}
-
 	return nil
 }

@@ -44,10 +44,8 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		return err
 	}
 
-	singleton.ServerLock.Lock()
-	singleton.ServerList[clientID].TaskStream = stream
-	singleton.ServerLock.Unlock()
-
+	server, _ := singleton.ServerShared.Get(clientID)
+	server.TaskStream = stream
 	var result *pb.TaskResult
 	for {
 		result, err = stream.Recv()
@@ -64,16 +62,14 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 			if cr != nil {
 				// 保存当前服务器状态信息
 				var curServer model.Server
-				singleton.ServerLock.RLock()
-				copier.Copy(&curServer, singleton.ServerList[clientID])
-				singleton.ServerLock.RUnlock()
+				copier.Copy(&curServer, server)
 				if cr.PushSuccessful && result.GetSuccessful() {
-					singleton.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
-						cr.Name, singleton.ServerList[clientID].Name, result.GetData()), nil, &curServer)
+					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
+						cr.Name, server.Name, result.GetData()), nil, &curServer)
 				}
 				if !result.GetSuccessful() {
-					singleton.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
-						cr.Name, singleton.ServerList[clientID].Name, result.GetData()), nil, &curServer)
+					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
+						cr.Name, server.Name, result.GetData()), nil, &curServer)
 				}
 				singleton.DB.Model(cr).Updates(model.Cron{
 					LastExecutedAt: time.Now().Add(time.Second * -1 * time.Duration(result.GetDelay())),
@@ -81,16 +77,13 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 				})
 			}
 		case model.TaskTypeReportConfig:
-			singleton.ServerLock.RLock()
-			if len(singleton.ServerList[clientID].ConfigCache) < 1 {
+			if len(server.ConfigCache) < 1 {
 				if !result.GetSuccessful() {
-					singleton.ServerList[clientID].ConfigCache <- errors.New(result.Data)
-					singleton.ServerLock.RUnlock()
+					server.ConfigCache <- errors.New(result.Data)
 					continue
 				}
-				singleton.ServerList[clientID].ConfigCache <- result.Data
+				server.ConfigCache <- result.Data
 			}
-			singleton.ServerLock.RUnlock()
 		default:
 			if model.IsServiceSentinelNeeded(result.GetType()) {
 				singleton.ServiceSentinelShared.Dispatch(singleton.ReportData{
@@ -117,10 +110,7 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 		}
 		state := model.PB2State(state)
 
-		singleton.ServerLock.RLock()
-		server, ok := singleton.ServerList[clientID]
-		singleton.ServerLock.RUnlock()
-
+		server, ok := singleton.ServerShared.Get(clientID)
 		if !ok || server == nil {
 			return nil
 		}
@@ -145,10 +135,7 @@ func (s *NezhaHandler) onReportSystemInfo(c context.Context, r *pb.Host) error {
 	}
 	host := model.PB2Host(r)
 
-	singleton.ServerLock.RLock()
-	defer singleton.ServerLock.RUnlock()
-
-	server, ok := singleton.ServerList[clientID]
+	server, ok := singleton.ServerShared.Get(clientID)
 	if !ok || server == nil {
 		return fmt.Errorf("server not found")
 	}
@@ -234,9 +221,7 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 
 	joinedIP := geoip.IP.Join()
 
-	singleton.ServerLock.RLock()
-	server, ok := singleton.ServerList[clientID]
-	singleton.ServerLock.RUnlock()
+	server, ok := singleton.ServerShared.Get(clientID)
 	if !ok || server == nil {
 		return nil, fmt.Errorf("server not found")
 	}
@@ -247,7 +232,7 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 		ipv4 := geoip.IP.IPv4Addr
 		ipv6 := geoip.IP.IPv6Addr
 
-		providers, err := singleton.GetDDNSProvidersFromProfiles(server.DDNSProfiles, &ddns.IP{Ipv4Addr: ipv4, Ipv6Addr: ipv6})
+		providers, err := singleton.DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, &ddns.IP{Ipv4Addr: ipv4, Ipv6Addr: ipv6})
 		if err == nil {
 			for _, provider := range providers {
 				domains := server.OverrideDDNSDomains[provider.GetProfileID()]
@@ -268,7 +253,7 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 		joinedIP != "" &&
 		server.GeoIP.IP != geoip.IP {
 
-		singleton.SendNotification(singleton.Conf.IPChangeNotificationGroupID,
+		singleton.NotificationShared.SendNotification(singleton.Conf.IPChangeNotificationGroupID,
 			fmt.Sprintf(
 				"[%s] %s, %s => %s",
 				singleton.Localizer.T("IP Changed"),

@@ -30,9 +30,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, err
 	}
 
-	singleton.ServerLock.RLock()
-	server := singleton.ServerList[createTerminalReq.ServerID]
-	singleton.ServerLock.RUnlock()
+	server, _ := singleton.ServerShared.Get(createTerminalReq.ServerID)
 	if server == nil || server.TaskStream == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
 	}

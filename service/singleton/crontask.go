@@ -59,7 +59,7 @@ func loadCronTasks() {
 	// 向注册错误的计划任务所在通知组发送通知
 	for _, gid := range notificationGroupList {
 		notificationMsgMap[gid].WriteString(Localizer.T("] These tasks will not execute properly. Fix them in the admin dashboard."))
-		SendNotification(gid, notificationMsgMap[gid].String(), nil)
+		NotificationShared.SendNotification(gid, notificationMsgMap[gid].String(), nil)
 	}
 	Cron.Start()
 }
@@ -128,9 +128,8 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 			if len(triggerServer) == 0 {
 				return
 			}
-			ServerLock.RLock()
-			defer ServerLock.RUnlock()
-			if s, ok := ServerList[triggerServer[0]]; ok {
+			m := ServerShared.GetList()
+			if s, ok := m[triggerServer[0]]; ok {
 				if s.TaskStream != nil {
 					s.TaskStream.Send(&pb.Task{
 						Id:   cr.ID,
@@ -141,15 +140,14 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 					// 保存当前服务器状态信息
 					curServer := model.Server{}
 					copier.Copy(&curServer, s)
-					SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), nil, &curServer)
+					NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), nil, &curServer)
 				}
 			}
 			return
 		}
 
-		ServerLock.RLock()
-		defer ServerLock.RUnlock()
-		for _, s := range ServerList {
+		m := ServerShared.GetList()
+		for _, s := range m {
 			if cr.Cover == model.CronCoverAll && crIgnoreMap[s.ID] {
 				continue
 			}
@@ -166,7 +164,7 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				// 保存当前服务器状态信息
 				curServer := model.Server{}
 				copier.Copy(&curServer, s)
-				SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), nil, &curServer)
+				NotificationShared.SendNotification(cr.NotificationGroupID, Localizer.Tf("[Task failed] %s: server %s is offline and cannot execute the task", cr.Name, s.Name), nil, &curServer)
 			}
 		}
 	}

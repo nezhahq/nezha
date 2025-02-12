@@ -56,10 +56,7 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 		return 0, status.Error(codes.Unauthenticated, "客户端 UUID 不合法")
 	}
 
-	singleton.ServerLock.RLock()
-	clientID, hasID := singleton.ServerUUIDToID[clientUUID]
-	singleton.ServerLock.RUnlock()
-
+	clientID, hasID := singleton.ServerShared.UUIDToID(clientUUID)
 	if !hasID {
 		s := model.Server{UUID: clientUUID, Name: petname.Generate(2, "-"), Common: model.Common{
 			UserID: userId,
@@ -67,14 +64,9 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 		if err := singleton.DB.Create(&s).Error; err != nil {
 			return 0, status.Error(codes.Unauthenticated, err.Error())
 		}
+
 		model.InitServer(&s)
-
-		singleton.ServerLock.Lock()
-		singleton.ServerList[s.ID] = &s
-		singleton.ServerUUIDToID[clientUUID] = s.ID
-		singleton.ServerLock.Unlock()
-
-		singleton.ReSortServer()
+		singleton.ServerShared.Update(&s, clientUUID)
 
 		clientID = s.ID
 	}

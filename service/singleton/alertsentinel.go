@@ -132,15 +132,14 @@ func OnDeleteAlert(id []uint64) {
 func checkStatus() {
 	AlertsLock.RLock()
 	defer AlertsLock.RUnlock()
-	ServerLock.RLock()
-	defer ServerLock.RUnlock()
+	m := ServerShared.GetList()
 
 	for _, alert := range Alerts {
 		// 跳过未启用
 		if !alert.Enabled() {
 			continue
 		}
-		for _, server := range ServerList {
+		for _, server := range m {
 			// 监测点
 			UserLock.RLock()
 			var role uint8
@@ -169,9 +168,9 @@ func checkStatus() {
 					message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Incident"),
 						server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
 					go SendTriggerTasks(alert.FailTriggerTasks, curServer.ID)
-					go SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID), &curServer)
+					go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID), &curServer)
 					// 清除恢复通知的静音缓存
-					UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
+					NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
 				}
 			} else {
 				// 本次通过检查但上一次的状态为失败，则发送恢复通知
@@ -179,9 +178,9 @@ func checkStatus() {
 					message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Resolved"),
 						server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
 					go SendTriggerTasks(alert.RecoverTriggerTasks, curServer.ID)
-					go SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), &curServer)
+					go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), &curServer)
 					// 清除失败通知的静音缓存
-					UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
+					NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
 				}
 				alertsPrevState[alert.ID][server.ID] = _RuleCheckPass
 			}

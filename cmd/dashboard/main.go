@@ -118,11 +118,15 @@ func main() {
 	}
 
 	singleton.CleanServiceHistory()
-	serviceSentinelDispatchBus := make(chan model.Service) // 用于传递服务监控任务信息的channel
+	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
 	rpc.DispatchKeepalive()
 	go rpc.DispatchTask(serviceSentinelDispatchBus)
 	go singleton.AlertSentinelStart()
-	singleton.NewServiceSentinel(serviceSentinelDispatchBus)
+	singleton.ServiceSentinelShared, err = singleton.NewServiceSentinel(
+		serviceSentinelDispatchBus, singleton.ServerShared, singleton.NotificationShared)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	grpcHandler := rpc.ServeRPC()
 	httpHandler := controller.ServeWeb(frontendDist)
@@ -147,7 +151,7 @@ func main() {
 
 func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		natConfig := singleton.GetNATConfigByDomain(r.Host)
+		natConfig := singleton.NATShared.GetNATConfigByDomain(r.Host)
 		if natConfig != nil {
 			if !natConfig.Enabled {
 				c, _ := gin.CreateTestContext(w)

@@ -7,7 +7,6 @@ import (
 	"maps"
 	"math/big"
 	"net/netip"
-	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -71,35 +70,6 @@ func GetIPFromHeader(headerValue string) (string, error) {
 	return ip.String(), nil
 }
 
-// SplitIPAddr 传入/分割的v4v6混合地址，返回v4和v6地址与有效地址
-func SplitIPAddr(v4v6Bundle string) (string, string, string) {
-	ipList := strings.Split(v4v6Bundle, "/")
-	ipv4 := ""
-	ipv6 := ""
-	validIP := ""
-	if len(ipList) > 1 {
-		// 双栈
-		ipv4 = ipList[0]
-		ipv6 = ipList[1]
-		validIP = ipv4
-	} else if len(ipList) == 1 {
-		// 仅ipv4|ipv6
-		if strings.Contains(ipList[0], ":") {
-			ipv6 = ipList[0]
-			validIP = ipv6
-		} else {
-			ipv4 = ipList[0]
-			validIP = ipv4
-		}
-	}
-	return ipv4, ipv6, validIP
-}
-
-func IsFileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func GenerateRandomString(n int) (string, error) {
 	const letters = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 	lettersLength := big.NewInt(int64(len(letters)))
@@ -129,13 +99,6 @@ func IfOr[T any](a bool, x, y T) T {
 		return x
 	}
 	return y
-}
-
-func IfOrFn[T any](a bool, x, y func() T) T {
-	if a {
-		return x()
-	}
-	return y()
 }
 
 func Itoa[T constraints.Integer](i T) string {

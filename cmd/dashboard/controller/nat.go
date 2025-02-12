@@ -23,10 +23,9 @@ import (
 func listNAT(c *gin.Context) ([]*model.NAT, error) {
 	var n []*model.NAT
 
-	singleton.NATListLock.RLock()
-	defer singleton.NATListLock.RUnlock()
+	slist := singleton.NATShared.GetList()
 
-	if err := copier.Copy(&n, &singleton.NATList); err != nil {
+	if err := copier.Copy(&n, &slist); err != nil {
 		return nil, err
 	}
 
@@ -52,14 +51,11 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, err
 	}
 
-	singleton.ServerLock.RLock()
-	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+	if server, ok := singleton.ServerShared.Get(nf.ServerID); ok {
 		if !server.HasPermission(c) {
-			singleton.ServerLock.RUnlock()
 			return 0, singleton.Localizer.ErrorT("permission denied")
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	uid := getUid(c)
 
@@ -74,8 +70,7 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	singleton.OnNATUpdate(&n)
-	singleton.UpdateNATList()
+	singleton.NATShared.Update(&n)
 	return n.ID, nil
 }
 
@@ -104,14 +99,11 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.ServerLock.RLock()
-	if server, ok := singleton.ServerList[nf.ServerID]; ok {
+	if server, ok := singleton.ServerShared.Get(nf.ServerID); ok {
 		if !server.HasPermission(c) {
-			singleton.ServerLock.RUnlock()
 			return nil, singleton.Localizer.ErrorT("permission denied")
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	var n model.NAT
 	if err = singleton.DB.First(&n, id).Error; err != nil {
@@ -132,8 +124,7 @@ func updateNAT(c *gin.Context) (any, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	singleton.OnNATUpdate(&n)
-	singleton.UpdateNATList()
+	singleton.NATShared.Update(&n)
 	return nil, nil
 }
 
@@ -154,22 +145,19 @@ func batchDeleteNAT(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.NATCacheRwLock.RLock()
+	m := singleton.NATShared.GetList()
 	for _, id := range n {
-		if p, ok := singleton.NATCache[singleton.NATIDToDomain[id]]; ok {
+		if p, ok := m[singleton.NATShared.GetDomain(id)]; ok {
 			if !p.HasPermission(c) {
-				singleton.NATCacheRwLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.NATCacheRwLock.RUnlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.NAT{}, "id in (?)", n).Error; err != nil {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnNATDelete(n)
-	singleton.UpdateNATList()
+	singleton.NATShared.Delete(n)
 	return nil, nil
 }

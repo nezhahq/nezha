@@ -67,16 +67,14 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 	}
 	sgf.Servers = slices.Compact(sgf.Servers)
 
-	singleton.ServerLock.RLock()
+	m := singleton.ServerShared.GetList()
 	for _, sid := range sgf.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
+		if server, ok := m[sid]; ok {
 			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
 				return 0, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	uid := getUid(c)
 
@@ -142,16 +140,14 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	}
 	sg.Servers = slices.Compact(sg.Servers)
 
-	singleton.ServerLock.RLock()
+	m := singleton.ServerShared.GetList()
 	for _, sid := range sg.Servers {
-		if server, ok := singleton.ServerList[sid]; ok {
+		if server, ok := m[sid]; ok {
 			if !server.HasPermission(c) {
-				singleton.ServerLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.ServerLock.RUnlock()
 
 	var sgDB model.ServerGroup
 	if err := singleton.DB.First(&sgDB, id).Error; err != nil {

@@ -68,16 +68,14 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 	}
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
-	singleton.NotificationsLock.RLock()
+	m := singleton.NotificationShared.GetList()
 	for _, nid := range ngf.Notifications {
-		if n, ok := singleton.NotificationMap[nid]; ok {
+		if n, ok := m[nid]; ok {
 			if !n.HasPermission(c) {
-				singleton.NotificationsLock.RUnlock()
 				return 0, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.NotificationsLock.RUnlock()
 
 	uid := getUid(c)
 
@@ -115,7 +113,7 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	singleton.OnRefreshOrAddNotificationGroup(&ng, ngf.Notifications)
+	singleton.NotificationShared.UpdateGroup(&ng, ngf.Notifications)
 	return ng.ID, nil
 }
 
@@ -144,16 +142,14 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	singleton.NotificationsLock.RLock()
+	m := singleton.NotificationShared.GetList()
 	for _, nid := range ngf.Notifications {
-		if n, ok := singleton.NotificationMap[nid]; ok {
+		if n, ok := m[nid]; ok {
 			if !n.HasPermission(c) {
-				singleton.NotificationsLock.RUnlock()
 				return nil, singleton.Localizer.ErrorT("permission denied")
 			}
 		}
 	}
-	singleton.NotificationsLock.RUnlock()
 
 	var ngDB model.NotificationGroup
 	if err := singleton.DB.First(&ngDB, id).Error; err != nil {
@@ -202,7 +198,7 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnRefreshOrAddNotificationGroup(&ngDB, ngf.Notifications)
+	singleton.NotificationShared.UpdateGroup(&ngDB, ngf.Notifications)
 	return nil, nil
 }
 
@@ -248,6 +244,6 @@ func batchDeleteNotificationGroup(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnDeleteNotificationGroup(ngn)
+	singleton.NotificationShared.DeleteGroup(ngn)
 	return nil, nil
 }
