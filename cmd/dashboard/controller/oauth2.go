@@ -51,7 +51,8 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 	if !has {
 		return nil, singleton.Localizer.ErrorT("provider not found")
 	}
-	o2conf := o2confRaw.Setup(getRedirectURL(c))
+	redirectURL := getRedirectURL(c)
+	o2conf := o2confRaw.Setup(redirectURL)
 
 	randomString, err := utils.GenerateRandomString(32)
 	if err != nil {
@@ -59,9 +60,10 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 	}
 	state, stateKey := randomString[:16], randomString[16:]
 	singleton.Cache.Set(fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey), &model.Oauth2State{
-		Action:   model.Oauth2LoginType(rTypeInt),
-		Provider: provider,
-		State:    state,
+		Action:      model.Oauth2LoginType(rTypeInt),
+		Provider:    provider,
+		State:       state,
+		RedirectURL: redirectURL,
 	}, cache.DefaultExpiration)
 
 	url := o2conf.AuthCodeURL(state, oauth2.AccessTypeOnline)
@@ -138,7 +140,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 			return nil, singleton.Localizer.ErrorT("code is required")
 		}
 
-		openId, err := exchangeOpenId(c, o2confRaw, callbackData)
+		openId, err := exchangeOpenId(c, o2confRaw, callbackData, state.RedirectURL)
 		if err != nil {
 			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
 			return nil, err
@@ -188,8 +190,9 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 	}
 }
 
-func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config, callbackData *model.Oauth2Callback) (string, error) {
-	o2conf := o2confRaw.Setup(getRedirectURL(c))
+func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
+	callbackData *model.Oauth2Callback, redirectURL string) (string, error) {
+	o2conf := o2confRaw.Setup(redirectURL)
 	ctx := context.Background()
 
 	otk, err := o2conf.Exchange(ctx, callbackData.Code)
