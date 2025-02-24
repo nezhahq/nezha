@@ -5,11 +5,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-json"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/go-uuid"
 
 	"github.com/nezhahq/nezha/model"
-	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/pkg/websocketx"
 	"github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/rpc"
@@ -48,7 +48,7 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 
 	rpc.NezhaHandlerSingleton.CreateStream(streamId)
 
-	fmData, _ := utils.Json.Marshal(&model.TaskFM{
+	fmData, _ := json.Marshal(&model.TaskFM{
 		StreamID: streamId,
 	})
 	if err := server.TaskStream.Send(&proto.Task{

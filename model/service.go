@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/goccy/go-json"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 
-	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
 )
 
@@ -91,17 +91,17 @@ func (m *Service) CronSpec() string {
 }
 
 func (m *Service) BeforeSave(tx *gorm.DB) error {
-	if data, err := utils.Json.Marshal(m.SkipServers); err != nil {
+	if data, err := json.Marshal(m.SkipServers); err != nil {
 		return err
 	} else {
 		m.SkipServersRaw = string(data)
 	}
-	if data, err := utils.Json.Marshal(m.FailTriggerTasks); err != nil {
+	if data, err := json.Marshal(m.FailTriggerTasks); err != nil {
 		return err
 	} else {
 		m.FailTriggerTasksRaw = string(data)
 	}
-	if data, err := utils.Json.Marshal(m.RecoverTriggerTasks); err != nil {
+	if data, err := json.Marshal(m.RecoverTriggerTasks); err != nil {
 		return err
 	} else {
 		m.RecoverTriggerTasksRaw = string(data)
@@ -111,16 +111,16 @@ func (m *Service) BeforeSave(tx *gorm.DB) error {
 
 func (m *Service) AfterFind(tx *gorm.DB) error {
 	m.SkipServers = make(map[uint64]bool)
-	if err := utils.Json.Unmarshal([]byte(m.SkipServersRaw), &m.SkipServers); err != nil {
+	if err := json.Unmarshal([]byte(m.SkipServersRaw), &m.SkipServers); err != nil {
 		log.Println("NEZHA>> Service.AfterFind:", err)
 		return nil
 	}
 
 	// 加载触发任务列表
-	if err := utils.Json.Unmarshal([]byte(m.FailTriggerTasksRaw), &m.FailTriggerTasks); err != nil {
+	if err := json.Unmarshal([]byte(m.FailTriggerTasksRaw), &m.FailTriggerTasks); err != nil {
 		return err
 	}
-	if err := utils.Json.Unmarshal([]byte(m.RecoverTriggerTasksRaw), &m.RecoverTriggerTasks); err != nil {
+	if err := json.Unmarshal([]byte(m.RecoverTriggerTasksRaw), &m.RecoverTriggerTasks); err != nil {
 		return err
 	}
 

@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/goccy/go-json"
 	"gorm.io/gorm"
 )
 
@@ -39,7 +39,7 @@ func (d DDNSProfile) TableName() string {
 }
 
 func (d *DDNSProfile) BeforeSave(tx *gorm.DB) error {
-	if data, err := utils.Json.Marshal(d.Domains); err != nil {
+	if data, err := json.Marshal(d.Domains); err != nil {
 		return err
 	} else {
 		d.DomainsRaw = string(data)
@@ -48,5 +48,5 @@ func (d *DDNSProfile) BeforeSave(tx *gorm.DB) error {
 }
 
 func (d *DDNSProfile) AfterFind(tx *gorm.DB) error {
-	return utils.Json.Unmarshal([]byte(d.DomainsRaw), &d.Domains)
+	return json.Unmarshal([]byte(d.DomainsRaw), &d.Domains)
 }

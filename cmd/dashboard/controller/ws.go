@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-json"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/go-uuid"
 	"golang.org/x/sync/singleflight"
@@ -183,7 +184,7 @@ func getServerStat(withPublicNote, authorized bool) ([]byte, error) {
 			})
 		}
 
-		return utils.Json.Marshal(model.StreamServerData{
+		return json.Marshal(model.StreamServerData{
 			Now:     time.Now().Unix() * 1000,
 			Online:  singleton.GetOnlineUserCount(),
 			Servers: servers,

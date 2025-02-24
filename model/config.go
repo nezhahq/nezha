@@ -31,7 +31,7 @@ type ConfigForGuests struct {
 	Oauth2Providers     []string `json:"oauth2_providers,omitempty"`
 
 	InstallHost string `json:"install_host,omitempty"`
-	TLS         bool   `json:"tls,omitempty"`
+	AgentTLS    bool   `json:"tls,omitempty"`
 }
 
 type Config struct {
@@ -47,7 +47,7 @@ type Config struct {
 	ListenPort     uint   `mapstructure:"listen_port" json:"listen_port,omitempty"`
 	ListenHost     string `mapstructure:"listen_host" json:"listen_host,omitempty"`
 	InstallHost    string `mapstructure:"install_host" json:"install_host,omitempty"`
-	TLS            bool   `mapstructure:"tls" json:"tls,omitempty"`
+	AgentTLS       bool   `mapstructure:"tls" json:"tls,omitempty"`               // 用于前端判断生成的安装命令是否启用 TLS
 	Location       string `mapstructure:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
 	ForceAuth      bool   `mapstructure:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
 
@@ -70,6 +70,11 @@ type Config struct {
 	Oauth2 map[string]*Oauth2Config `mapstructure:"oauth2" json:"oauth2,omitempty"`
 	// oauth2 供应商列表，无需配置，自动生成
 	Oauth2Providers []string `yaml:"-" json:"oauth2_providers,omitempty"`
+
+	// TLS 证书配置
+	EnableTLS   bool   `mapstructure:"enable_tls" json:"enable_tls,omitempty"`
+	TLSCertPath string `mapstructure:"tls_cert_path" json:"tls_cert_path,omitempty"`
+	TLSKeyPath  string `mapstructure:"tls_key_path" json:"tls_key_path,omitempty"`
 
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`

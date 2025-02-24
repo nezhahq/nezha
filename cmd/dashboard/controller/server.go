@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-json"
 	"github.com/jinzhu/copier"
 	"gorm.io/gorm"
 
 	"github.com/nezhahq/nezha/model"
-	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
@@ -81,13 +81,13 @@ func updateServer(c *gin.Context) (any, error) {
 	s.DDNSProfiles = sf.DDNSProfiles
 	s.OverrideDDNSDomains = sf.OverrideDDNSDomains
 
-	ddnsProfilesRaw, err := utils.Json.Marshal(s.DDNSProfiles)
+	ddnsProfilesRaw, err := json.Marshal(s.DDNSProfiles)
 	if err != nil {
 		return nil, err
 	}
 	s.DDNSProfilesRaw = string(ddnsProfilesRaw)
 
-	overrideDomainsRaw, err := utils.Json.Marshal(sf.OverrideDDNSDomains)
+	overrideDomainsRaw, err := json.Marshal(sf.OverrideDDNSDomains)
 	if err != nil {
 		return nil, err
 	}
@@ -281,10 +281,7 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	var respMu sync.Mutex
 
 	for i := 0; i < len(servers); i += 10 {
-		end := i + 10
-		if end > len(servers) {
-			end = len(servers)
-		}
+		end := min(i+10, len(servers))
 		group := servers[i:end]
 
 		wg.Add(1)

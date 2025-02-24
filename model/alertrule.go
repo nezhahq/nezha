@@ -1,7 +1,7 @@
 package model
 
 import (
-	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/goccy/go-json"
 	"gorm.io/gorm"
 )
 
@@ -25,17 +25,17 @@ type AlertRule struct {
 }
 
 func (r *AlertRule) BeforeSave(tx *gorm.DB) error {
-	if data, err := utils.Json.Marshal(r.Rules); err != nil {
+	if data, err := json.Marshal(r.Rules); err != nil {
 		return err
 	} else {
 		r.RulesRaw = string(data)
 	}
-	if data, err := utils.Json.Marshal(r.FailTriggerTasks); err != nil {
+	if data, err := json.Marshal(r.FailTriggerTasks); err != nil {
 		return err
 	} else {
 		r.FailTriggerTasksRaw = string(data)
 	}
-	if data, err := utils.Json.Marshal(r.RecoverTriggerTasks); err != nil {
+	if data, err := json.Marshal(r.RecoverTriggerTasks); err != nil {
 		return err
 	} else {
 		r.RecoverTriggerTasksRaw = string(data)
@@ -45,13 +45,13 @@ func (r *AlertRule) BeforeSave(tx *gorm.DB) error {
 
 func (r *AlertRule) AfterFind(tx *gorm.DB) error {
 	var err error
-	if err = utils.Json.Unmarshal([]byte(r.RulesRaw), &r.Rules); err != nil {
+	if err = json.Unmarshal([]byte(r.RulesRaw), &r.Rules); err != nil {
 		return err
 	}
-	if err = utils.Json.Unmarshal([]byte(r.FailTriggerTasksRaw), &r.FailTriggerTasks); err != nil {
+	if err = json.Unmarshal([]byte(r.FailTriggerTasksRaw), &r.FailTriggerTasks); err != nil {
 		return err
 	}
-	if err = utils.Json.Unmarshal([]byte(r.RecoverTriggerTasksRaw), &r.RecoverTriggerTasks); err != nil {
+	if err = json.Unmarshal([]byte(r.RecoverTriggerTasksRaw), &r.RecoverTriggerTasks); err != nil {
 		return err
 	}
 	return nil

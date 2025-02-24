@@ -13,23 +13,18 @@ import (
 	"strings"
 
 	"golang.org/x/exp/constraints"
-
-	jsoniter "github.com/json-iterator/go"
 )
 
 var (
-	Json = jsoniter.ConfigCompatibleWithStandardLibrary
-
 	DNSServers = []string{"8.8.8.8:53", "8.8.4.4:53", "1.1.1.1:53", "1.0.0.1:53"}
-)
 
-var ipv4Re = regexp.MustCompile(`(\d*\.).*(\.\d*)`)
+	ipv4Re = regexp.MustCompile(`(\d*\.).*(\.\d*)`)
+	ipv6Re = regexp.MustCompile(`(\w*:\w*:).*(:\w*:\w*)`)
+)
 
 func ipv4Desensitize(ipv4Addr string) string {
 	return ipv4Re.ReplaceAllString(ipv4Addr, "$1****$2")
 }
-
-var ipv6Re = regexp.MustCompile(`(\w*:\w*:).*(:\w*:\w*)`)
 
 func ipv6Desensitize(ipv6Addr string) string {
 	return ipv6Re.ReplaceAllString(ipv6Addr, "$1****$2")
@@ -51,9 +46,11 @@ func IPStringToBinary(ip string) ([]byte, error) {
 }
 
 func BinaryToIPString(b []byte) string {
-	var addr16 [16]byte
-	copy(addr16[:], b)
-	addr := netip.AddrFrom16(addr16)
+	if len(b) < 16 {
+		return "::"
+	}
+
+	addr := netip.AddrFrom16([16]byte(b))
 	return addr.Unmap().String()
 }
 
@@ -129,10 +126,20 @@ func Unique[T comparable](s []T) []T {
 	return ret
 }
 
-func ConvertSeq[T, U any](seq iter.Seq[T], f func(e T) U) iter.Seq[U] {
-	return func(yield func(U) bool) {
-		for e := range seq {
-			if !yield(f(e)) {
+func ConvertSeq[In, Out any](seq iter.Seq[In], f func(In) Out) iter.Seq[Out] {
+	return func(yield func(Out) bool) {
+		for in := range seq {
+			if !yield(f(in)) {
+				return
+			}
+		}
+	}
+}
+
+func ConvertSeq2[KIn, VIn, KOut, VOut any](seq iter.Seq2[KIn, VIn], f func(KIn, VIn) (KOut, VOut)) iter.Seq2[KOut, VOut] {
+	return func(yield func(KOut, VOut) bool) {
+		for k, v := range seq {
+			if !yield(f(k, v)) {
 				return
 			}
 		}

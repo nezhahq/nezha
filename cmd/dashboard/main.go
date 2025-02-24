@@ -16,8 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/ory/graceful"
 	"golang.org/x/crypto/bcrypt"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 
 	"github.com/nezhahq/nezha/cmd/dashboard/controller"
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
@@ -133,11 +131,22 @@ func main() {
 	controller.InitUpgrader()
 
 	muxHandler := newHTTPandGRPCMux(httpHandler, grpcHandler)
-	http2Server := &http2.Server{}
-	muxServer := &http.Server{Handler: h2c.NewHandler(muxHandler, http2Server), ReadHeaderTimeout: time.Second * 5}
+	muxServer := &http.Server{
+		Handler:           muxHandler,
+		ReadHeaderTimeout: time.Second * 5,
+	}
+	muxServer.Protocols.SetHTTP1(true)
+	if singleton.Conf.EnableTLS {
+		muxServer.Protocols.SetHTTP2(true)
+	} else {
+		muxServer.Protocols.SetUnencryptedHTTP2(true)
+	}
 
 	if err := graceful.Graceful(func() error {
 		log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort)
+		if singleton.Conf.EnableTLS {
+			return muxServer.ServeTLS(l, singleton.Conf.TLSCertPath, singleton.Conf.TLSKeyPath)
+		}
 		return muxServer.Serve(l)
 	}, func(c context.Context) error {
 		log.Println("NEZHA>> Graceful::START")

@@ -4,11 +4,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/goccy/go-json"
 	"github.com/gorilla/websocket"
 	"github.com/hashicorp/go-uuid"
 
 	"github.com/nezhahq/nezha/model"
-	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/pkg/websocketx"
 	"github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/rpc"
@@ -46,7 +46,7 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 
 	rpc.NezhaHandlerSingleton.CreateStream(streamId)
 
-	terminalData, _ := utils.Json.Marshal(&model.TerminalTask{
+	terminalData, _ := json.Marshal(&model.TerminalTask{
 		StreamID: streamId,
 	})
 	if err := server.TaskStream.Send(&proto.Task{

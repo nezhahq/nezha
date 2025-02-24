@@ -33,9 +33,7 @@ func GjsonIter(json string) (iter.Seq2[string, string], error) {
 		return nil, ErrGjsonWrongType
 	}
 
-	return func(yield func(string, string) bool) {
-		result.ForEach(func(k, v gjson.Result) bool {
-			return yield(k.String(), v.String())
-		})
-	}, nil
+	return ConvertSeq2(result.ForEach, func(k, v gjson.Result) (string, string) {
+		return k.String(), v.String()
+	}), nil
 }

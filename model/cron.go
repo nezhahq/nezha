@@ -3,7 +3,7 @@ package model
 import (
 	"time"
 
-	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/goccy/go-json"
 	"github.com/robfig/cron/v3"
 	"gorm.io/gorm"
 )
@@ -34,7 +34,7 @@ type Cron struct {
 }
 
 func (c *Cron) BeforeSave(tx *gorm.DB) error {
-	if data, err := utils.Json.Marshal(c.Servers); err != nil {
+	if data, err := json.Marshal(c.Servers); err != nil {
 		return err
 	} else {
 		c.ServersRaw = string(data)
@@ -43,5 +43,5 @@ func (c *Cron) BeforeSave(tx *gorm.DB) error {
 }
 
 func (c *Cron) AfterFind(tx *gorm.DB) error {
-	return utils.Json.Unmarshal([]byte(c.ServersRaw), &c.Servers)
+	return json.Unmarshal([]byte(c.ServersRaw), &c.Servers)
 }

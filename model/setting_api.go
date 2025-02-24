@@ -13,7 +13,7 @@ type SettingForm struct {
 	RealIPHeader                string `json:"real_ip_header,omitempty" validate:"optional"` // 真实IP
 	UserTemplate                string `json:"user_template,omitempty" validate:"optional"`
 
-	TLS                         bool `json:"tls,omitempty" validate:"optional"`
+	AgentTLS                    bool `json:"tls,omitempty" validate:"optional"`
 	EnableIPChangeNotification  bool `json:"enable_ip_change_notification,omitempty" validate:"optional"`
 	EnablePlainIPInNotification bool `json:"enable_plain_ip_in_notification,omitempty" validate:"optional"`
 }

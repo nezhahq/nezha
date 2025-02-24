@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -169,7 +170,7 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	rpcService.NezhaHandlerSingleton.CreateStream(streamId)
 	defer rpcService.NezhaHandlerSingleton.CloseStream(streamId)
 
-	taskData, err := utils.Json.Marshal(model.TaskNAT{
+	taskData, err := json.Marshal(model.TaskNAT{
 		StreamID: streamId,
 		Host:     natConfig.Host,
 	})

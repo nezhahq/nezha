@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/goccy/go-json"
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
@@ -66,7 +67,7 @@ func (ns *NotificationServerBundle) reqBody(message string) (string, error) {
 	switch n.RequestType {
 	case NotificationRequestTypeJSON:
 		return ns.replaceParamsInString(n.RequestBody, message, func(msg string) string {
-			msgBytes, _ := utils.Json.Marshal(msg)
+			msgBytes, _ := json.Marshal(msg)
 			return string(msgBytes)[1 : len(msgBytes)-1]
 		}), nil
 	case NotificationRequestTypeForm:

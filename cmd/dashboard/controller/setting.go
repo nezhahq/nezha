@@ -45,7 +45,7 @@ func listConfig(c *gin.Context) (model.SettingResponse[any], error) {
 			Oauth2Providers:     config.Oauth2Providers,
 		}
 		if authorized {
-			configForGuests.TLS = singleton.Conf.TLS
+			configForGuests.AgentTLS = singleton.Conf.AgentTLS
 			configForGuests.InstallHost = singleton.Conf.InstallHost
 		}
 		conf = model.SettingResponse[any]{
@@ -98,7 +98,7 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.CustomCode = sf.CustomCode
 	singleton.Conf.CustomCodeDashboard = sf.CustomCodeDashboard
 	singleton.Conf.RealIPHeader = sf.RealIPHeader
-	singleton.Conf.TLS = sf.TLS
+	singleton.Conf.AgentTLS = sf.AgentTLS
 	singleton.Conf.UserTemplate = sf.UserTemplate
 
 	if err := singleton.Conf.Save(); err != nil {
