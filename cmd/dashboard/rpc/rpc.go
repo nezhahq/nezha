@@ -75,36 +75,22 @@ func getRealIp(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
 }
 
 func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
-	workedServerIndex := 0
-	list := singleton.ServerShared.GetSortedList()
 	for task := range serviceSentinelDispatchBus {
 		if task == nil {
 			continue
 		}
 
-		round := 0
-		endIndex := workedServerIndex
-		// 如果已经轮了一整圈又轮到自己，没有合适机器去请求，跳出循环
-		for round < 1 || workedServerIndex < endIndex {
-			// 如果到了圈尾，再回到圈头，圈数加一，游标重置
-			if workedServerIndex >= len(list) {
-				workedServerIndex = 0
-				round++
-				continue
-			}
+		for _, server := range singleton.ServerShared.Enumerate {
 			// 如果服务器不在线，跳过这个服务器
-			if list[workedServerIndex].TaskStream == nil {
-				workedServerIndex++
+			if server.TaskStream == nil {
 				continue
 			}
 			// 如果此任务不可使用此服务器请求，跳过这个服务器（有些 IPv6 only 开了 NAT64 的机器请求 IPv4 总会出问题）
-			if (task.Cover == model.ServiceCoverAll && task.SkipServers[list[workedServerIndex].ID]) ||
-				(task.Cover == model.ServiceCoverIgnoreAll && !task.SkipServers[list[workedServerIndex].ID]) {
-				workedServerIndex++
+			if (task.Cover == model.ServiceCoverAll && task.SkipServers[server.ID]) ||
+				(task.Cover == model.ServiceCoverIgnoreAll && !task.SkipServers[server.ID]) {
 				continue
 			}
-			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[list[workedServerIndex].ID] {
-				server := list[workedServerIndex]
+			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[server.ID] {
 				singleton.UserLock.RLock()
 				var role uint8
 				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
@@ -114,13 +100,11 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				}
 				singleton.UserLock.RUnlock()
 				if task.UserID == server.UserID || role == model.RoleAdmin {
-					list[workedServerIndex].TaskStream.Send(task.PB())
+					server.TaskStream.Send(task.PB())
 				}
-				workedServerIndex++
 				continue
 			}
-			if task.Cover == model.ServiceCoverAll && !task.SkipServers[list[workedServerIndex].ID] {
-				server := list[workedServerIndex]
+			if task.Cover == model.ServiceCoverAll && !task.SkipServers[server.ID] {
 				singleton.UserLock.RLock()
 				var role uint8
 				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
@@ -130,9 +114,8 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				}
 				singleton.UserLock.RUnlock()
 				if task.UserID == server.UserID || role == model.RoleAdmin {
-					list[workedServerIndex].TaskStream.Send(task.PB())
+					server.TaskStream.Send(task.PB())
 				}
-				workedServerIndex++
 				continue
 			}
 		}
