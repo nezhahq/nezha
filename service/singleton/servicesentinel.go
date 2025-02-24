@@ -101,8 +101,12 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service, sc *Se
 		notificationc: nc,
 		crc:           crc,
 	}
+
 	// 加载历史记录
-	ss.loadServiceHistory()
+	err := ss.loadServiceHistory()
+	if err != nil {
+		return nil, err
+	}
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)
@@ -112,13 +116,13 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service, sc *Se
 	DB.Where("created_at >= ?", today).Find(&mhs)
 	totalDelay := make(map[uint64]float32)
 	totalDelayCount := make(map[uint64]float32)
-	for i := 0; i < len(mhs); i++ {
-		totalDelay[mhs[i].ServiceID] += mhs[i].AvgDelay
-		totalDelayCount[mhs[i].ServiceID]++
-		ss.serviceStatusToday[mhs[i].ServiceID].Up += int(mhs[i].Up)
-		ss.monthlyStatus[mhs[i].ServiceID].TotalUp += mhs[i].Up
-		ss.serviceStatusToday[mhs[i].ServiceID].Down += int(mhs[i].Down)
-		ss.monthlyStatus[mhs[i].ServiceID].TotalDown += mhs[i].Down
+	for _, mh := range mhs {
+		totalDelay[mh.ServiceID] += mh.AvgDelay
+		totalDelayCount[mh.ServiceID]++
+		ss.serviceStatusToday[mh.ServiceID].Up += int(mh.Up)
+		ss.monthlyStatus[mh.ServiceID].TotalUp += mh.Up
+		ss.serviceStatusToday[mh.ServiceID].Down += int(mh.Down)
+		ss.monthlyStatus[mh.ServiceID].TotalDown += mh.Down
 	}
 	for id, delay := range totalDelay {
 		ss.serviceStatusToday[id].Delay = delay / float32(totalDelayCount[id])
@@ -128,7 +132,7 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service, sc *Se
 	go ss.worker()
 
 	// 每日将游标往后推一天
-	_, err := crc.AddFunc("0 0 0 * * *", ss.refreshMonthlyServiceStatus)
+	_, err = crc.AddFunc("0 0 0 * * *", ss.refreshMonthlyServiceStatus)
 	if err != nil {
 		return nil, err
 	}
@@ -155,7 +159,7 @@ func (ss *ServiceSentinel) refreshMonthlyServiceStatus() {
 	ss.monthlyStatusLock.Lock()
 	defer ss.monthlyStatusLock.Unlock()
 	for k, v := range ss.monthlyStatus {
-		for i := 0; i < len(v.Up)-1; i++ {
+		for i := range len(v.Up) - 1 {
 			if i == 0 {
 				// 30 天在线率，减去已经出30天之外的数据
 				v.TotalDown -= uint64(v.Down[i])
@@ -195,34 +199,34 @@ func (ss *ServiceSentinel) UpdateServiceList() {
 }
 
 // loadServiceHistory 加载服务监控器的历史状态信息
-func (ss *ServiceSentinel) loadServiceHistory() {
+func (ss *ServiceSentinel) loadServiceHistory() error {
 	var services []*model.Service
 	err := DB.Find(&services).Error
 	if err != nil {
-		panic(err)
+		return err
 	}
 
-	for i := 0; i < len(services); i++ {
-		task := services[i]
+	for _, service := range services {
+		task := service
 		// 通过cron定时将服务监控任务传递给任务调度管道
-		services[i].CronJobID, err = ss.crc.AddFunc(task.CronSpec(), func() {
+		service.CronJobID, err = ss.crc.AddFunc(task.CronSpec(), func() {
 			ss.dispatchBus <- task
 		})
 		if err != nil {
-			panic(err)
+			return err
 		}
-		ss.services[services[i].ID] = services[i]
-		ss.serviceCurrentStatusData[services[i].ID] = make([]*pb.TaskResult, _CurrentStatusSize)
-		ss.serviceStatusToday[services[i].ID] = &_TodayStatsOfService{}
+		ss.services[service.ID] = service
+		ss.serviceCurrentStatusData[service.ID] = make([]*pb.TaskResult, _CurrentStatusSize)
+		ss.serviceStatusToday[service.ID] = &_TodayStatsOfService{}
 	}
 	ss.serviceList = services
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)
 
-	for i := 0; i < len(services); i++ {
-		ss.monthlyStatus[services[i].ID] = &serviceResponseItem{
-			service: services[i],
+	for _, service := range services {
+		ss.monthlyStatus[service.ID] = &serviceResponseItem{
+			service: service,
 			ServiceResponseItem: model.ServiceResponseItem{
 				Delay: &[30]float32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
 				Up:    &[30]int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
@@ -235,18 +239,20 @@ func (ss *ServiceSentinel) loadServiceHistory() {
 	var mhs []model.ServiceHistory
 	DB.Where("created_at > ? AND created_at < ?", today.AddDate(0, 0, -29), today).Find(&mhs)
 	var delayCount = make(map[int]int)
-	for i := 0; i < len(mhs); i++ {
-		dayIndex := 28 - (int(today.Sub(mhs[i].CreatedAt).Hours()) / 24)
+	for _, mh := range mhs {
+		dayIndex := 28 - (int(today.Sub(mh.CreatedAt).Hours()) / 24)
 		if dayIndex < 0 {
 			continue
 		}
-		ss.monthlyStatus[mhs[i].ServiceID].Delay[dayIndex] = (ss.monthlyStatus[mhs[i].ServiceID].Delay[dayIndex]*float32(delayCount[dayIndex]) + mhs[i].AvgDelay) / float32(delayCount[dayIndex]+1)
+		ss.monthlyStatus[mh.ServiceID].Delay[dayIndex] = (ss.monthlyStatus[mh.ServiceID].Delay[dayIndex]*float32(delayCount[dayIndex]) + mh.AvgDelay) / float32(delayCount[dayIndex]+1)
 		delayCount[dayIndex]++
-		ss.monthlyStatus[mhs[i].ServiceID].Up[dayIndex] += int(mhs[i].Up)
-		ss.monthlyStatus[mhs[i].ServiceID].TotalUp += mhs[i].Up
-		ss.monthlyStatus[mhs[i].ServiceID].Down[dayIndex] += int(mhs[i].Down)
-		ss.monthlyStatus[mhs[i].ServiceID].TotalDown += mhs[i].Down
+		ss.monthlyStatus[mh.ServiceID].Up[dayIndex] += int(mh.Up)
+		ss.monthlyStatus[mh.ServiceID].TotalUp += mh.Up
+		ss.monthlyStatus[mh.ServiceID].Down[dayIndex] += int(mh.Down)
+		ss.monthlyStatus[mh.ServiceID].TotalDown += mh.Down
 	}
+
+	return nil
 }
 
 func (ss *ServiceSentinel) Update(m *model.Service) error {
@@ -470,11 +476,11 @@ func (ss *ServiceSentinel) worker() {
 		ss.serviceResponseDataStoreCurrentAvgDelay[mh.GetId()] = 0
 
 		// 永远是最新的 30 个数据的状态 [01:00, 02:00, 03:00] -> [04:00, 02:00, 03: 00]
-		for i := 0; i < len(ss.serviceCurrentStatusData[mh.GetId()]); i++ {
-			if ss.serviceCurrentStatusData[mh.GetId()][i].GetId() > 0 {
-				if ss.serviceCurrentStatusData[mh.GetId()][i].Successful {
+		for _, cs := range ss.serviceCurrentStatusData[mh.GetId()] {
+			if cs.GetId() > 0 {
+				if cs.Successful {
 					ss.serviceResponseDataStoreCurrentUp[mh.GetId()]++
-					ss.serviceResponseDataStoreCurrentAvgDelay[mh.GetId()] = (ss.serviceResponseDataStoreCurrentAvgDelay[mh.GetId()]*float32(ss.serviceResponseDataStoreCurrentUp[mh.GetId()]-1) + ss.serviceCurrentStatusData[mh.GetId()][i].Delay) / float32(ss.serviceResponseDataStoreCurrentUp[mh.GetId()])
+					ss.serviceResponseDataStoreCurrentAvgDelay[mh.GetId()] = (ss.serviceResponseDataStoreCurrentAvgDelay[mh.GetId()]*float32(ss.serviceResponseDataStoreCurrentUp[mh.GetId()]-1) + cs.Delay) / float32(ss.serviceResponseDataStoreCurrentUp[mh.GetId()])
 				} else {
 					ss.serviceResponseDataStoreCurrentDown[mh.GetId()]++
 				}

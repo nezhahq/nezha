@@ -226,17 +226,6 @@ func (c *class[K, V]) Range(fn func(k K, v V) bool) {
 	}
 }
 
-func (c *class[K, V]) Enumerate(fn func(i int, v V) bool) {
-	c.sortedListMu.RLock()
-	defer c.sortedListMu.RUnlock()
-
-	for i, v := range c.sortedList {
-		if !fn(i, v) {
-			break
-		}
-	}
-}
-
 func (c *class[K, V]) CheckPermission(ctx *gin.Context, idList iter.Seq[K]) bool {
 	c.listMu.RLock()
 	defer c.listMu.RUnlock()

@@ -80,43 +80,49 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 			continue
 		}
 
-		for _, server := range singleton.ServerShared.Enumerate {
-			// 如果服务器不在线，跳过这个服务器
-			if server.TaskStream == nil {
-				continue
-			}
-			// 如果此任务不可使用此服务器请求，跳过这个服务器（有些 IPv6 only 开了 NAT64 的机器请求 IPv4 总会出问题）
-			if (task.Cover == model.ServiceCoverAll && task.SkipServers[server.ID]) ||
-				(task.Cover == model.ServiceCoverIgnoreAll && !task.SkipServers[server.ID]) {
-				continue
-			}
-			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[server.ID] {
-				singleton.UserLock.RLock()
+		switch task.Cover {
+		case model.ServiceCoverIgnoreAll:
+			for id, enabled := range task.SkipServers {
+				if !enabled {
+					continue
+				}
+
+				server, _ := singleton.ServerShared.Get(id)
+				if server == nil || server.TaskStream == nil {
+					continue
+				}
+
 				var role uint8
+				singleton.UserLock.RLock()
 				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
 					role = model.RoleMember
 				} else {
 					role = u.Role
 				}
 				singleton.UserLock.RUnlock()
+
 				if task.UserID == server.UserID || role == model.RoleAdmin {
 					server.TaskStream.Send(task.PB())
 				}
-				continue
 			}
-			if task.Cover == model.ServiceCoverAll && !task.SkipServers[server.ID] {
-				singleton.UserLock.RLock()
+		case model.ServiceCoverAll:
+			for id, server := range singleton.ServerShared.Range {
+				if server == nil || server.TaskStream == nil || task.SkipServers[id] {
+					continue
+				}
+
 				var role uint8
+				singleton.UserLock.RLock()
 				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
 					role = model.RoleMember
 				} else {
 					role = u.Role
 				}
 				singleton.UserLock.RUnlock()
+
 				if task.UserID == server.UserID || role == model.RoleAdmin {
 					server.TaskStream.Send(task.PB())
 				}
-				continue
 			}
 		}
 	}
