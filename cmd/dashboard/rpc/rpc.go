@@ -75,65 +75,36 @@ func getRealIp(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo,
 }
 
 func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
-	workedServerIndex := 0
-	list := singleton.ServerShared.GetSortedList()
 	for task := range serviceSentinelDispatchBus {
 		if task == nil {
 			continue
 		}
 
-		round := 0
-		endIndex := workedServerIndex
-		// 如果已经轮了一整圈又轮到自己，没有合适机器去请求，跳出循环
-		for round < 1 || workedServerIndex < endIndex {
-			// 如果到了圈尾，再回到圈头，圈数加一，游标重置
-			if workedServerIndex >= len(list) {
-				workedServerIndex = 0
-				round++
-				continue
-			}
-			// 如果服务器不在线，跳过这个服务器
-			if list[workedServerIndex].TaskStream == nil {
-				workedServerIndex++
-				continue
-			}
-			// 如果此任务不可使用此服务器请求，跳过这个服务器（有些 IPv6 only 开了 NAT64 的机器请求 IPv4 总会出问题）
-			if (task.Cover == model.ServiceCoverAll && task.SkipServers[list[workedServerIndex].ID]) ||
-				(task.Cover == model.ServiceCoverIgnoreAll && !task.SkipServers[list[workedServerIndex].ID]) {
-				workedServerIndex++
-				continue
-			}
-			if task.Cover == model.ServiceCoverIgnoreAll && task.SkipServers[list[workedServerIndex].ID] {
-				server := list[workedServerIndex]
-				singleton.UserLock.RLock()
-				var role uint8
-				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
-					role = model.RoleMember
-				} else {
-					role = u.Role
+		switch task.Cover {
+		case model.ServiceCoverIgnoreAll:
+			for id, enabled := range task.SkipServers {
+				if !enabled {
+					continue
 				}
-				singleton.UserLock.RUnlock()
-				if task.UserID == server.UserID || role == model.RoleAdmin {
-					list[workedServerIndex].TaskStream.Send(task.PB())
+
+				server, _ := singleton.ServerShared.Get(id)
+				if server == nil || server.TaskStream == nil {
+					continue
 				}
-				workedServerIndex++
-				continue
+
+				if canSendTaskToServer(task, server) {
+					server.TaskStream.Send(task.PB())
+				}
 			}
-			if task.Cover == model.ServiceCoverAll && !task.SkipServers[list[workedServerIndex].ID] {
-				server := list[workedServerIndex]
-				singleton.UserLock.RLock()
-				var role uint8
-				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
-					role = model.RoleMember
-				} else {
-					role = u.Role
+		case model.ServiceCoverAll:
+			for id, server := range singleton.ServerShared.Range {
+				if server == nil || server.TaskStream == nil || task.SkipServers[id] {
+					continue
 				}
-				singleton.UserLock.RUnlock()
-				if task.UserID == server.UserID || role == model.RoleAdmin {
-					list[workedServerIndex].TaskStream.Send(task.PB())
+
+				if canSendTaskToServer(task, server) {
+					server.TaskStream.Send(task.PB())
 				}
-				workedServerIndex++
-				continue
 			}
 		}
 	}
@@ -202,4 +173,17 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	}
 
 	rpcService.NezhaHandlerSingleton.StartStream(streamId, time.Second*10)
+}
+
+func canSendTaskToServer(task *model.Service, server *model.Server) bool {
+	var role uint8
+	singleton.UserLock.RLock()
+	if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
+		role = model.RoleMember
+	} else {
+		role = u.Role
+	}
+	singleton.UserLock.RUnlock()
+
+	return task.UserID == server.UserID || role == model.RoleAdmin
 }

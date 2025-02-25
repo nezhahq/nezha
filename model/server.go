@@ -52,6 +52,7 @@ func (s *Server) CopyFromRunningServer(old *Server) {
 	s.GeoIP = old.GeoIP
 	s.LastActive = old.LastActive
 	s.TaskStream = old.TaskStream
+	s.ConfigCache = old.ConfigCache
 	s.PrevTransferInSnapshot = old.PrevTransferInSnapshot
 	s.PrevTransferOutSnapshot = old.PrevTransferOutSnapshot
 }
