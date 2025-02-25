@@ -92,16 +92,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 					continue
 				}
 
-				var role uint8
-				singleton.UserLock.RLock()
-				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
-					role = model.RoleMember
-				} else {
-					role = u.Role
-				}
-				singleton.UserLock.RUnlock()
-
-				if task.UserID == server.UserID || role == model.RoleAdmin {
+				if canSendTaskToServer(task, server) {
 					server.TaskStream.Send(task.PB())
 				}
 			}
@@ -111,16 +102,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 					continue
 				}
 
-				var role uint8
-				singleton.UserLock.RLock()
-				if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
-					role = model.RoleMember
-				} else {
-					role = u.Role
-				}
-				singleton.UserLock.RUnlock()
-
-				if task.UserID == server.UserID || role == model.RoleAdmin {
+				if canSendTaskToServer(task, server) {
 					server.TaskStream.Send(task.PB())
 				}
 			}
@@ -191,4 +173,17 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	}
 
 	rpcService.NezhaHandlerSingleton.StartStream(streamId, time.Second*10)
+}
+
+func canSendTaskToServer(task *model.Service, server *model.Server) bool {
+	var role uint8
+	singleton.UserLock.RLock()
+	if u, ok := singleton.UserInfoMap[server.UserID]; !ok {
+		role = model.RoleMember
+	} else {
+		role = u.Role
+	}
+	singleton.UserLock.RUnlock()
+
+	return task.UserID == server.UserID || role == model.RoleAdmin
 }
