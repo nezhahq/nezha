@@ -586,7 +586,7 @@ func (ss *ServiceSentinel) worker() {
 							oldCert[0], expiresOld.Format("2006-01-02 15:04:05"), newCert[0], expiresNew.Format("2006-01-02 15:04:05"))
 
 						// 证书变更后会自动更新缓存，所以不需要静音
-						go ss.notificationc.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), nil)
+						go ss.notificationc.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), "")
 					}
 				}
 			}

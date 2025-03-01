@@ -149,3 +149,19 @@ func ConvertSeq2[KIn, VIn, KOut, VOut any](seq iter.Seq2[KIn, VIn], f func(KIn, 
 		}
 	}
 }
+
+type WrapError struct {
+	err, errIn error
+}
+
+func NewWrapError(err, errIn error) error {
+	return &WrapError{err, errIn}
+}
+
+func (e *WrapError) Error() string {
+	return e.err.Error()
+}
+
+func (e *WrapError) Unwrap() error {
+	return e.errIn
+}

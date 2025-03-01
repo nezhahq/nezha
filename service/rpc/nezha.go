@@ -63,11 +63,11 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 				copier.Copy(&curServer, server)
 				if cr.PushSuccessful && result.GetSuccessful() {
 					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
-						cr.Name, server.Name, result.GetData()), nil, &curServer)
+						cr.Name, server.Name, result.GetData()), "", &curServer)
 				}
 				if !result.GetSuccessful() {
 					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
-						cr.Name, server.Name, result.GetData()), nil, &curServer)
+						cr.Name, server.Name, result.GetData()), "", &curServer)
 				}
 				singleton.DB.Model(cr).Updates(model.Cron{
 					LastExecutedAt: time.Now().Add(time.Second * -1 * time.Duration(result.GetDelay())),
@@ -103,7 +103,7 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 	for {
 		state, err = stream.Recv()
 		if err != nil {
-			log.Printf("NEZHA>> ReportSystemState eror: %v, clientID: %d\n", err, clientID)
+			log.Printf("NEZHA>> ReportSystemState error: %v, clientID: %d\n", err, clientID)
 			return nil
 		}
 		state := model.PB2State(state)
@@ -258,7 +258,7 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 				server.Name, singleton.IPDesensitize(server.GeoIP.IP.Join()),
 				singleton.IPDesensitize(joinedIP),
 			),
-			nil)
+			"")
 	}
 
 	// 根据内置数据库查询 IP 地理位置

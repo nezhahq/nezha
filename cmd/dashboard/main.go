@@ -23,6 +23,7 @@ import (
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/cmd/dashboard/rpc"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
@@ -154,6 +155,7 @@ func main() {
 	}
 
 	errChan := make(chan error, 2)
+	errHTTPS := errors.New("error from https server")
 
 	if err := graceful.Graceful(func() error {
 		log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort)
@@ -171,12 +173,16 @@ func main() {
 		log.Println("NEZHA>> Graceful::START")
 		singleton.RecordTransferHourlyUsage()
 		log.Println("NEZHA>> Graceful::END")
-		err := muxServerHTTPS.Shutdown(c)
-		return errors.Join(muxServerHTTP.Shutdown(c), err)
+		var err error
+		if muxServerHTTPS != nil {
+			err = muxServerHTTPS.Shutdown(c)
+		}
+		return errors.Join(muxServerHTTP.Shutdown(c), utils.NewWrapError(errHTTPS, err))
 	}); err != nil {
 		log.Printf("NEZHA>> ERROR: %v", err)
-		if errors.Unwrap(err) != nil {
-			log.Printf("NEZHA>> ERROR HTTPS: %v", err)
+		var wrapError *utils.WrapError
+		if errors.As(err, &wrapError) {
+			log.Printf("NEZHA>> ERROR HTTPS: %v", wrapError.Unwrap())
 		}
 	}
 

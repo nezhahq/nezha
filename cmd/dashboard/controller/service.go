@@ -11,6 +11,7 @@ import (
 	"github.com/jinzhu/copier"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 	"gorm.io/gorm"
 )
@@ -31,8 +32,7 @@ func showService(c *gin.Context) (*model.ServiceResponse, error) {
 		stats := singleton.ServiceSentinelShared.CopyStats()
 		var cycleTransferStats map[uint64]model.CycleTransferStats
 		copier.Copy(&cycleTransferStats, singleton.AlertsCycleTransferStatsStore)
-		return []interface {
-		}{
+		return []any{
 			stats, cycleTransferStats,
 		}, nil
 	})
@@ -288,15 +288,12 @@ func updateService(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	var skipServers []uint64
-	for k := range m.SkipServers {
-		skipServers = append(skipServers, k)
-	}
+	skipServers := utils.MapKeysToSlice(mf.SkipServers)
 
-	if m.Cover == 0 {
+	if m.Cover == model.ServiceCoverAll {
 		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, skipServers).Error
 	} else {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?)", m.ID, skipServers).Error
+		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?) and server_id > 0", m.ID, skipServers).Error
 	}
 	if err != nil {
 		return nil, err

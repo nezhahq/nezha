@@ -193,16 +193,16 @@ func (c *NotificationClass) sortList() {
 	c.sortedList = sortedList
 }
 
-func (c *NotificationClass) UnMuteNotification(notificationGroupID uint64, muteLabel *string) {
-	fullMuteLabel := *NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
+func (c *NotificationClass) UnMuteNotification(notificationGroupID uint64, muteLabel string) {
+	fullMuteLabel := NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
 	Cache.Delete(fullMuteLabel)
 }
 
 // SendNotification 向指定的通知方式组的所有通知方式发送通知
-func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc string, muteLabel *string, ext ...*model.Server) {
-	if muteLabel != nil {
+func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc string, muteLabel string, ext ...*model.Server) {
+	if muteLabel != "" {
 		// 将通知方式组名称加入静音标志
-		muteLabel := *NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
+		muteLabel := NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
 		// 通知防骚扰策略
 		var flag bool
 		if cacheN, has := Cache.Get(muteLabel); has {
@@ -261,42 +261,34 @@ type _NotificationMuteLabel struct{}
 
 var NotificationMuteLabel _NotificationMuteLabel
 
-func (_NotificationMuteLabel) IPChanged(serverId uint64) *string {
-	label := fmt.Sprintf("bf::ic-%d", serverId)
-	return &label
+func (_NotificationMuteLabel) IPChanged(serverId uint64) string {
+	return fmt.Sprintf("bf::ic-%d", serverId)
 }
 
-func (_NotificationMuteLabel) ServerIncident(alertId uint64, serverId uint64) *string {
-	label := fmt.Sprintf("bf::sei-%d-%d", alertId, serverId)
-	return &label
+func (_NotificationMuteLabel) ServerIncident(alertId uint64, serverId uint64) string {
+	return fmt.Sprintf("bf::sei-%d-%d", alertId, serverId)
 }
 
-func (_NotificationMuteLabel) ServerIncidentResolved(alertId uint64, serverId uint64) *string {
-	label := fmt.Sprintf("bf::seir-%d-%d", alertId, serverId)
-	return &label
+func (_NotificationMuteLabel) ServerIncidentResolved(alertId uint64, serverId uint64) string {
+	return fmt.Sprintf("bf::seir-%d-%d", alertId, serverId)
 }
 
-func (_NotificationMuteLabel) AppendNotificationGroupName(label *string, notificationGroupName string) *string {
-	newLabel := fmt.Sprintf("%s:%s", *label, notificationGroupName)
-	return &newLabel
+func (_NotificationMuteLabel) AppendNotificationGroupName(label string, notificationGroupName string) string {
+	return fmt.Sprintf("%s:%s", label, notificationGroupName)
 }
 
-func (_NotificationMuteLabel) ServiceLatencyMin(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::sln-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceLatencyMin(serviceId uint64) string {
+	return fmt.Sprintf("bf::sln-%d", serviceId)
 }
 
-func (_NotificationMuteLabel) ServiceLatencyMax(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::slm-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceLatencyMax(serviceId uint64) string {
+	return fmt.Sprintf("bf::slm-%d", serviceId)
 }
 
-func (_NotificationMuteLabel) ServiceStateChanged(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::ssc-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceStateChanged(serviceId uint64) string {
+	return fmt.Sprintf("bf::ssc-%d", serviceId)
 }
 
-func (_NotificationMuteLabel) ServiceTLS(serviceId uint64, extraInfo string) *string {
-	label := fmt.Sprintf("bf::stls-%d-%s", serviceId, extraInfo)
-	return &label
+func (_NotificationMuteLabel) ServiceTLS(serviceId uint64, extraInfo string) string {
+	return fmt.Sprintf("bf::stls-%d-%s", serviceId, extraInfo)
 }
