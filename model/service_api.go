@@ -27,8 +27,8 @@ type ServiceResponseItem struct {
 	TotalUp     uint64       `json:"total_up"`
 	TotalDown   uint64       `json:"total_down"`
 	Delay       *[30]float32 `json:"delay,omitempty"`
-	Up          *[30]int     `json:"up,omitempty"`
-	Down        *[30]int     `json:"down,omitempty"`
+	Up          *[30]uint64  `json:"up,omitempty"`
+	Down        *[30]uint64  `json:"down,omitempty"`
 }
 
 func (r ServiceResponseItem) TotalUptime() float32 {

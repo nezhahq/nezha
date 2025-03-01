@@ -186,6 +186,7 @@ func checkStatus() {
 			}
 			// 清理旧数据
 			if max > 0 && max < len(alertsStore[alert.ID][server.ID]) {
+				clear(alertsStore[alert.ID][server.ID][len(alertsStore[alert.ID][server.ID])-max:]) // for GC
 				alertsStore[alert.ID][server.ID] = alertsStore[alert.ID][server.ID][len(alertsStore[alert.ID][server.ID])-max:]
 			}
 		}

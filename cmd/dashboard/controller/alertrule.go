@@ -181,7 +181,7 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 				if rule.CycleInterval < 1 {
 					return singleton.Localizer.ErrorT("cycle_interval need to be at least 1")
 				}
-				if rule.CycleStart == nil {
+				if rule.CycleStart.IsZero() {
 					return singleton.Localizer.ErrorT("cycle_start is not set")
 				}
 				if rule.CycleStart.After(time.Now()) {

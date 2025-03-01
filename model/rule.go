@@ -26,7 +26,7 @@ type Rule struct {
 	Type          string          `json:"type"`
 	Min           float64         `json:"min,omitempty" validate:"optional"`                                                        // 最小阈值 (百分比、字节 kb ÷ 1024)
 	Max           float64         `json:"max,omitempty" validate:"optional"`                                                        // 最大阈值 (百分比、字节 kb ÷ 1024)
-	CycleStart    *time.Time      `json:"cycle_start,omitempty" validate:"optional"`                                                // 流量统计的开始时间
+	CycleStart    time.Time       `json:"cycle_start,omitempty" validate:"optional"`                                                // 流量统计的开始时间
 	CycleInterval uint64          `json:"cycle_interval,omitempty" validate:"optional"`                                             // 流量统计周期
 	CycleUnit     string          `json:"cycle_unit,omitempty" enums:"hour,day,week,month,year" validate:"optional" default:"hour"` // 流量统计周期单位，默认hour,可选(hour, day, week, month, year)
 	Duration      uint64          `json:"duration,omitempty" validate:"optional"`                                                   // 持续时间 (秒)
@@ -179,11 +179,15 @@ func (u *Rule) IsTransferDurationRule() bool {
 	return strings.HasSuffix(u.Type, "_cycle")
 }
 
+func (u *Rule) IsOfflineRule() bool {
+	return u.Type == "offline"
+}
+
 // GetTransferDurationStart 获取周期流量的起始时间
 func (u *Rule) GetTransferDurationStart() time.Time {
 	// Accept uppercase and lowercase
 	unit := strings.ToLower(u.CycleUnit)
-	startTime := *u.CycleStart
+	startTime := u.CycleStart
 	var nextTime time.Time
 	switch unit {
 	case "year":
@@ -223,7 +227,7 @@ func (u *Rule) GetTransferDurationStart() time.Time {
 func (u *Rule) GetTransferDurationEnd() time.Time {
 	// Accept uppercase and lowercase
 	unit := strings.ToLower(u.CycleUnit)
-	startTime := *u.CycleStart
+	startTime := u.CycleStart
 	var nextTime time.Time
 	switch unit {
 	case "year":
