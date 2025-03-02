@@ -94,7 +94,8 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 		} else if rule.IsOfflineRule() {
 			// 离线报警，检查直到最后一次在线的离线采样点是否大于 duration
 			fail, duration := 0, int(rule.Duration)
-			for _, point := range slices.Backward(points) {
+			start := max(0, len(points)-duration)
+			for _, point := range slices.Backward(points[start:]) {
 				if point[ruleIndex] {
 					break
 				}
