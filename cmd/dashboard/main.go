@@ -177,7 +177,7 @@ func main() {
 		if muxServerHTTPS != nil {
 			err = muxServerHTTPS.Shutdown(c)
 		}
-		return errors.Join(muxServerHTTP.Shutdown(c), utils.NewWrapError(errHTTPS, err))
+		return errors.Join(muxServerHTTP.Shutdown(c), utils.IfOr(err != nil, utils.NewWrapError(errHTTPS, err), nil))
 	}); err != nil {
 		log.Printf("NEZHA>> ERROR: %v", err)
 		var wrapError *utils.WrapError
