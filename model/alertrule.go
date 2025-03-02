@@ -79,6 +79,7 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 	durations := make([]int, len(r.Rules))
 
 	for ruleIndex, rule := range r.Rules {
+		fail, duration := 0, int(rule.Duration)
 		if rule.IsTransferDurationRule() {
 			// 循环区间流量报警
 			if durations[ruleIndex] < 1 {
@@ -93,29 +94,24 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			}
 		} else if rule.IsOfflineRule() {
 			// 离线报警，检查直到最后一次在线的离线采样点是否大于 duration
-			fail, duration := 0, int(rule.Duration)
-			start := max(0, len(points)-duration)
-			for _, point := range slices.Backward(points[start:]) {
-				if point[ruleIndex] {
+			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
+				continue
+			}
+			for timeTick := len(points); timeTick >= len(points)-duration; timeTick-- {
+				fail++
+				if points[timeTick][ruleIndex] {
+					hasPassedRule = true
 					break
 				}
-				fail++
 			}
-			hasPassedRule = fail < duration
-			durations[ruleIndex] = fail + 1
+			durations[ruleIndex] = fail
 			continue
 		} else {
 			// 常规报警
-			duration := int(rule.Duration)
 			if duration > durations[ruleIndex] {
 				durations[ruleIndex] = duration
 			}
-			if hasPassedRule {
-				continue
-			}
-			if len(points) < duration {
-				// 如果采样点数量不足 则认为检查通过
-				hasPassedRule = true
+			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}
 			total, fail := duration, 0
@@ -133,4 +129,12 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 
 	// 仅当所有检查均未通过时 才触发告警
 	return slices.Max(durations), hasPassedRule
+}
+
+func boundCheck(length, duration int, passed bool) bool {
+	if passed {
+		return true
+	}
+	// 如果采样点数量不足 则认为检查通过
+	return length < duration
 }
