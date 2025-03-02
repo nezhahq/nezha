@@ -97,7 +97,7 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}
-			for timeTick := len(points); timeTick >= len(points)-duration; timeTick-- {
+			for timeTick := len(points); timeTick > len(points)-duration; timeTick-- {
 				fail++
 				if points[timeTick][ruleIndex] {
 					hasPassedRule = true

@@ -120,7 +120,7 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service, sc *Se
 
 	var mhs []model.ServiceHistory
 	// 加载当日记录
-	DB.Where("created_at >= ?", today).Find(&mhs)
+	DB.Where("created_at >= ? AND server_id = 0", today).Find(&mhs)
 	totalDelay := make(map[uint64]float32)
 	totalDelayCount := make(map[uint64]float32)
 	for _, mh := range mhs {
@@ -233,7 +233,7 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 
 	// 加载服务监控历史记录
 	var mhs []model.ServiceHistory
-	DB.Where("created_at > ? AND created_at < ?", today.AddDate(0, 0, -29), today).Find(&mhs)
+	DB.Where("created_at > ? AND created_at < ? AND server_id = 0", today.AddDate(0, 0, -29), today).Find(&mhs)
 	var delayCount = make(map[int]int)
 	for _, mh := range mhs {
 		dayIndex := 28 - (int(today.Sub(mh.CreatedAt).Hours()) / 24)
@@ -412,6 +412,7 @@ func (ss *ServiceSentinel) worker() {
 			continue
 		}
 		css = nil
+
 		mh := r.Data
 		if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
 			serviceTcpMap, ok := ss.serviceResponsePing[mh.GetId()]
@@ -426,7 +427,6 @@ func (ss *ServiceSentinel) worker() {
 			ts.count++
 			ts.ping = (ts.ping*float32(ts.count-1) + mh.Delay) / float32(ts.count)
 			if ts.count == Conf.AvgPingCount {
-				ts.count = 0
 				if err := DB.Create(&model.ServiceHistory{
 					ServiceID: mh.GetId(),
 					AvgDelay:  ts.ping,
@@ -435,10 +435,12 @@ func (ss *ServiceSentinel) worker() {
 				}).Error; err != nil {
 					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 				}
+				ts.count = 0
 				ts.ping = mh.Delay
 			}
 			serviceTcpMap[r.Reporter] = ts
 		}
+
 		ss.serviceResponseDataStoreLock.Lock()
 		// 写入当天状态
 		if mh.Successful {
