@@ -22,8 +22,8 @@ func initParams() *jwt.GinJWTMiddleware {
 		Key:         []byte(singleton.Conf.JWTSecretKey),
 		CookieName:  "nz-jwt",
 		SendCookie:  true,
-		Timeout:     time.Hour,
-		MaxRefresh:  time.Hour,
+		Timeout:     time.Hour * time.Duration(singleton.Conf.JWTTimeout),
+		MaxRefresh:  time.Hour * time.Duration(singleton.Conf.JWTTimeout),
 		IdentityKey: model.CtxKeyAuthorizedUser,
 		PayloadFunc: payloadFunc(),
 

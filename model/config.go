@@ -40,6 +40,7 @@ type ConfigDashboard struct {
 	Location       string `koanf:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
 	ForceAuth      bool   `koanf:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
 	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
+	JWTTimeout     int    `mapstructure:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
 
 	EnablePlainIPInNotification bool `koanf:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
 
@@ -142,6 +143,11 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		if err = c.Save(); err != nil {
 			return err
 		}
+	}
+
+	// Add JWTTimeout default check
+	if c.JWTTimeout == 0 {
+		c.JWTTimeout = 1
 	}
 
 	if c.AgentSecretKey == "" {
