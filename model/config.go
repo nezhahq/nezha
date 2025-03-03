@@ -74,10 +74,10 @@ type Config struct {
 }
 
 type HTTPSConf struct {
+	InsecureTLS bool   `koanf:"insecure_tls" json:"insecure_tls,omitempty"`
 	ListenPort  uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
 	TLSCertPath string `koanf:"tls_cert_path" json:"tls_cert_path,omitempty"`
 	TLSKeyPath  string `koanf:"tls_key_path" json:"tls_key_path,omitempty"`
-	InsecureTLS bool   `koanf:"insecure_tls" json:"insecure_tls,omitempty"`
 }
 
 // Read 读取配置文件并应用
