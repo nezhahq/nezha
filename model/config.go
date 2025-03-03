@@ -33,14 +33,9 @@ type ConfigForGuests struct {
 }
 
 type ConfigDashboard struct {
-	Debug          bool   `koanf:"debug" json:"debug,omitempty"`                   // debug模式开关
-	RealIPHeader   string `koanf:"real_ip_header" json:"real_ip_header,omitempty"` // 真实IP
-	UserTemplate   string `koanf:"user_template" json:"user_template,omitempty"`
-	AdminTemplate  string `koanf:"admin_template" json:"admin_template,omitempty"`
-	Location       string `koanf:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
-	ForceAuth      bool   `koanf:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
-	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
-	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
+	RealIPHeader  string `koanf:"real_ip_header" json:"real_ip_header,omitempty"` // 真实IP
+	UserTemplate  string `koanf:"user_template" json:"user_template,omitempty"`
+	AdminTemplate string `koanf:"admin_template" json:"admin_template,omitempty"`
 
 	EnablePlainIPInNotification bool `koanf:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
 
@@ -50,8 +45,7 @@ type ConfigDashboard struct {
 	Cover                       uint8  `koanf:"cover" json:"cover"`                                               // 覆盖范围（0:提醒未被 IgnoredIPNotification 包含的所有服务器; 1:仅提醒被 IgnoredIPNotification 包含的服务器;）
 	IgnoredIPNotification       string `koanf:"ignored_ip_notification" json:"ignored_ip_notification,omitempty"` // 特定服务器IP（多个服务器用逗号分隔）
 
-	AvgPingCount int    `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
-	DNSServers   string `koanf:"dns_servers" json:"dns_servers,omitempty"`
+	DNSServers string `koanf:"dns_servers" json:"dns_servers,omitempty"`
 }
 
 type Config struct {
