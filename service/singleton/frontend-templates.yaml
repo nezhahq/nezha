@@ -3,14 +3,14 @@
   repository: "https://github.com/nezhahq/admin-frontend"
   author: "nezhahq"
   version: "v1.8.0"
-  isadmin: true
-  isofficial: true
+  is_admin: true
+  is_official: true
 - path: "user-dist"
   name: "Official"
   repository: "https://github.com/hamster1963/nezha-dash-v1"
   author: "hamster1963"
   version: "v1.23.0"
-  isofficial: true
+  is_official: true
 - path: "nezha-ascii-dist"
   name: "Nezha-ASCII"
   repository: "https://github.com/hamster1963/nezha-ascii"
