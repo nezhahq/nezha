@@ -21,6 +21,9 @@ type SettingForm struct {
 type Setting struct {
 	ConfigForGuests
 	ConfigDashboard
+
+	IgnoredIPNotificationServerIDs map[uint64]bool `json:"ignored_ip_notification_server_ids,omitempty"`
+	Oauth2Providers                []string        `json:"oauth2_providers,omitempty"`
 }
 
 type FrontendTemplate struct {

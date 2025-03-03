@@ -3,14 +3,16 @@ package model
 import (
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/go-viper/mapstructure/v2"
+	kmaps "github.com/knadh/koanf/maps"
 	kyaml "github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+	"sigs.k8s.io/yaml"
 
 	"github.com/nezhahq/nezha/pkg/utils"
 )
@@ -21,12 +23,23 @@ const (
 	ConfigCoverIgnoreAll
 )
 
+var (
+	oldFormat    bool
+	setOldFormat = sync.OnceFunc(func() {
+		oldFormat = true
+	})
+
+	upgraded    bool
+	setUpgraded = sync.OnceFunc(func() {
+		upgraded = true
+	})
+)
+
 type ConfigForGuests struct {
-	Language            string   `koanf:"language" json:"language"` // 系统语言，默认 zh_CN
-	SiteName            string   `koanf:"site_name" json:"site_name"`
-	CustomCode          string   `koanf:"custom_code" json:"custom_code,omitempty"`
-	CustomCodeDashboard string   `koanf:"custom_code_dashboard" json:"custom_code_dashboard,omitempty"`
-	Oauth2Providers     []string `koanf:"-" json:"oauth2_providers,omitempty"` // oauth2 供应商列表，无需配置，自动生成
+	Language            string `koanf:"language" json:"language"` // 系统语言，默认 zh_CN
+	SiteName            string `koanf:"site_name" json:"site_name"`
+	CustomCode          string `koanf:"custom_code" json:"custom_code,omitempty"`
+	CustomCodeDashboard string `koanf:"custom_code_dashboard" json:"custom_code_dashboard,omitempty"`
 
 	InstallHost string `koanf:"install_host" json:"install_host,omitempty"`
 	AgentTLS    bool   `koanf:"tls" json:"tls,omitempty"` // 用于前端判断生成的安装命令是否启用 TLS
@@ -40,7 +53,7 @@ type ConfigDashboard struct {
 	Location       string `koanf:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
 	ForceAuth      bool   `koanf:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
 	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
-	JWTTimeout     int    `mapstructure:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
+	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
 
 	EnablePlainIPInNotification bool `koanf:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
 
@@ -50,14 +63,21 @@ type ConfigDashboard struct {
 	Cover                       uint8  `koanf:"cover" json:"cover"`                                               // 覆盖范围（0:提醒未被 IgnoredIPNotification 包含的所有服务器; 1:仅提醒被 IgnoredIPNotification 包含的服务器;）
 	IgnoredIPNotification       string `koanf:"ignored_ip_notification" json:"ignored_ip_notification,omitempty"` // 特定服务器IP（多个服务器用逗号分隔）
 
-	IgnoredIPNotificationServerIDs map[uint64]bool `koanf:"ignored_ip_notification_server_ids" json:"ignored_ip_notification_server_ids,omitempty"` // [ServerID] -> bool(值为true代表当前ServerID在特定服务器列表内）
-	AvgPingCount                   int             `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
-	DNSServers                     string          `koanf:"dns_servers" json:"dns_servers,omitempty"`
+	AvgPingCount int    `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
+	DNSServers   string `koanf:"dns_servers" json:"dns_servers,omitempty"`
 }
 
 type Config struct {
-	ConfigForGuests
-	ConfigDashboard
+	ConfigForGuests `koanf:",squash"`
+	ConfigDashboard `koanf:",squash"`
+
+	AvgPingCount int `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
+
+	Debug          bool   `koanf:"debug" json:"debug,omitempty"`           // debug模式开关
+	Location       string `koanf:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
+	ForceAuth      bool   `koanf:"force_auth" json:"force_auth,omitempty"` // 强制要求认证
+	AgentSecretKey string `koanf:"agent_secret_key" json:"agent_secret_key,omitempty"`
+	JWTTimeout     int    `koanf:"jwt_timeout" json:"jwt_timeout,omitempty"` // JWT token过期时间（小时）
 
 	JWTSecretKey string `koanf:"jwt_secret_key" json:"jwt_secret_key,omitempty"`
 	ListenPort   uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
@@ -67,15 +87,17 @@ type Config struct {
 	Oauth2 map[string]*Oauth2Config `koanf:"oauth2" json:"oauth2,omitempty"`
 
 	// HTTPS 配置
-	HTTPS struct {
-		ListenPort  uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
-		TLSCertPath string `koanf:"tls_cert_path" json:"tls_cert_path,omitempty"`
-		TLSKeyPath  string `koanf:"tls_key_path" json:"tls_key_path,omitempty"`
-		InsecureTLS bool   `koanf:"insecure_tls" json:"insecure_tls,omitempty"`
-	} `koanf:"https" json:"https"`
+	HTTPS HTTPSConf `koanf:"https" json:"https"`
 
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
+}
+
+type HTTPSConf struct {
+	ListenPort  uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
+	TLSCertPath string `koanf:"tls_cert_path" json:"tls_cert_path,omitempty"`
+	TLSKeyPath  string `koanf:"tls_key_path" json:"tls_key_path,omitempty"`
+	InsecureTLS bool   `koanf:"insecure_tls" json:"insecure_tls,omitempty"`
 }
 
 // Read 读取配置文件并应用
@@ -91,7 +113,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	if _, err := os.Stat(path); err == nil {
-		err = c.k.Load(file.Provider(path), kyaml.Parser())
+		err = c.k.Load(file.Provider(path), kyaml.Parser(), koanf.WithMergeFunc(mergeDedup))
 		if err != nil {
 			return err
 		}
@@ -160,31 +182,24 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		}
 	}
 
-	c.Oauth2Providers = utils.MapKeysToSlice(c.Oauth2)
-
-	c.updateIgnoredIPNotificationID()
 	return nil
-}
-
-// updateIgnoredIPNotificationID 更新用于判断服务器ID是否属于特定服务器的map
-func (c *Config) updateIgnoredIPNotificationID() {
-	c.IgnoredIPNotificationServerIDs = make(map[uint64]bool)
-	for splitedID := range strings.SplitSeq(c.IgnoredIPNotification, ",") {
-		id, _ := strconv.ParseUint(splitedID, 10, 64)
-		if id > 0 {
-			c.IgnoredIPNotificationServerIDs[id] = true
-		}
-	}
 }
 
 // Save 保存配置文件
 func (c *Config) Save() error {
-	c.updateIgnoredIPNotificationID()
-	data, err := c.k.Marshal(kyaml.Parser())
+	return c.save()
+}
+
+func (c *Config) save() error {
+	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
 	}
 
+	return c.write(data)
+}
+
+func (c *Config) write(data []byte) error {
 	dir := filepath.Dir(c.filePath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
@@ -203,10 +218,34 @@ func koanfConf(c any) koanf.UnmarshalConf {
 			Result:           c,
 			WeaklyTypedInput: true,
 			MatchName: func(mapKey, fieldName string) bool {
-				return strings.EqualFold(mapKey, fieldName) ||
-					strings.EqualFold(mapKey, strings.ReplaceAll(fieldName, "_", ""))
+				if strings.EqualFold(mapKey, fieldName) {
+					return true
+				}
+
+				if strings.EqualFold(mapKey, strings.ReplaceAll(fieldName, "_", "")) {
+					return true
+				}
+
+				return false
 			},
 			Squash: true,
 		},
 	}
+}
+
+func mergeDedup(src, dst map[string]any) error {
+	for key := range src {
+		if strings.IndexByte(key, '_') == -1 {
+			continue
+		}
+
+		oldKey := strings.ReplaceAll(key, "_", "")
+		if _, ok := dst[oldKey]; ok {
+			src[oldKey] = src[key]
+			delete(src, key)
+		}
+	}
+
+	kmaps.Merge(src, dst)
+	return nil
 }

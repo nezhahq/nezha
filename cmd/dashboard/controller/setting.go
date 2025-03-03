@@ -32,8 +32,10 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 
 	conf := model.SettingResponse{
 		Config: model.Setting{
-			ConfigForGuests: config.ConfigForGuests,
-			ConfigDashboard: config.ConfigDashboard,
+			ConfigForGuests:                config.ConfigForGuests,
+			ConfigDashboard:                config.ConfigDashboard,
+			IgnoredIPNotificationServerIDs: config.IgnoredIPNotificationServerIDs,
+			Oauth2Providers:                config.Oauth2Providers,
 		},
 		Version:           singleton.Version,
 		FrontendTemplates: singleton.FrontendTemplates,
@@ -48,6 +50,7 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 		conf = model.SettingResponse{
 			Config: model.Setting{
 				ConfigForGuests: configForGuests,
+				Oauth2Providers: config.Oauth2Providers,
 			},
 		}
 	}
