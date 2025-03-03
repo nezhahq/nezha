@@ -33,7 +33,7 @@ func InitConfigFromPath(path string) error {
 }
 
 func (c *ConfigClass) Save() error {
-	Conf.updateIgnoredIPNotificationID()
+	c.updateIgnoredIPNotificationID()
 	return c.Config.Save()
 }
 
