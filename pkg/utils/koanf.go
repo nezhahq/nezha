@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"github.com/go-viper/mapstructure/v2"
+	"sigs.k8s.io/yaml"
 )
 
 // TextUnmarshalerHookFunc is a fixed version of mapstructure.TextUnmarshallerHookFunc.
@@ -68,4 +69,22 @@ func TextUnmarshalerHookFunc() mapstructure.DecodeHookFuncType {
 		}
 		return result, nil
 	}
+}
+
+// KubeYAML implements a YAML parser.
+type KubeYAML struct{}
+
+// Unmarshal parses the given YAML bytes.
+func (p *KubeYAML) Unmarshal(b []byte) (map[string]any, error) {
+	var out map[string]any
+	if err := yaml.Unmarshal(b, &out); err != nil {
+		return nil, err
+	}
+
+	return out, nil
+}
+
+// Marshal marshals the given config map to YAML bytes.
+func (p *KubeYAML) Marshal(o map[string]any) ([]byte, error) {
+	return yaml.Marshal(o)
 }

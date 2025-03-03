@@ -7,7 +7,6 @@ import (
 
 	"github.com/go-viper/mapstructure/v2"
 	kmaps "github.com/knadh/koanf/maps"
-	kyaml "github.com/knadh/koanf/parsers/yaml"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
@@ -94,7 +93,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	if _, err := os.Stat(path); err == nil {
-		err = c.k.Load(file.Provider(path), kyaml.Parser(), koanf.WithMergeFunc(mergeDedup))
+		err = c.k.Load(file.Provider(path), new(utils.KubeYAML), koanf.WithMergeFunc(mergeDedup))
 		if err != nil {
 			return err
 		}
