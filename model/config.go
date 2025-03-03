@@ -4,7 +4,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
 	"github.com/go-viper/mapstructure/v2"
 	kmaps "github.com/knadh/koanf/maps"
@@ -21,18 +20,6 @@ const (
 	ConfigUsePeerIP = "NZ::Use-Peer-IP"
 	ConfigCoverAll  = iota
 	ConfigCoverIgnoreAll
-)
-
-var (
-	oldFormat    bool
-	setOldFormat = sync.OnceFunc(func() {
-		oldFormat = true
-	})
-
-	upgraded    bool
-	setUpgraded = sync.OnceFunc(func() {
-		upgraded = true
-	})
 )
 
 type ConfigForGuests struct {
@@ -68,8 +55,8 @@ type ConfigDashboard struct {
 }
 
 type Config struct {
-	ConfigForGuests `koanf:",squash"`
-	ConfigDashboard `koanf:",squash"`
+	ConfigForGuests
+	ConfigDashboard
 
 	AvgPingCount int `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
 
@@ -218,15 +205,8 @@ func koanfConf(c any) koanf.UnmarshalConf {
 			Result:           c,
 			WeaklyTypedInput: true,
 			MatchName: func(mapKey, fieldName string) bool {
-				if strings.EqualFold(mapKey, fieldName) {
-					return true
-				}
-
-				if strings.EqualFold(mapKey, strings.ReplaceAll(fieldName, "_", "")) {
-					return true
-				}
-
-				return false
+				return strings.EqualFold(mapKey, fieldName) ||
+					strings.EqualFold(mapKey, strings.ReplaceAll(fieldName, "_", ""))
 			},
 			Squash: true,
 		},
