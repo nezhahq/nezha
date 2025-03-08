@@ -1,9 +1,11 @@
 package singleton
 
 import (
+	"fmt"
 	"sync"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"gorm.io/gorm"
 )
 
@@ -29,6 +31,13 @@ func initUser() {
 	AgentSecretToUserId[Conf.AgentSecretKey] = 0
 
 	for _, u := range users {
+		if u.AgentSecret == "" {
+			u.AgentSecret = utils.MustGenerateRandomString(model.DefaultAgentSecretLength)
+			if err := DB.Save(&u).Error; err != nil {
+				panic(fmt.Errorf("update of user %d failed: %v", u.ID, err))
+			}
+		}
+
 		UserInfoMap[u.ID] = model.UserInfo{
 			Role:        u.Role,
 			AgentSecret: u.AgentSecret,

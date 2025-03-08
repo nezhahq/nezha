@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"iter"
 	"maps"
 	"math/big"
@@ -80,6 +81,14 @@ func GenerateRandomString(n int) (string, error) {
 		ret[i] = letters[num.Int64()]
 	}
 	return string(ret), nil
+}
+
+func MustGenerateRandomString(n int) string {
+	str, err := GenerateRandomString(n)
+	if err != nil {
+		panic(fmt.Errorf("MustGenerateRandomString: %v", err))
+	}
+	return str
 }
 
 func Uint64SubInt64(a uint64, b int64) uint64 {

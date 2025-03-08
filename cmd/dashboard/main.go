@@ -40,23 +40,23 @@ var (
 	frontendDist embed.FS
 )
 
-func initSystem() {
+func initSystem() error {
 	// 初始化管理员账户
 	var usersCount int64
 	if err := singleton.DB.Model(&model.User{}).Count(&usersCount).Error; err != nil {
-		panic(err)
+		return err
 	}
 	if usersCount == 0 {
 		hash, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
 		if err != nil {
-			panic(err)
+			return err
 		}
 		admin := model.User{
 			Username: "admin",
 			Password: string(hash),
 		}
 		if err := singleton.DB.Create(&admin).Error; err != nil {
-			panic(err)
+			return err
 		}
 	}
 
@@ -65,13 +65,14 @@ func initSystem() {
 
 	// 每天的3:30 对 监控记录 和 流量记录 进行清理
 	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanServiceHistory); err != nil {
-		panic(err)
+		return err
 	}
 
 	// 每小时对流量记录进行打点
 	if _, err := singleton.CronShared.AddFunc("0 0 * * * *", singleton.RecordTransferHourlyUsage); err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 // @title           Nezha Monitoring API
@@ -111,7 +112,9 @@ func main() {
 	singleton.InitConfigFromPath(dashboardCliParam.ConfigFile)
 	singleton.InitTimezoneAndCache()
 	singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation)
-	initSystem()
+	if err := initSystem(); err != nil {
+		log.Fatal(err)
+	}
 
 	l, err := net.Listen("tcp", fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort))
 	if err != nil {

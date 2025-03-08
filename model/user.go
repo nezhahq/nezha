@@ -13,6 +13,8 @@ const (
 	RoleMember
 )
 
+const DefaultAgentSecretLength = 32
+
 type User struct {
 	Common
 	Username       string `json:"username,omitempty" gorm:"uniqueIndex"`
@@ -32,7 +34,7 @@ func (u *User) BeforeSave(tx *gorm.DB) error {
 		return nil
 	}
 
-	key, err := utils.GenerateRandomString(32)
+	key, err := utils.GenerateRandomString(DefaultAgentSecretLength)
 	if err != nil {
 		return err
 	}
