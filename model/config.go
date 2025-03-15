@@ -26,12 +26,12 @@ type ConfigForGuests struct {
 	SiteName            string `koanf:"site_name" json:"site_name"`
 	CustomCode          string `koanf:"custom_code" json:"custom_code,omitempty"`
 	CustomCodeDashboard string `koanf:"custom_code_dashboard" json:"custom_code_dashboard,omitempty"`
-
-	InstallHost string `koanf:"install_host" json:"install_host,omitempty"`
-	AgentTLS    bool   `koanf:"tls" json:"tls,omitempty"` // 用于前端判断生成的安装命令是否启用 TLS
 }
 
 type ConfigDashboard struct {
+	InstallHost string `koanf:"install_host" json:"install_host,omitempty"`
+	AgentTLS    bool   `koanf:"tls" json:"tls,omitempty"` // 用于前端判断生成的安装命令是否启用 TLS
+
 	RealIPHeader  string `koanf:"real_ip_header" json:"real_ip_header,omitempty"` // 真实IP
 	UserTemplate  string `koanf:"user_template" json:"user_template,omitempty"`
 	AdminTemplate string `koanf:"admin_template" json:"admin_template,omitempty"`
