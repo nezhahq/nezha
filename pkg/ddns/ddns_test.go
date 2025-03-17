@@ -1,6 +1,7 @@
 package ddns
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -34,8 +35,9 @@ func TestSplitDomainSOA(t *testing.T) {
 		},
 	}
 
+	provider := &Provider{ctx: context.WithValue(context.Background(), DNSServerKey{}, []string{"1.1.1.1:53"})}
 	for _, c := range cases {
-		prefix, zone, err := splitDomainSOA(c.domain)
+		prefix, zone, err := provider.splitDomainSOA(c.domain)
 		if err != nil {
 			t.Fatalf("Error: %s", err)
 		}

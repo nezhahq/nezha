@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/libdns/libdns"
@@ -14,9 +13,10 @@ import (
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
-var (
-	dnsTimeOut       = 10 * time.Second
-	customDNSServers []string
+type DNSServerKey struct{}
+
+const (
+	dnsTimeOut = 10 * time.Second
 )
 
 type Provider struct {
@@ -29,12 +29,6 @@ type Provider struct {
 	DDNSProfile *model.DDNSProfile
 	IPAddrs     *model.IP
 	Setter      libdns.RecordSetter
-}
-
-func InitDNSServers(s string) {
-	if s != "" {
-		customDNSServers = strings.Split(s, ",")
-	}
 }
 
 func (provider *Provider) GetProfileID() uint64 {
@@ -58,7 +52,7 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 
 func (provider *Provider) updateDomain(domain string) error {
 	var err error
-	provider.prefix, provider.zone, err = splitDomainSOA(domain)
+	provider.prefix, provider.zone, err = provider.splitDomainSOA(domain)
 	if err != nil {
 		return err
 	}
@@ -96,13 +90,15 @@ func (provider *Provider) addDomainRecord() error {
 	return err
 }
 
-func splitDomainSOA(domain string) (prefix string, zone string, err error) {
+func (provider *Provider) splitDomainSOA(domain string) (prefix string, zone string, err error) {
 	c := &dns.Client{Timeout: dnsTimeOut}
 
 	domain += "."
 	indexes := dns.Split(domain)
 
 	servers := utils.DNSServers
+
+	customDNSServers, _ := provider.ctx.Value(DNSServerKey{}).([]string)
 	if len(customDNSServers) > 0 {
 		servers = customDNSServers
 	}

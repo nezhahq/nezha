@@ -107,7 +107,6 @@ func updateConfig(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnNameserverUpdate()
 	singleton.OnUpdateLang(singleton.Conf.Language)
 	return nil, nil
 }

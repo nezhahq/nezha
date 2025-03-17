@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/nezhahq/nezha/pkg/ddns"
 	geoipx "github.com/nezhahq/nezha/pkg/geoip"
 	"github.com/nezhahq/nezha/pkg/grpcx"
+	"github.com/nezhahq/nezha/pkg/utils"
 
 	"github.com/nezhahq/nezha/model"
 	pb "github.com/nezhahq/nezha/proto"
@@ -236,12 +238,15 @@ func (s *NezhaHandler) ReportGeoIP(c context.Context, r *pb.GeoIP) (*pb.GeoIP, e
 		ipv4 := geoip.IP.IPv4Addr
 		ipv6 := geoip.IP.IPv6Addr
 
+		dnsServers := strings.Split(singleton.Conf.DNSServers, ",")
+		ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(len(dnsServers) > 0, dnsServers, utils.DNSServers))
+
 		providers, err := singleton.DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, &model.IP{IPv4Addr: ipv4, IPv6Addr: ipv6})
 		if err == nil {
 			for _, provider := range providers {
 				domains := server.OverrideDDNSDomains[provider.GetProfileID()]
 				go func(provider *ddns.Provider) {
-					provider.UpdateDomain(context.Background(), domains...)
+					provider.UpdateDomain(ctx, domains...)
 				}(provider)
 			}
 		} else {

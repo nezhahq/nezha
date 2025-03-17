@@ -34,8 +34,6 @@ func NewDDNSClass() *DDNSClass {
 			sortedList: sortedList,
 		},
 	}
-
-	OnNameserverUpdate()
 	return dc
 }
 
@@ -106,8 +104,4 @@ func (c *DDNSClass) sortList() {
 	c.sortedListMu.Lock()
 	defer c.sortedListMu.Unlock()
 	c.sortedList = sortedList
-}
-
-func OnNameserverUpdate() {
-	ddns2.InitDNSServers(Conf.DNSServers)
 }
