@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/libdns/cloudflare"
+	"github.com/libdns/he"
 	tencentcloud "github.com/nezhahq/libdns-tencentcloud"
 
 	"github.com/nezhahq/nezha/model"
@@ -84,6 +85,9 @@ func (c *DDNSClass) GetDDNSProvidersFromProfiles(profileId []uint64, ip *model.I
 			providers = append(providers, provider)
 		case model.ProviderTencentCloud:
 			provider.Setter = &tencentcloud.Provider{SecretId: profile.AccessID, SecretKey: profile.AccessSecret}
+			providers = append(providers, provider)
+		case model.ProviderHE:
+			provider.Setter = &he.Provider{APIKey: profile.AccessSecret}
 			providers = append(providers, provider)
 		default:
 			return nil, fmt.Errorf("无法找到配置的DDNS提供者 %s", profile.Provider)

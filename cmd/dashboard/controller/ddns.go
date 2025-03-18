@@ -202,5 +202,5 @@ func batchDeleteDDNS(c *gin.Context) (any, error) {
 // @Success 200 {object} model.CommonResponse[[]string]
 // @Router /ddns/providers [get]
 func listProviders(c *gin.Context) ([]string, error) {
-	return model.ProviderList, nil
+	return model.ProviderList[:], nil
 }

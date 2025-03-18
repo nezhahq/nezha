@@ -10,10 +10,11 @@ const (
 	ProviderWebHook      = "webhook"
 	ProviderCloudflare   = "cloudflare"
 	ProviderTencentCloud = "tencentcloud"
+	ProviderHE           = "he"
 )
 
-var ProviderList = []string{
-	ProviderDummy, ProviderWebHook, ProviderCloudflare, ProviderTencentCloud,
+var ProviderList = [...]string{
+	ProviderDummy, ProviderWebHook, ProviderCloudflare, ProviderTencentCloud, ProviderHE,
 }
 
 type DDNSProfile struct {
