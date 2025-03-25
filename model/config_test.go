@@ -48,7 +48,6 @@ func TestReadConfig(t *testing.T) {
 		if err := c.Read(file, testFrontendTemplates); err != nil {
 			t.Fatalf("read config failed: %v", err)
 		}
-		t.Log(c.SiteName)
 
 		testFields := []struct {
 			Name  string
