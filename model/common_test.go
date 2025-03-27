@@ -21,7 +21,7 @@ func TestSearchByID(t *testing.T) {
 		}
 
 		searchList := slices.Values([]string{"4", "1", "3"})
-		filtered := searchByID(searchList, list)
+		filtered := SearchByID(searchList, list)
 		if !reflect.DeepEqual(filtered, exp) {
 			t.Fatalf("expected %v, but got %v", exp, filtered)
 		}
@@ -41,7 +41,7 @@ func TestSearchByID(t *testing.T) {
 		}
 
 		searchList := slices.Values([]string{"3", "4", "5"})
-		filtered := searchByID(searchList, list)
+		filtered := SearchByID(searchList, list)
 		if !reflect.DeepEqual(filtered, exp) {
 			t.Fatalf("expected %v, but got %v", exp, filtered)
 		}

@@ -72,10 +72,10 @@ func FindByUserID[S ~[]E, E CommonInterface](s S, uid uint64) []uint64 {
 }
 
 func SearchByIDCtx[S ~[]E, E CommonInterface](c *gin.Context, x S) S {
-	return searchByID(strings.SplitSeq(c.Query("id"), ","), x)
+	return SearchByID(strings.SplitSeq(c.Query("id"), ","), x)
 }
 
-func searchByID[S ~[]E, E CommonInterface](seq iter.Seq[string], x S) S {
+func SearchByID[S ~[]E, E CommonInterface](seq iter.Seq[string], x S) S {
 	if hasPriorityList[E]() {
 		return searchByIDPri(seq, x)
 	}
