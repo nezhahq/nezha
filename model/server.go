@@ -73,11 +73,7 @@ func (s *Server) AfterFind(tx *gorm.DB) error {
 	return nil
 }
 
-// Split a sorted server list into two separate lists:
-// The first list contains servers with a priority set (DisplayIndex != 0).
-// The second list contains servers without a priority set (DisplayIndex == 0).
-// The original slice is not modified. If no server without a priority is found, it returns nil.
-func SplitList(x []*Server) ([]*Server, []*Server) {
+func (s *Server) SplitList(x []*Server) ([]*Server, []*Server) {
 	pri := func(s *Server) bool {
 		return s.DisplayIndex == 0
 	}

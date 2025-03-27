@@ -2,6 +2,7 @@ package model
 
 import (
 	"cmp"
+	"iter"
 	"slices"
 	"strconv"
 	"strings"
@@ -71,35 +72,63 @@ func FindByUserID[S ~[]E, E CommonInterface](s S, uid uint64) []uint64 {
 }
 
 func SearchByIDCtx[S ~[]E, E CommonInterface](c *gin.Context, x S) S {
-	switch any(x).(type) {
-	case []*Server:
-		l := searchByIDCtxServer(c, any(x).([]*Server))
-		return any(l).(S)
-	default:
-		var s S
-		for idStr := range strings.SplitSeq(c.Query("id"), ",") {
-			id, err := strconv.ParseUint(idStr, 10, 64)
-			if err != nil {
-				continue
-			}
-
-			s = appendBinarySearch(s, x, id)
-		}
-		return utils.IfOr(len(s) > 0, s, x)
-	}
+	return searchByID(strings.SplitSeq(c.Query("id"), ","), x)
 }
 
-func searchByIDCtxServer(c *gin.Context, x []*Server) []*Server {
-	list1, list2 := SplitList(x)
+func searchByID[S ~[]E, E CommonInterface](seq iter.Seq[string], x S) S {
+	if hasPriorityList[E]() {
+		return searchByIDPri(seq, x)
+	}
 
-	var clist1, clist2 []*Server
-	for idStr := range strings.SplitSeq(c.Query("id"), ",") {
+	var s S
+	for idStr := range seq {
 		id, err := strconv.ParseUint(idStr, 10, 64)
 		if err != nil {
 			continue
 		}
 
-		clist1 = appendBinarySearch(clist1, list1, id)
+		s = appendBinarySearch(s, x, id)
+	}
+	return utils.IfOr(len(s) > 0, s, x)
+}
+
+func hasPriorityList[T CommonInterface]() bool {
+	var class T
+
+	switch any(class).(type) {
+	case *Server:
+		return true
+	default:
+		return false
+	}
+}
+
+type splitter[S ~[]E, E CommonInterface] interface {
+	// SplitList should split a sorted list into two separate lists:
+	// The first list contains elements with a priority set (DisplayIndex != 0).
+	// The second list contains elements without a priority set (DisplayIndex == 0).
+	// The original slice is not modified. If no element without a priority is found, it returns nil.
+	// Should be safe to use with a nil pointer.
+	SplitList(x S) (S, S)
+}
+
+func searchByIDPri[S ~[]E, E CommonInterface](seq iter.Seq[string], x S) S {
+	var class E
+	split, ok := any(class).(splitter[S, E])
+	if !ok {
+		return nil
+	}
+
+	plist, list2 := split.SplitList(x)
+
+	var clist1, clist2 S
+	for idStr := range seq {
+		id, err := strconv.ParseUint(idStr, 10, 64)
+		if err != nil {
+			continue
+		}
+
+		clist1 = appendSearch(clist1, plist, id)
 		clist2 = appendBinarySearch(clist2, list2, id)
 	}
 
@@ -113,5 +142,15 @@ func appendBinarySearch[S ~[]E, E CommonInterface](x, y S, target uint64) S {
 	}); ok {
 		x = append(x, y[i])
 	}
+	return x
+}
+
+func appendSearch[S ~[]E, E CommonInterface](x, y S, target uint64) S {
+	if i := slices.IndexFunc(y, func(e E) bool {
+		return e.GetID() == target
+	}); i != -1 {
+		x = append(x, y[i])
+	}
+
 	return x
 }

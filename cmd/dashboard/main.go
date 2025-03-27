@@ -40,7 +40,7 @@ var (
 	frontendDist embed.FS
 )
 
-func initSystem() error {
+func initSystem(bus chan<- *model.Service) error {
 	// 初始化管理员账户
 	var usersCount int64
 	if err := singleton.DB.Model(&model.User{}).Count(&usersCount).Error; err != nil {
@@ -61,7 +61,9 @@ func initSystem() error {
 	}
 
 	// 启动 singleton 包下的所有服务
-	singleton.LoadSingleton()
+	if err := singleton.LoadSingleton(bus); err != nil {
+		return err
+	}
 
 	// 每天的3:30 对 监控记录 和 流量记录 进行清理
 	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanServiceHistory); err != nil {
@@ -107,12 +109,13 @@ func main() {
 		os.Exit(0)
 	}
 
+	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
 	// 初始化 dao 包
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
 		singleton.InitTimezoneAndCache,
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
-		initSystem); err != nil {
+		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
 		log.Fatal(err)
 	}
 
@@ -122,15 +125,9 @@ func main() {
 	}
 
 	singleton.CleanServiceHistory()
-	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
 	rpc.DispatchKeepalive()
 	go rpc.DispatchTask(serviceSentinelDispatchBus)
 	go singleton.AlertSentinelStart()
-	singleton.ServiceSentinelShared, err = singleton.NewServiceSentinel(
-		serviceSentinelDispatchBus, singleton.ServerShared, singleton.NotificationShared, singleton.CronShared)
-	if err != nil {
-		log.Fatal(err)
-	}
 
 	grpcHandler := rpc.ServeRPC()
 	httpHandler := controller.ServeWeb(frontendDist)

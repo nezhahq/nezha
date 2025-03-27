@@ -51,7 +51,7 @@ func InitTimezoneAndCache() error {
 }
 
 // LoadSingleton 加载子服务并执行
-func LoadSingleton() {
+func LoadSingleton(bus chan<- *model.Service) (err error) {
 	initUser()                                  // 加载用户ID绑定表
 	initI18n()                                  // 加载本地化服务
 	NotificationShared = NewNotificationClass() // 加载通知服务
@@ -59,6 +59,8 @@ func LoadSingleton() {
 	CronShared = NewCronClass()                 // 加载定时任务
 	NATShared = NewNATClass()
 	DDNSShared = NewDDNSClass()
+	ServiceSentinelShared, err = NewServiceSentinel(bus, ServerShared, NotificationShared, CronShared)
+	return
 }
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
