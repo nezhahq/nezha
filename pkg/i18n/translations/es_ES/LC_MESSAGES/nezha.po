@@ -8,16 +8,16 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2025-01-30 21:58+0800\n"
-"PO-Revision-Date: 2024-12-26 06:07+0000\n"
-"Last-Translator: UUBulb <uub@kuzu.uk>\n"
-"Language-Team: Spanish <https://hosted.weblate.org/projects/nezha/nezha-"
-"dashboard/es/>\n"
+"PO-Revision-Date: 2025-03-28 20:02+0000\n"
+"Last-Translator: Andres Pava <hola@andrespava.com>\n"
+"Language-Team: Spanish <https://hosted.weblate.org/projects/nezha/"
+"nezha-dashboard/es/>\n"
 "Language: es_ES\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n != 1;\n"
-"X-Generator: Weblate 5.10-dev\n"
+"X-Generator: Weblate 5.11-dev\n"
 
 #: cmd/dashboard/controller/alertrule.go:104
 #, c-format
@@ -134,32 +134,30 @@ msgstr "el ID de grupo %d no existe"
 
 #: cmd/dashboard/controller/oauth2.go:42 cmd/dashboard/controller/oauth2.go:83
 msgid "provider is required"
-msgstr ""
+msgstr "Se requiere proveedor"
 
 #: cmd/dashboard/controller/oauth2.go:52 cmd/dashboard/controller/oauth2.go:87
 #: cmd/dashboard/controller/oauth2.go:132
-#, fuzzy
-#| msgid "server not found"
 msgid "provider not found"
-msgstr "servidor no encontrado"
+msgstr "proveedor no encontrado"
 
 #: cmd/dashboard/controller/oauth2.go:100
 msgid "operation not permitted"
-msgstr ""
+msgstr "operación no permitida"
 
 #: cmd/dashboard/controller/oauth2.go:138
 msgid "code is required"
-msgstr ""
+msgstr "código es requerido"
 
 #: cmd/dashboard/controller/oauth2.go:175
 msgid "oauth2 user not binded yet"
-msgstr ""
+msgstr "no se ha vinculado oauth2 todavía"
 
 #: cmd/dashboard/controller/oauth2.go:217
 #: cmd/dashboard/controller/oauth2.go:223
 #: cmd/dashboard/controller/oauth2.go:228
 msgid "invalid state key"
-msgstr ""
+msgstr "clave de estado no válida"
 
 #: cmd/dashboard/controller/server.go:74
 #, c-format
@@ -168,15 +166,15 @@ msgstr "el ID de servidor %d no existe"
 
 #: cmd/dashboard/controller/server.go:250
 msgid "operation timeout"
-msgstr ""
+msgstr "Se agoto el tiempo de espera"
 
 #: cmd/dashboard/controller/server.go:257
 msgid "get server config failed: %v"
-msgstr ""
+msgstr "fallo al obtener configuración del servidor: %v"
 
 #: cmd/dashboard/controller/server.go:261
 msgid "get server config failed"
-msgstr ""
+msgstr "fallo al obtener configuración del servidor"
 
 #: cmd/dashboard/controller/server_group.go:92
 #: cmd/dashboard/controller/server_group.go:172
@@ -199,7 +197,7 @@ msgstr "contraseña incorrecta"
 
 #: cmd/dashboard/controller/user.go:82
 msgid "you don't have any oauth2 bindings"
-msgstr ""
+msgstr "No tienes ningún OAuth2 configurado"
 
 #: cmd/dashboard/controller/user.go:131
 msgid "password length must be greater than 6"
@@ -211,7 +209,7 @@ msgstr "el nombre de usuario no puede estar vacío"
 
 #: cmd/dashboard/controller/user.go:137
 msgid "invalid role"
-msgstr ""
+msgstr "rol inválido"
 
 #: cmd/dashboard/controller/user.go:176
 msgid "can't delete yourself"
