@@ -13,6 +13,7 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 type CronClass struct {
@@ -20,7 +21,7 @@ type CronClass struct {
 	*cron.Cron
 }
 
-func NewCronClass() *CronClass {
+func NewCronClass(_ *scontext.Context) *CronClass {
 	cronx := cron.New(cron.WithSeconds(), cron.WithLocation(Loc))
 	list := make(map[uint64]*model.Cron)
 

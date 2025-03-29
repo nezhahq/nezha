@@ -10,6 +10,7 @@ import (
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 const (
@@ -26,7 +27,7 @@ type NotificationClass struct {
 	groupMu   sync.RWMutex
 }
 
-func NewNotificationClass() *NotificationClass {
+func NewNotificationClass(_ *scontext.Context) *NotificationClass {
 	var sortedList []*model.Notification
 
 	groupToIDList := make(map[uint64]map[uint64]*model.Notification)

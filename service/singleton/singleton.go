@@ -17,6 +17,7 @@ import (
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 var Version = "debug"
@@ -51,16 +52,36 @@ func InitTimezoneAndCache() error {
 }
 
 // LoadSingleton 加载子服务并执行
-func LoadSingleton(bus chan<- *model.Service) (err error) {
-	initUser()                                  // 加载用户ID绑定表
-	initI18n()                                  // 加载本地化服务
-	NotificationShared = NewNotificationClass() // 加载通知服务
-	ServerShared = NewServerClass()             // 加载服务器列表
-	CronShared = NewCronClass()                 // 加载定时任务
-	NATShared = NewNATClass()
-	DDNSShared = NewDDNSClass()
-	ServiceSentinelShared, err = NewServiceSentinel(bus, ServerShared, NotificationShared, CronShared)
-	return
+func LoadSingleton(ctx *scontext.Context, bus chan<- *model.Service) (*scontext.Context, error) {
+	var err error
+
+	initUser() // 加载用户ID绑定表
+	initI18n() // 加载本地化服务
+
+	NotificationShared = NewNotificationClass(ctx) // 加载通知服务
+	ctx = scontext.WithValue(ctx, NotificationShared)
+
+	NATShared = NewNATClass(ctx)
+	ctx = scontext.WithValue(ctx, NATShared)
+
+	DDNSShared = NewDDNSClass(ctx)
+	ctx = scontext.WithValue(ctx, DDNSShared)
+
+	// 加载服务器列表
+	if ServerShared, err = NewServerClass(ctx); err != nil {
+		return ctx, err
+	}
+	ctx = scontext.WithValue(ctx, ServerShared)
+
+	CronShared = NewCronClass(ctx) // 加载定时任务
+	ctx = scontext.WithValue(ctx, CronShared)
+
+	if ServiceSentinelShared, err = NewServiceSentinel(ctx, bus); err != nil {
+		return ctx, err
+	}
+	ctx = scontext.WithValue(ctx, ServiceSentinelShared)
+
+	return ctx, nil
 }
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates

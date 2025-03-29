@@ -2,6 +2,7 @@ package singleton
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"iter"
 	"log"
@@ -18,6 +19,7 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 const (
@@ -91,7 +93,22 @@ type ServiceSentinel struct {
 }
 
 // NewServiceSentinel 创建服务监控器
-func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service, sc *ServerClass, nc *NotificationClass, crc *CronClass) (*ServiceSentinel, error) {
+func NewServiceSentinel(ctx *scontext.Context, serviceSentinelDispatchBus chan<- *model.Service) (*ServiceSentinel, error) {
+	sc := scontext.Value[ServerClass](ctx)
+	if sc == nil {
+		return nil, errors.New("context does not contain ServerClass")
+	}
+
+	nc := scontext.Value[NotificationClass](ctx)
+	if nc == nil {
+		return nil, errors.New("context does not contain NotificationClass")
+	}
+
+	crc := scontext.Value[CronClass](ctx)
+	if crc == nil {
+		return nil, errors.New("context does not contain CronClass")
+	}
+
 	ss := &ServiceSentinel{
 		serviceReportChannel:     make(chan ReportData, 200),
 		serviceStatusToday:       make(map[uint64]*_TodayStatsOfService),

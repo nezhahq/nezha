@@ -25,6 +25,7 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/proto"
+	scontext "github.com/nezhahq/nezha/service/context"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -40,7 +41,7 @@ var (
 	frontendDist embed.FS
 )
 
-func initSystem(bus chan<- *model.Service) error {
+func initSystem(ctx *scontext.Context, bus chan<- *model.Service) error {
 	// 初始化管理员账户
 	var usersCount int64
 	if err := singleton.DB.Model(&model.User{}).Count(&usersCount).Error; err != nil {
@@ -61,7 +62,7 @@ func initSystem(bus chan<- *model.Service) error {
 	}
 
 	// 启动 singleton 包下的所有服务
-	if err := singleton.LoadSingleton(bus); err != nil {
+	if _, err := singleton.LoadSingleton(ctx, bus); err != nil {
 		return err
 	}
 
@@ -109,13 +110,20 @@ func main() {
 		os.Exit(0)
 	}
 
+	serviceCtx := scontext.NewContext(context.Background())
 	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
 	// 初始化 dao 包
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
-		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
+		func() error {
+			if err := singleton.InitConfigFromPath(dashboardCliParam.ConfigFile); err != nil {
+				return err
+			}
+			serviceCtx = scontext.WithValue(serviceCtx, singleton.Conf)
+			return nil
+		},
 		singleton.InitTimezoneAndCache,
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
-		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
+		func() error { return initSystem(serviceCtx, serviceSentinelDispatchBus) }); err != nil {
 		log.Fatal(err)
 	}
 

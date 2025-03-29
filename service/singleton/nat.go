@@ -6,6 +6,7 @@ import (
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 type NATClass struct {
@@ -14,7 +15,7 @@ type NATClass struct {
 	idToDomain map[uint64]string
 }
 
-func NewNATClass() *NATClass {
+func NewNATClass(_ *scontext.Context) *NATClass {
 	var sortedList []*model.NAT
 
 	DB.Find(&sortedList)

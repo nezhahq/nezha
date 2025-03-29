@@ -2,10 +2,16 @@ package singleton
 
 import (
 	"cmp"
+	"context"
+	"errors"
+	"log"
 	"slices"
+	"strings"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/ddns"
 	"github.com/nezhahq/nezha/pkg/utils"
+	scontext "github.com/nezhahq/nezha/service/context"
 )
 
 type ServerClass struct {
@@ -14,14 +20,29 @@ type ServerClass struct {
 	uuidToID map[string]uint64
 
 	sortedListForGuest []*model.Server
+
+	dc   *DDNSClass
+	conf *ConfigClass
 }
 
-func NewServerClass() *ServerClass {
+func NewServerClass(ctx *scontext.Context) (*ServerClass, error) {
+	dc := scontext.Value[DDNSClass](ctx)
+	if dc == nil {
+		return nil, errors.New("context does not contain DDNSClass")
+	}
+
+	conf := scontext.Value[ConfigClass](ctx)
+	if conf == nil {
+		return nil, errors.New("context does not contain DDNSClass")
+	}
+
 	sc := &ServerClass{
 		class: class[uint64, *model.Server]{
 			list: make(map[uint64]*model.Server),
 		},
 		uuidToID: make(map[string]uint64),
+		dc:       dc,
+		conf:     conf,
 	}
 
 	var servers []model.Server
@@ -34,7 +55,7 @@ func NewServerClass() *ServerClass {
 	}
 	sc.sortList()
 
-	return sc
+	return sc, nil
 }
 
 func (c *ServerClass) Update(s *model.Server, uuid string) {
@@ -46,6 +67,12 @@ func (c *ServerClass) Update(s *model.Server, uuid string) {
 	}
 
 	c.listMu.Unlock()
+
+	if s.EnableDDNS {
+		if err := c.UpdateDDNS(s, nil); err != nil {
+			log.Printf("NEZHA>> Failed to update DDNS for server %d: %v", err, s.ID)
+		}
+	}
 
 	c.sortList()
 }
@@ -77,6 +104,25 @@ func (c *ServerClass) UUIDToID(uuid string) (id uint64, ok bool) {
 
 	id, ok = c.uuidToID[uuid]
 	return
+}
+
+func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
+	confServers := strings.Split(c.conf.DNSServers, ",")
+	ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(confServers[0] != "", confServers, utils.DNSServers))
+
+	providers, err := c.dc.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP))
+	if err != nil {
+		return err
+	}
+
+	for _, provider := range providers {
+		domains := server.OverrideDDNSDomains[provider.GetProfileID()]
+		go func(provider *ddns.Provider) {
+			provider.UpdateDomain(ctx, domains...)
+		}(provider)
+	}
+
+	return nil
 }
 
 func (c *ServerClass) sortList() {
