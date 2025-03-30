@@ -11,12 +11,11 @@
   <p>Supports <b>monitoring</b> system status, HTTP (SSL certificate change, upcoming expiration, expired), TCP, Ping and supports <b>push alerts</b>, run scheduled tasks and <b>web terminal</b>.</p>
 </div>
 
-\>> [Official Forum | 官方论坛](https://lajilao.com/c/nezha)
-\>> Telegram Channel: [哪吒监控（中文通知频道）](https://t.me/nezhanews)
+\>> Official Forum | 官方论坛: [有点意思](https://lajilao.com/c/nezha)<br>
+\>> Telegram Channel: [哪吒监控（中文通知频道）](https://t.me/nezhanews)<br>
 
-\>> Telegram Group: [Nezha Monitoring Global (English Only)](https://t.me/nezhamonitoring_global), [哪吒监控（中文群组）](https://t.me/nezhamonitoring)
-
-\>> [Use Cases | 我们的用户](https://www.google.com/search?q=%22%E5%93%AA%E5%90%92%E7%9B%91%E6%8E%A7+Nezha+Monitoring%22) (Google)  
+\>> [Use Cases | 我们的用户](https://www.google.com/search?q=%22%E5%93%AA%E5%90%92%E7%9B%91%E6%8E%A7+Nezha+Monitoring%22) (Google) <br>
+<sub>\>> Telegram Group: [Nezha Monitoring Global (English Only)](https://t.me/nezhamonitoring_global), [哪吒监控（中文群组）](https://t.me/nezhamonitoring)</sub>
 
 
 ## User Guide
