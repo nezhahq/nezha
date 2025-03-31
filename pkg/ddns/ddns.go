@@ -20,7 +20,6 @@ const (
 )
 
 type Provider struct {
-	ctx        context.Context
 	ipAddr     string
 	recordType string
 	prefix     string
@@ -36,11 +35,10 @@ func (provider *Provider) GetProfileID() uint64 {
 }
 
 func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...string) {
-	provider.ctx = ctx
 	for _, domain := range utils.IfOr(len(overrideDomains) > 0, overrideDomains, provider.DDNSProfile.Domains) {
 		for retries := 0; retries < int(provider.DDNSProfile.MaxRetries); retries++ {
 			log.Printf("NEZHA>> Updating DNS Record of domain %s: %d/%d", domain, retries+1, provider.DDNSProfile.MaxRetries)
-			if err := provider.updateDomain(domain); err != nil {
+			if err := provider.updateDomain(ctx, domain); err != nil {
 				log.Printf("NEZHA>> Failed to update DNS record of domain %s: %v", domain, err)
 			} else {
 				log.Printf("NEZHA>> Update DNS record of domain %s succeeded", domain)
@@ -50,9 +48,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 	}
 }
 
-func (provider *Provider) updateDomain(domain string) error {
+func (provider *Provider) updateDomain(ctx context.Context, domain string) error {
 	var err error
-	provider.prefix, provider.zone, err = provider.splitDomainSOA(domain)
+	provider.prefix, provider.zone, err = provider.splitDomainSOA(ctx, domain)
 	if err != nil {
 		return err
 	}
@@ -61,7 +59,7 @@ func (provider *Provider) updateDomain(domain string) error {
 	if *provider.DDNSProfile.EnableIPv4 {
 		provider.recordType = getRecordString(true)
 		provider.ipAddr = provider.IPAddrs.IPv4Addr
-		if err = provider.addDomainRecord(); err != nil {
+		if err = provider.addDomainRecord(ctx); err != nil {
 			return err
 		}
 	}
@@ -69,7 +67,7 @@ func (provider *Provider) updateDomain(domain string) error {
 	if *provider.DDNSProfile.EnableIPv6 {
 		provider.recordType = getRecordString(false)
 		provider.ipAddr = provider.IPAddrs.IPv6Addr
-		if err = provider.addDomainRecord(); err != nil {
+		if err = provider.addDomainRecord(ctx); err != nil {
 			return err
 		}
 	}
@@ -77,8 +75,8 @@ func (provider *Provider) updateDomain(domain string) error {
 	return nil
 }
 
-func (provider *Provider) addDomainRecord() error {
-	_, err := provider.Setter.SetRecords(provider.ctx, provider.zone,
+func (provider *Provider) addDomainRecord(ctx context.Context) error {
+	_, err := provider.Setter.SetRecords(ctx, provider.zone,
 		[]libdns.Record{
 			{
 				Type:  provider.recordType,
@@ -90,7 +88,7 @@ func (provider *Provider) addDomainRecord() error {
 	return err
 }
 
-func (provider *Provider) splitDomainSOA(domain string) (prefix string, zone string, err error) {
+func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (prefix string, zone string, err error) {
 	c := &dns.Client{Timeout: dnsTimeOut}
 
 	domain += "."
@@ -98,26 +96,26 @@ func (provider *Provider) splitDomainSOA(domain string) (prefix string, zone str
 
 	servers := utils.DNSServers
 
-	customDNSServers, _ := provider.ctx.Value(DNSServerKey{}).([]string)
+	customDNSServers, _ := ctx.Value(DNSServerKey{}).([]string)
 	if len(customDNSServers) > 0 {
 		servers = customDNSServers
 	}
 
-	var r *dns.Msg
-	for _, idx := range indexes {
-		var m dns.Msg
-		m.SetQuestion(domain[idx:], dns.TypeSOA)
+	for _, server := range servers {
+		for _, idx := range indexes {
+			var m dns.Msg
+			m.SetQuestion(domain[idx:], dns.TypeSOA)
 
-		for _, server := range servers {
-			r, _, err = c.Exchange(&m, server)
+			r, _, err := c.Exchange(&m, server)
 			if err != nil {
-				return
+				continue
 			}
+
 			if len(r.Answer) > 0 {
 				if soa, ok := r.Answer[0].(*dns.SOA); ok {
-					zone = soa.Hdr.Name
-					prefix = libdns.RelativeName(domain, zone)
-					return
+					zone := soa.Hdr.Name
+					prefix := libdns.RelativeName(domain, zone)
+					return prefix, zone, nil
 				}
 			}
 		}

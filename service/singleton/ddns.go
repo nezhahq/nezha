@@ -65,7 +65,7 @@ func (c *DDNSClass) GetDDNSProvidersFromProfiles(profileId []uint64, ip *model.I
 			profiles = append(profiles, profile)
 		} else {
 			c.listMu.RUnlock()
-			return nil, fmt.Errorf("无法找到DDNS配置 ID %d", id)
+			return nil, fmt.Errorf("cannot find DDNS profile %d", id)
 		}
 	}
 	c.listMu.RUnlock()
@@ -90,7 +90,7 @@ func (c *DDNSClass) GetDDNSProvidersFromProfiles(profileId []uint64, ip *model.I
 			provider.Setter = &he.Provider{APIKey: profile.AccessSecret}
 			providers = append(providers, provider)
 		default:
-			return nil, fmt.Errorf("无法找到配置的DDNS提供者 %s", profile.Provider)
+			return nil, fmt.Errorf("cannot find DDNS provider %s", profile.Provider)
 		}
 	}
 	return providers, nil

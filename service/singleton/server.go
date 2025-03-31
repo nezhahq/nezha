@@ -2,9 +2,13 @@ package singleton
 
 import (
 	"cmp"
+	"context"
+	"log"
 	"slices"
+	"strings"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/ddns"
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
@@ -14,14 +18,19 @@ type ServerClass struct {
 	uuidToID map[string]uint64
 
 	sortedListForGuest []*model.Server
+
+	conf *ConfigClass
+	dc   *DDNSClass
 }
 
-func NewServerClass() *ServerClass {
+func NewServerClass(conf *ConfigClass, dc *DDNSClass) *ServerClass {
 	sc := &ServerClass{
 		class: class[uint64, *model.Server]{
 			list: make(map[uint64]*model.Server),
 		},
 		uuidToID: make(map[string]uint64),
+		conf:     conf,
+		dc:       dc,
 	}
 
 	var servers []model.Server
@@ -46,6 +55,12 @@ func (c *ServerClass) Update(s *model.Server, uuid string) {
 	}
 
 	c.listMu.Unlock()
+
+	if s.EnableDDNS {
+		if err := c.UpdateDDNS(s, nil); err != nil {
+			log.Printf("NEZHA>> Failed to update DDNS for server %d: %v", err, s.ID)
+		}
+	}
 
 	c.sortList()
 }
@@ -77,6 +92,25 @@ func (c *ServerClass) UUIDToID(uuid string) (id uint64, ok bool) {
 
 	id, ok = c.uuidToID[uuid]
 	return
+}
+
+func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
+	confServers := strings.Split(c.conf.DNSServers, ",")
+	ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(confServers[0] != "", confServers, utils.DNSServers))
+
+	providers, err := c.dc.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP))
+	if err != nil {
+		return err
+	}
+
+	for _, provider := range providers {
+		domains := server.OverrideDDNSDomains[provider.GetProfileID()]
+		go func(provider *ddns.Provider) {
+			provider.UpdateDomain(ctx, domains...)
+		}(provider)
+	}
+
+	return nil
 }
 
 func (c *ServerClass) sortList() {
