@@ -1,6 +1,6 @@
 - path: "admin-dist"
   name: "OfficialAdmin"
-  repository: "https://github.com/TomyJan/admin-frontend"
+  repository: "https://github.com/nezhahq/admin-frontend"
   author: "nezhahq"
   version: "v1.10.4"
   is_admin: true
