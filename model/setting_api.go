@@ -10,7 +10,8 @@ type SettingForm struct {
 	InstallHost                 string `json:"install_host,omitempty" validate:"optional"`
 	CustomCode                  string `json:"custom_code,omitempty" validate:"optional"`
 	CustomCodeDashboard         string `json:"custom_code_dashboard,omitempty" validate:"optional"`
-	RealIPHeader                string `json:"real_ip_header,omitempty" validate:"optional"` // 真实IP
+	WebRealIPHeader                string `json:"web_real_ip_header,omitempty" validate:"optional"` // 前端真实IP
+	AgentRealIPHeader                string `json:"agent_real_ip_header,omitempty" validate:"optional"` // Agent真实IP
 	UserTemplate                string `json:"user_template,omitempty" validate:"optional"`
 
 	AgentTLS                    bool `json:"tls,omitempty" validate:"optional"`

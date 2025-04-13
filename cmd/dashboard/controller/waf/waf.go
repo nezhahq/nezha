@@ -16,18 +16,18 @@ import (
 var errorPageTemplate string
 
 func RealIp(c *gin.Context) {
-	if singleton.Conf.RealIPHeader == "" {
+	if singleton.Conf.WebRealIPHeader == "" {
 		c.Next()
 		return
 	}
 
-	if singleton.Conf.RealIPHeader == model.ConfigUsePeerIP {
+	if singleton.Conf.WebRealIPHeader == model.ConfigUsePeerIP {
 		c.Set(model.CtxKeyRealIPStr, c.RemoteIP())
 		c.Next()
 		return
 	}
 
-	vals := c.Request.Header.Get(singleton.Conf.RealIPHeader)
+	vals := c.Request.Header.Get(singleton.Conf.WebRealIPHeader)
 	if vals == "" {
 		c.AbortWithStatusJSON(http.StatusOK, model.CommonResponse[any]{Success: false, Error: "real ip header not found"})
 		return

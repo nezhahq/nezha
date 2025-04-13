@@ -32,7 +32,8 @@ type ConfigDashboard struct {
 	InstallHost string `koanf:"install_host" json:"install_host,omitempty"`
 	AgentTLS    bool   `koanf:"tls" json:"tls,omitempty"` // 用于前端判断生成的安装命令是否启用 TLS
 
-	RealIPHeader  string `koanf:"real_ip_header" json:"real_ip_header,omitempty"` // 真实IP
+	WebRealIPHeader  string `koanf:"web_real_ip_header" json:"web_real_ip_header,omitempty"` // 前端真实IP
+	AgentRealIPHeader  string `koanf:"agent_real_ip_header" json:"agent_real_ip_header,omitempty"` // Agent真实IP
 	UserTemplate  string `koanf:"user_template" json:"user_template,omitempty"`
 	AdminTemplate string `koanf:"admin_template" json:"admin_template,omitempty"`
 

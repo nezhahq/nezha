@@ -101,7 +101,8 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.Conf.DNSServers = sf.DNSServers
 	singleton.Conf.CustomCode = sf.CustomCode
 	singleton.Conf.CustomCodeDashboard = sf.CustomCodeDashboard
-	singleton.Conf.RealIPHeader = sf.RealIPHeader
+	singleton.Conf.WebRealIPHeader = sf.WebRealIPHeader
+	singleton.Conf.AgentRealIPHeader = sf.AgentRealIPHeader
 	singleton.Conf.AgentTLS = sf.AgentTLS
 	singleton.Conf.UserTemplate = sf.UserTemplate
 

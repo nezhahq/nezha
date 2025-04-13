@@ -47,16 +47,16 @@ func getRealIp(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler
 	}
 	ctx = context.WithValue(ctx, model.CtxKeyConnectingIP{}, connectingIp)
 
-	if singleton.Conf.RealIPHeader == "" {
+	if singleton.Conf.AgentRealIPHeader == "" {
 		return handler(ctx, req)
 	}
 
-	if singleton.Conf.RealIPHeader == model.ConfigUsePeerIP {
+	if singleton.Conf.AgentRealIPHeader == model.ConfigUsePeerIP {
 		if connectingIp == "" {
 			return nil, fmt.Errorf("connecting ip not found")
 		}
 	} else {
-		vals := metadata.ValueFromIncomingContext(ctx, singleton.Conf.RealIPHeader)
+		vals := metadata.ValueFromIncomingContext(ctx, singleton.Conf.AgentRealIPHeader)
 		if len(vals) == 0 {
 			return nil, fmt.Errorf("real ip header not found")
 		}
