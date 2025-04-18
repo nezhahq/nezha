@@ -28,8 +28,11 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
+const InitPasswdKey = "INIT_PASSWD"
+
 type DashboardCliParam struct {
-	Version          bool   // 当前版本号
+	Version          bool // 当前版本号
+	StrLength        int
 	ConfigFile       string // 配置文件路径
 	DatabaseLocation string // Sqlite3 数据库文件路径
 }
@@ -47,7 +50,8 @@ func initSystem(bus chan<- *model.Service) error {
 		return err
 	}
 	if usersCount == 0 {
-		hash, err := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.DefaultCost)
+		initpwd, exists := os.LookupEnv(InitPasswdKey)
+		hash, err := bcrypt.GenerateFromPassword(utils.IfOr(exists, []byte(initpwd), []byte("admin")), bcrypt.DefaultCost)
 		if err != nil {
 			return err
 		}
@@ -100,12 +104,18 @@ func initSystem(bus chan<- *model.Service) error {
 // @externalDocs.url          https://swagger.io/resources/open-api/
 func main() {
 	flag.BoolVar(&dashboardCliParam.Version, "v", false, "查看当前版本号")
+	flag.IntVar(&dashboardCliParam.StrLength, "g", 0, "生成随机字符串")
 	flag.StringVar(&dashboardCliParam.ConfigFile, "c", "data/config.yaml", "配置文件路径")
 	flag.StringVar(&dashboardCliParam.DatabaseLocation, "db", "data/sqlite.db", "Sqlite3数据库文件路径")
 	flag.Parse()
 
 	if dashboardCliParam.Version {
 		fmt.Println(singleton.Version)
+		os.Exit(0)
+	}
+
+	if dashboardCliParam.StrLength > 0 {
+		fmt.Println(utils.MustGenerateRandomString(dashboardCliParam.StrLength))
 		os.Exit(0)
 	}
 
