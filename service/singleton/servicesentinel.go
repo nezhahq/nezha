@@ -496,7 +496,6 @@ func (ss *ServiceSentinel) worker() {
 				log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 			}
 
-			clear(ss.serviceCurrentStatusData[mh.GetId()].result)
 			ss.serviceCurrentStatusData[mh.GetId()].result = ss.serviceCurrentStatusData[mh.GetId()].result[:0]
 		}
 

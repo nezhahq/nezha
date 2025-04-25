@@ -35,7 +35,7 @@ type DDNSProfile struct {
 	DomainsRaw         string   `json:"-"`
 }
 
-func (d DDNSProfile) TableName() string {
+func (d *DDNSProfile) TableName() string {
 	return "ddns"
 }
 

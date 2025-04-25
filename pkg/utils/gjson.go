@@ -8,20 +8,10 @@ import (
 )
 
 var (
-	ErrGjsonNotFound  = errors.New("specified path does not exist")
 	ErrGjsonWrongType = errors.New("wrong type")
 )
 
 var emptyIterator = func(yield func(string, string) bool) {}
-
-func GjsonGet(json []byte, path string) (gjson.Result, error) {
-	result := gjson.GetBytes(json, path)
-	if !result.Exists() {
-		return result, ErrGjsonNotFound
-	}
-
-	return result, nil
-}
 
 func GjsonIter(json string) (iter.Seq2[string, string], error) {
 	if json == "" {

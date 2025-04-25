@@ -116,7 +116,7 @@ func searchByIDPri[S ~[]E, E CommonInterface](seq iter.Seq[string], x S) S {
 	var class E
 	split, ok := any(class).(splitter[S, E])
 	if !ok {
-		return nil
+		return x
 	}
 
 	plist, list2 := split.SplitList(x)

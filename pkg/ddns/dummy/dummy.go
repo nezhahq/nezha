@@ -7,8 +7,7 @@ import (
 )
 
 // Internal use
-type Provider struct {
-}
+type Provider struct{}
 
 func (provider *Provider) SetRecords(ctx context.Context, zone string,
 	recs []libdns.Record) ([]libdns.Record, error) {
