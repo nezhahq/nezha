@@ -20,10 +20,8 @@ const (
 )
 
 type Provider struct {
-	ipAddr     string
-	recordType string
-	prefix     string
-	zone       string
+	prefix string
+	zone   string
 
 	DDNSProfile *model.DDNSProfile
 	IPAddrs     *model.IP
@@ -57,17 +55,13 @@ func (provider *Provider) updateDomain(ctx context.Context, domain string) error
 
 	// 当IPv4和IPv6同时成功才算作成功
 	if *provider.DDNSProfile.EnableIPv4 {
-		provider.recordType = getRecordString(true)
-		provider.ipAddr = provider.IPAddrs.IPv4Addr
-		if err = provider.addDomainRecord(ctx); err != nil {
+		if err = provider.addDomainRecord(ctx, "A", provider.IPAddrs.IPv4Addr); err != nil {
 			return err
 		}
 	}
 
 	if *provider.DDNSProfile.EnableIPv6 {
-		provider.recordType = getRecordString(false)
-		provider.ipAddr = provider.IPAddrs.IPv6Addr
-		if err = provider.addDomainRecord(ctx); err != nil {
+		if err = provider.addDomainRecord(ctx, "AAAA", provider.IPAddrs.IPv6Addr); err != nil {
 			return err
 		}
 	}
@@ -75,13 +69,13 @@ func (provider *Provider) updateDomain(ctx context.Context, domain string) error
 	return nil
 }
 
-func (provider *Provider) addDomainRecord(ctx context.Context) error {
+func (provider *Provider) addDomainRecord(ctx context.Context, recType, addr string) error {
 	_, err := provider.Setter.SetRecords(ctx, provider.zone,
 		[]libdns.Record{
 			{
-				Type:  provider.recordType,
+				Type:  recType,
 				Name:  provider.prefix,
-				Value: provider.ipAddr,
+				Value: addr,
 				TTL:   time.Minute,
 			},
 		})
@@ -122,11 +116,4 @@ func (provider *Provider) splitDomainSOA(ctx context.Context, domain string) (pr
 	}
 
 	return "", "", fmt.Errorf("SOA record not found for domain: %s", domain)
-}
-
-func getRecordString(isIpv4 bool) string {
-	if isIpv4 {
-		return "A"
-	}
-	return "AAAA"
 }
