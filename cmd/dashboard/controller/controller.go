@@ -293,7 +293,31 @@ func getUid(c *gin.Context) uint64 {
 }
 
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
+	// 定义静态资源扩展名
+	staticExts := map[string]bool{
+		".js":    true,
+		".css":   true,
+		".woff":  true,
+		".woff2": true,
+		".ttf":   true,
+		".png":   true,
+		".jpg":   true,
+		".jpeg":  true,
+		".gif":   true,
+		".ico":   true,
+	}
+
 	checkLocalFileOrFs := func(c *gin.Context, fs fs.FS, path string, customStatusCode int) bool {
+		// 添加缓存控制头
+		ext := strings.ToLower(path[strings.LastIndex(path, ".")+1:])
+		if staticExts["."+ext] {
+			c.Header("Cache-Control", "public, max-age=2592000") // 30天缓存 (30 * 24 * 60 * 60)
+		} else if strings.HasSuffix(strings.ToLower(path), "index.html") {
+			c.Header("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0") // 永不缓存
+			c.Header("Pragma", "no-cache")
+			c.Header("Expires", "0")
+		}
+
 		if _, err := os.Stat(path); err == nil {
 			http.ServeFile(utils.NewGinCustomWriter(c, customStatusCode), c.Request, path)
 			return true
