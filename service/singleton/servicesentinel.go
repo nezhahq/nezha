@@ -130,7 +130,7 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service) (*Serv
 	go ss.worker()
 
 	// 每日将游标往后推一天
-	_, err = CronShared.AddFunc("0 0 0 * * *", ss.refreshMonthlyServiceStatus)
+	_, err = CronShared.AddFunc("0 0 * * *", ss.refreshMonthlyServiceStatus)
 	if err != nil {
 		return nil, err
 	}
