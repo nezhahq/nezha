@@ -25,12 +25,25 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.21'
+      - name: Setup Node.js (for frontend build)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
       - name: Install dependencies
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
           go install github.com/goreleaser/goreleaser@latest
+      - name: Build admin frontend
+        working-directory: cmd/dashboard/admin-frontend
+        run: |
+          npm install
+          npm run build
+      - name: Copy admin-dist
+        run: cp -r cmd/dashboard/admin-frontend/dist cmd/dashboard/admin-dist
       - name: Generate Swagger docs
         run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
+      - name: Verify Swagger docs
+        run: ls -la cmd/dashboard/
       - name: Add replace directive
         run: echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
       - name: Tidy go.mod
