@@ -1,0 +1,69 @@
+name: Release1132
+
+on:
+  push:
+    tags:
+      - "v1.13.2"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release'
+        required: true
+        default: 'v1.13.2'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+      - name: Install dependencies
+        run: |
+          go mod tidy -v
+          go install github.com/swaggo/swag/cmd/swag@latest
+          go install github.com/goreleaser/goreleaser@latest
+      - name: Generate Swagger docs
+        run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
+      - name: Build binaries
+        run: goreleaser build --single-target --clean --skip=validate --snapshot
+
+  release-docker:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GH_TOKEN }}
+      - name: Set up image name
+        run: |
+          GHCR_IMAGE_NAME=$(echo "ghcr.io/dogwalkerg/nezha-dashboard" | tr '[:upper:]' '[:lower:]')
+          echo "GHCR_IMAGE_NAME=$GHCR_IMAGE_NAME" >> $GITHUB_OUTPUT
+        id: image_name
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ${{ steps.image_name.outputs.GHCR_IMAGE_NAME }}:v1.13.2,${{ steps.image_name.outputs.GHCR_IMAGE_NAME }}:latest
+          build-args: |
+            TARGETOS=linux
+            TARGETARCH=arm64
