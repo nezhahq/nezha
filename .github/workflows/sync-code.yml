@@ -1,16 +1,8 @@
-name: Sync0
-
-on:
-  push:
-    branches: [master]
-
-jobs:
-  sync-to-jihulab:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: adambirds/sync-github-to-gitlab-action@v1.1.0
-        with:
-          destination_repository: git@gitee.com:naibahq/nezha.git
-          destination_branch_name: master
-          destination_ssh_key: ${{ secrets.GITEE_SSH_KEY }}
+# - name: Sync to Gitee
+#   uses: adambirds/sync-github-to-gitlab-action@v1.1.0
+#   with:
+#     destination_repository: git@gitee.com:dogwalkerg/nezha.git
+#     destination_branch_name: main
+#     destination_ssh_key: ${{ secrets.GITEE_SSH_PRIVATE_KEY }}
+#   env:
+#     GIT_SSH_COMMAND: "ssh -o StrictHostKeyChecking=no"
