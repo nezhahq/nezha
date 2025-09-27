@@ -79,7 +79,7 @@ jobs:
       - name: Modify file content
         uses: jaywcjlove/github-action-modify-file-content@main
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}  # 确保此行存在
           file: README.md
           content: "Nezha v1.13.2 released at 2025-09-26!"
           commit-message: "Update README for v1.13.2 release"
