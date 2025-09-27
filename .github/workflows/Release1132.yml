@@ -30,6 +30,8 @@ jobs:
           go mod tidy -v
           go install github.com/swaggo/swag/cmd/swag@latest
           go install github.com/goreleaser/goreleaser@latest
+          # 添加 replace 指令以使用本地 docs 目录
+          echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
       - name: Generate Swagger docs
         run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
       - name: Build binaries
