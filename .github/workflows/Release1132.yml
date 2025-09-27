@@ -33,6 +33,8 @@ jobs:
           echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
       - name: Generate Swagger docs
         run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
+      - name: Verify Swagger docs
+        run: ls -la cmd/dashboard/docs
       - name: Build binaries
         run: goreleaser build --single-target --clean --skip=validate --snapshot
 
@@ -79,7 +81,7 @@ jobs:
       - name: Modify file content
         uses: jaywcjlove/github-action-modify-file-content@main
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}  # 确保此行存在
+          token: ${{ secrets.GITHUB_TOKEN }}
           file: README.md
           content: "Nezha v1.13.2 released at 2025-09-26!"
           commit-message: "Update README for v1.13.2 release"
