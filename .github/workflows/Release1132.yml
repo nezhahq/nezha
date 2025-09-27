@@ -1,4 +1,4 @@
-name: Release1132
+name: Release1133
 
 on:
   push:
@@ -27,14 +27,14 @@ jobs:
           go-version: '1.21'
       - name: Install dependencies
         run: |
-          go mod tidy -v
           go install github.com/swaggo/swag/cmd/swag@latest
           go install github.com/goreleaser/goreleaser@latest
-          echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
       - name: Generate Swagger docs
         run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
-      - name: Verify Swagger docs
-        run: ls -la cmd/dashboard/docs
+      - name: Add replace directive
+        run: echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
+      - name: Tidy go.mod
+        run: go mod tidy -v
       - name: Build binaries
         run: goreleaser build --single-target --clean --skip=validate --snapshot
 
