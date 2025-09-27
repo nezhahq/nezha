@@ -30,7 +30,6 @@ jobs:
           go mod tidy -v
           go install github.com/swaggo/swag/cmd/swag@latest
           go install github.com/goreleaser/goreleaser@latest
-          # 添加 replace 指令以使用本地 docs 目录
           echo "replace github.com/nezhahq/nezha/cmd/dashboard/docs => ./cmd/dashboard/docs" >> go.mod
       - name: Generate Swagger docs
         run: cd cmd/dashboard && swag init -g docs.go -o docs && cd ../..
@@ -69,3 +68,18 @@ jobs:
           build-args: |
             TARGETOS=linux
             TARGETARCH=arm64
+
+  modify-file:
+    needs: release-docker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - name: Modify file content
+        uses: jaywcjlove/github-action-modify-file-content@main
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          file: README.md
+          content: "Nezha v1.13.2 released at 2025-09-26!"
+          commit-message: "Update README for v1.13.2 release"
