@@ -37,7 +37,7 @@ Is Nezha not in your language, or the translation is incorrect or incomplete? Ge
 
 | 用户前台 [@hamster1963](https://github.com/hamster1963) | 管理后台 [@nezhahq](https://github.com/nezhahq) |
 |---|---|
-| ![user](.github/user-frontend.20241128.png)  | ![admin](.github/admin-frontend.20241220.jpg)  |
+| ![user](.github/photo_2025-09-28_23-35-29.jpg)  | ![admin](.github/admin-frontend.20241220.jpg)  |
 | [hamster1963/nezha-dash](https://github.com/hamster1963/nezha-dash)  | [nezhahq/admin-frontend](https://github.com/nezhahq/admin-frontend)  |
 
 add your theme to [service/singleton/frontend-templates.yaml](service/singleton/frontend-templates.yaml)
