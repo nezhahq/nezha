@@ -14,6 +14,7 @@ var Languages = map[string]string{
 	"zh-TW": "繁體中文",
 	"en-US": "English",
 	"es-ES": "Español",
+	"fr-FR": "Français",
 }
 
 var Themes = map[string]string{

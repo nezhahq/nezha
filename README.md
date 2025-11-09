@@ -33,6 +33,7 @@
 - English
 - 中文
 - Español
+- French
 
 You can change the dashboard language in the settings page (`/setting`) after the dashboard is installed.
 
