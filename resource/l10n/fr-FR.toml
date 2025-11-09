@@ -1,0 +1,590 @@
+[NezhaMonitoring]
+other = "Nezha Surveillance"
+
+[Server]
+other = "Serveurs"
+
+[Services]
+other = "Services"
+
+[Task]
+other = "Tâches"
+
+[Notification]
+other = "Notifications"
+
+[Settings]
+other = "Paramètres"
+
+[Home]
+other = "Accueil"
+
+[BackToHomepage]
+other = "Retour à l'accueil"
+
+[AdminPanel]
+other = "Admin"
+
+[Logout]
+other = "Se déconnecter"
+
+[Login]
+other = "Se connecter"
+
+[ConfirmLogout]
+other = "Confirmer la déconnexion"
+
+[AfterLoggingOutYouHaveToLoginAgain]
+other = "Vous devez vous-connecter avant d'accéder à la zone d'administration"
+
+[Cancel]
+other = "Annuler"
+
+[Confirm]
+other = "Confirmer"
+
+[AddScheduledTasks]
+other = "Ajouter une tâche"
+
+[Name]
+other = "Nom"
+
+[Scheduler]
+other = "Expression Cron"
+
+[BackUp]
+other = "Sauvegarde"
+
+[3amDaily]
+other = "(Chaque jour à 03:00)"
+
+[Command]
+other = "Commande"
+
+[Coverage]
+other = "Couverture"
+
+[IgnoreAllAndExecuteOnlyThroughSpecificServers]
+other = "Tout ignorer, Exécuter sur quelques serveurs seulements"
+
+[AllIncludedOnlySpecificServersAreNotExecuted]
+other = "Tout couvrir, Ignorer quelque servers seulement"
+
+[ExecuteByTriggerServer]
+other = "Seulements les serveurs inclus dans la règle de notification"
+
+[SpecificServers]
+other = "Quelques Serveurs"
+
+[EnterIdAndNameToSearch]
+other = "Entrez le Nom/ID du serveur à chercher"
+
+[NotificationMethodGroup]
+other = "Groupe de Notification"
+
+[PushSuccessMessages]
+other = "Envoyer Notification de Succès"
+
+[TaskType]
+other = "Type de tâche"
+
+[CronTask]
+other = "Tâche programmée"
+
+[TriggerTask]
+other = "Lancer une tâche"
+
+[TheFormaOfTheScheduleIs]
+other = "L'expression du Cron est comme:"
+
+[SecondsMinutesHoursDaysMonthsWeeksSeeDetails]
+other = "sec min heure jour mois semaine, details en "
+
+[ScheduleExpressionFormat]
+other = "format de l'expression CRON"
+
+[IntroductionOfCommands]
+other = "Commande: Ca ressemble à l'ecriture de scripts shell/bat, mais les retours à la ligne sont déconseillés. Les commandes multiples doivent être entourés par <code>&&</code>/<code>&</code>. Commande Introuvable peut être causée par l'absence de la variable d'environnement <code>PATH</code> , Pour les seveurs <code>Linux</code>, vous pouvez ajouter <code>source ~/.bashrc</code> au début de votre commande ou bien l'executer par chemain complet."
+
+[AddMonitor]
+other = "Ajouter un surveillant de service"
+
+[Blog]
+other = "Blog"
+
+[Target]
+other = "Cible"
+
+[Type]
+other = "Type"
+
+[SslExpirationOrChange]
+other = "(Certificat SSL Expiré/Changé)"
+
+[Duration]
+other = "Interval"
+
+[Seconds]
+other = "Secondes"
+
+[EnableFailureNotification]
+other = "Activer la Notification d'Echec"
+
+[FailureNotification]
+other = "Notification d'incident"
+
+[MaxLatency]
+other = "Latence Max (ms)"
+
+[MinLatency]
+other = "Latence Min (ms)"
+
+[EnableLatencyNotification]
+other = "Activer les Notifications de Latence"
+
+[LatencyNotification]
+other = "Notification de Latence"
+
+[IntroductionOfMonitor]
+other = """
+Entrez un URL(avec le préfix http/https) pour le type <b>HTTP-GET</b>, le Certificat SSL sera surveillé automatiquement quand le URL a un préfix https;<br>
+Entrez un nom de hote/IP pour le type <b>ICMP-Ping</b>: example.com;<br>
+Entrez un nom de hote/IP:Port pour le type <b>TCP-Ping</b>: example.com:22;"""
+
+[AddNotificationMethod]
+other = "Ajouter une méthode de Notification"
+
+[Tag]
+other = "Groupe de Notification"
+
+[DoNotSendTestMessages]
+other = "Ne pas envoyer de messages de test"
+
+[RequestMethod]
+other = "Methode de la Requête"
+
+[RequestType]
+other = "Type de la Requête"
+
+[VerifySSL]
+other = "Vérifier le SSL"
+
+[AddNotificationRule]
+other = "Ajouter une règle de notification"
+
+[Rules]
+other = "Règles"
+
+[NotificationTriggerMode]
+other = "Mode de notification de déclenchement"
+
+[ModeAlwaysTrigger]
+other = "Toujours déclenché"
+
+[ModeOnetimeTrigger]
+other = "Déclenché une seule fois"
+
+[FailTriggerTasks]
+other = "Les tâches a déclancher en cas d'échec"
+
+[RecoverTriggerTasks]
+other = "Les tâches a déclancher après la réparation de l'echec"
+
+[Enable]
+other = "Activer"
+
+[AddServer]
+other = "Ajouter un Serveur"
+
+[BatchEditServerGroup]
+other = "Modifier des Groupes en masse"
+
+[InputServerGroupName]
+other = "Entrez le nom du groupe"
+
+[ServerGroup]
+other = "Groupe du Serveur"
+
+[EinsteinLightspeed1]
+other = "Einstein Vitesse de lumière 1"
+
+[DisplayIndex]
+other = "Afficher Index"
+
+[TheLargerTheNumberTheHigherThePriority]
+other = "Les plus grands nombres sont affichés en premier"
+
+[Secret]
+other = "Secret"
+
+[Note]
+other = "Note"
+
+[LinuxOneKeyInstall]
+other = "Installation sur Linux en Un-Click"
+
+[NoDomainAlert]
+other = "Activez CDN bypassed Domaine/IP au Paramètres avant d'utiliser cette fonction"
+
+[PushSuccessfully]
+other = "Envoyer une Notification de Succès"
+
+[LastExecution]
+other = "Dernière execution le "
+
+[LastResult]
+other = "Dernier Resultat"
+
+[Administration]
+other = "Gestion"
+
+[CoverAll]
+other = "tout Couvrir"
+
+[IgnoreAll]
+other = "tout Ignorer"
+
+[ByTrigger]
+other = "Executer au déclenchement"
+
+[DeleteScheduledTask]
+other = "Supprimer une tâche planifiée"
+
+[ConfirmToDeleteThisScheduledTask]
+other = "Confirmer la suppression?"
+
+[AccessDenied]
+other = "Accès Refusé"
+
+[Use]
+other = "Utiliser"
+
+[AccountToLogin]
+other = "compte pour se connecter"
+
+[SignUp]
+other = "S'inscrire"
+
+[DontHaveAnAccount]
+other = "Vous n'avez pas encore de compte?"
+
+[SSLCertificate]
+other = "Certificat HTTP(S)/SSL"
+
+[TCPPort]
+other = "Port TCP"
+
+[DeleteService]
+other = "Supprimer la surveillance du service"
+
+[ConfirmToDeleteThisService]
+other = "Confirmer la suppression?"
+
+[DeleteNotificationMethod]
+other = "Supprimer la méthode de notification"
+
+[ConfirmToDeleteThisNotificationMethod]
+other = "Confirmer la suppression?"
+
+[ForceUpdate]
+other = "Forcer la mise à jour"
+
+[SelectAll]
+other = "Selectionner Tout"
+
+[VersionNumber]
+other = "Version"
+
+[OneKeyInstall]
+other = "Installation en Un-Click"
+
+[ClickToCopy]
+other = "Cliquer pour copier"
+
+[DeleteServer]
+other = "Supprimer Serveur"
+
+[ConfirmToDeleteThisServer]
+other = "Confirmer la suppression?"
+
+[NoServerSelected]
+other = "Aucun serveur sélectionné"
+
+[ExecutionResults]
+other = "Résultat d'execution"
+
+[SiteTitle]
+other = "Titre du site"
+
+[AdministratorList]
+other = "Liste des Admins"
+
+[Theme]
+other = "Thème"
+
+[CustomCodes]
+other = "Code Personnalisé (style, script)"
+
+[AccessPassword]
+other = "Mot de passe d'accès"
+
+[PanelServerDomainAndIP]
+other = "Domaine/IP contournant CDN"
+
+[IPChangeAlert]
+other = "IP Change Notification"
+
+[AllIncludedOnlySpecificServersAreNotAlerted]
+other = "Tout Couvrir, Ignorer quelques serveurs seulement"
+
+[IgnoreAllOnlyAlertSpecificServers]
+other = "Ignorer Tout, couvrir quelques serveurs seulement"
+
+[IgnoreAllRequestOnlyThroughSpecificServers]
+other = "Passer tous les Serveurs, envoyer des requêtes depuis certains serveurs seulement"
+
+[AllIncludedOnlySpecificServersAreNotRequest]
+other = "Envoyer les requêtes depuis tous les serveur, Ignorer certains serveurs."
+
+[ServerIDSeparatedByCommas]
+other = "ID des serveurs, separés par des virgules"
+
+[IPChangeNotificationTag]
+other = "Envoyer les notifications vers certains groupes de notifications"
+
+[NotificationMessagesDoNotHideIP]
+other = "Ne pas cacher l'IP dans les notifications"
+
+[Save]
+other = "Enregistrer"
+
+[ModifiedSuccessfully]
+other = "Modifié avec succès"
+
+[TerminalConnectionTimeOutOrSessionEnded]
+other = "Connexion au terminal expirée, ou session terminée"
+
+[TerminalConnectionFailed]
+other = "La connexion au terminal a échoué, vérifiez le reverse proxy pour la connexion WebSocket sur le chemin /terminal/*"
+
+[Default]
+other = "Par Defaut"
+
+[Offline]
+other = "Hors Ligne"
+
+[Platform]
+other = "Platforme"
+
+[DiskUsed]
+other = "Disque"
+
+[MemUsed]
+other = "RAM"
+
+[SwapUsed]
+other = "Swap"
+
+[NetTransfer]
+other = "Transfer des données"
+
+[Load]
+other = "Chargement"
+
+[ProcessCount]
+other = "Nbr de Processus"
+
+[ConnCount]
+other = "Nbr de Connexions"
+
+[BootTime]
+other = "Temps de Démarrage"
+
+[LastActive]
+other = "Dernière Activité"
+
+[Version]
+other = "Version"
+
+[NetSpeed]
+other = "Réseau"
+
+[Uptime]
+other = "Disponibilité"
+
+[ServerIsOffline]
+other = "Serveur Hors-ligne"
+
+[Day]
+other = "Jours"
+
+[RealtimeChannelEstablished]
+other = "Canal Temps-Réel connecté"
+
+[GetTheLatestMonitoringDataInRealTime]
+other = "Vous pouvez avoir les dernières données de surveillance en temps-réel!"
+
+[RealtimeChannelDisconnect]
+other = "Canal Temps-Réel déconnecté"
+
+[CanNotGetTheLatestMonitoringDataInRealTime]
+other = "Impossible d'avoir les dernières données de surveillance en temps-réel!"
+
+[30DaysOnline]
+other = "Derniers 30 jours d'activité"
+
+[Details]
+other = "Details"
+
+[Status]
+other = "Statut"
+
+[Availability]
+other = "Disponibilité"
+
+[AverageLatency]
+other = "Latence Moyenne"
+
+[CycleTransferStats]
+other = "Statistiques de cycle de transfer"
+
+[From]
+other = "De"
+
+[To]
+other = "A"
+
+[NextCheck]
+other = "Prochaine Vérification"
+
+[CurrentUsage]
+other = "Usage Actuel"
+
+[VerifyPassword]
+other = "Vérifier le mot de passe"
+
+[LightMode]
+other = "Mode Claire"
+
+[DarkMode]
+other = "Mode Sombre"
+
+[GridLayout]
+other = "Mise en page Grille"
+
+[ListLayout]
+other = "Mise en page Liste"
+
+[EnterPassword]
+other = "Entrez le mot de passe"
+
+[Location]
+other = "Localisation"
+
+[Running]
+other = "En marche"
+
+[UpNetTransfer]
+other = "Sortant"
+
+[DownNetTransfer]
+other = "Entrant"
+
+[TotalUpNetTransfer]
+other = "Total Sortant"
+
+[TotalDownNetTransfer]
+other = "Total Entrant"
+
+[WrongPassword]
+other = "Mot de passe incorrect"
+
+[AnErrorEccurred]
+other = "Une erreur est survenue"
+
+[SystemError]
+other = "Erreur Système"
+
+[NetworkError]
+other = "Erreur Réseau"
+
+[ServicesStatus]
+other = "Etat des Services"
+
+[ServersManagement]
+other = "Serveurs"
+
+[ServicesManagement]
+other = "Services"
+
+[ScheduledTasks]
+other = "Tâches Planifiées"
+
+[ApiManagement]
+other = "API"
+
+[IssueNewApiToken]
+other = "Ajouter un jeton"
+
+[Token]
+other = "Jeton"
+
+[DeleteToken]
+other = "Supprimer le jeton"
+
+[ConfirmToDeleteThisToken]
+other = "Confirmez la suppression de ce jeton"
+
+[YouAreNotAuthorized]
+other = "Vous n'êtes pas authorisé"
+
+[WrongAccessPassword]
+other = "Mot de pass d'accès incorrect"
+
+[Add]
+other = "Ajouter"
+
+[Edit]
+other = "Editer"
+
+[AlarmRule]
+other = "Règle d'alerte"
+
+[NotificationMethod]
+other = "Méthode de Notification"
+
+[Incident]
+other = "Incident"
+
+[Resolved]
+other = "Résolu"
+
+[StatusDown]
+other = "Echec"
+
+[StatusNoData]
+other = "Pas de données"
+
+[StatusGood]
+other = "Bien"
+
+[StatusLowAvailability]
+other = "Basse disponibilité"
+
+[ScheduledTaskExecutedSuccessfully]
+other = "Tâche Accomplie"
+
+[ScheduledTaskExecutedFailed]
+other = "Tâche Echouée"
+
+[IPChanged]
+other = "IP Changée"
+
+[Transleft]
+other = "Données Restantes"
+
+[DashboardTheme]
+other = "Thème du Panneau d'Administration"
+
+[HideForGuest]
+other = "Cacher aux visiteurs"
