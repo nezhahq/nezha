@@ -1,0 +1,17 @@
+name: Sync Release to Gitee
+
+on:
+  workflow_dispatch:
+    
+jobs:
+  sync-release-to-gitee:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync to Gitee
+        run: |
+          pip3 install PyGitHub
+          python3 .github/sync.py

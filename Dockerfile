@@ -1,23 +1,21 @@
-FROM ubuntu:focal-20221130
+FROM alpine AS depend
+RUN apk add --update --no-cache ca-certificates tzdata
 
-ENV TZ="Asia/Shanghai"
+FROM busybox:stable-musl
 
 ARG TARGETOS
 ARG TARGETARCH
 
+COPY --from=depend /etc/ssl/certs /etc/ssl/certs
+COPY --from=depend /usr/share/zoneinfo /usr/share/zoneinfo
 COPY ./script/entrypoint.sh /entrypoint.sh
-
-RUN export DEBIAN_FRONTEND="noninteractive" && \
-    apt update && apt install -y ca-certificates tzdata && \
-    update-ca-certificates && \
-    ln -fs /usr/share/zoneinfo/$TZ /etc/localtime && \
-    dpkg-reconfigure tzdata && \
-    chmod +x /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 WORKDIR /dashboard
-COPY ./resource ./resource
 COPY dist/dashboard-${TARGETOS}-${TARGETARCH} ./app
 
 VOLUME ["/dashboard/data"]
-EXPOSE 80 5555
+EXPOSE 8008
+ARG TZ=Asia/Shanghai
+ENV TZ=$TZ
 ENTRYPOINT ["/entrypoint.sh"]

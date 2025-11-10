@@ -2,33 +2,49 @@ name: Run Tests
 
 on:
   push:
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "resource/**"
+      - ".github/workflows/test.yml"
+  pull_request:
     branches:
       - master
-    paths-ignore:
-      - ".github/workflows/agent.yml"
-      - ".github/workflows/codeql-analysis.yml"
-      - ".github/workflows/test-on-pr.yml"
-      - "README.md"
-      - ".goreleaser.yml"
 
 jobs:
   tests:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ubuntu, windows, macos]
+
+    runs-on: ${{ matrix.os }}-latest
     env:
       GO111MODULE: on
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-go@v2
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
         with:
-          go-version: "^1.19.0"
+          go-version: "1.25.x"
+
+      - name: generate swagger docs
+        run: |
+          go install github.com/swaggo/swag/cmd/swag@latest
+          touch ./cmd/dashboard/user-dist/a
+          touch ./cmd/dashboard/admin-dist/a
+          swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
+
       - name: Unit test
         run: |
           go test -v ./...
+
       - name: Build test
-        run: |
-          go build cmd/dashboard/main.go
-          go build cmd/agent/main.go
+        run: go build -v ./cmd/dashboard
+
       - name: Run Gosec Security Scanner
-        run: |
-          go install github.com/securego/gosec/v2/cmd/gosec@latest
-          gosec -exclude=G104 ./...
+        if: runner.os == 'Linux'
+        uses: securego/gosec@master
+        with:
+          args: --exclude=G104,G402,G115,G203 ./...

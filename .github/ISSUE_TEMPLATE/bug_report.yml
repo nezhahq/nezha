@@ -1,0 +1,55 @@
+name: Bug Report
+description: File a bug report about nezha.
+
+body:
+  - type: input
+    attributes:
+      label: Environment
+      description: Input your OS information and host architecture here.
+      placeholder: Debian GNU/Linux 12 6.1.0-22-amd64
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Nezha Version
+      description: Input the version of your copy of nezha here.
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Describe the bug
+      description: A clear and concise description of what the bug is.
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: To Reproduce
+      description: Input the steps to reproduce the bug here.
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Configuration
+      description: Input your configuration here.
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Input any other relevant information that may help understand the issue.
+      value: |
+        <details></details>
+  - type: checkboxes
+    attributes:
+      label: Validation
+      options:
+        - label: I confirm this is a bug about nezha (Nezha Dashboard).
+          required: true
+        - label: I have searched Issues and confirm this bug has been reported before.
+          required: true

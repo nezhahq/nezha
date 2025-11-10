@@ -4,59 +4,81 @@ option go_package = "./proto";
 package proto;
 
 service NezhaService {
-    rpc ReportSystemState(State)returns(Receipt){}
-    rpc ReportSystemInfo(Host)returns(Receipt){}
-    rpc ReportTask(TaskResult)returns(Receipt){}
-    rpc RequestTask(Host)returns(stream Task){}
+  rpc ReportSystemState(stream State) returns (stream Receipt) {}
+  rpc ReportSystemInfo(Host) returns (Receipt) {}
+  rpc RequestTask(stream TaskResult) returns (stream Task) {}
+  rpc IOStream(stream IOStreamData) returns (stream IOStreamData) {}
+  rpc ReportGeoIP(GeoIP) returns (GeoIP) {}
+  rpc ReportSystemInfo2(Host) returns (Uint64Receipt) {}
 }
 
 message Host {
-    string platform = 1;
-    string platform_version = 2;
-    repeated string cpu = 3;
-    uint64 mem_total = 4;
-    uint64 disk_total = 5;
-    uint64 swap_total = 6;
-    string arch = 7;
-    string virtualization = 8;
-    uint64 boot_time = 9;
-    string ip = 10;
-    string country_code = 11;
-    string version = 12;
+  string platform = 1;
+  string platform_version = 2;
+  repeated string cpu = 3;
+  uint64 mem_total = 4;
+  uint64 disk_total = 5;
+  uint64 swap_total = 6;
+  string arch = 7;
+  string virtualization = 8;
+  uint64 boot_time = 9;
+  string version = 10;
+  repeated string gpu = 11;
 }
 
 message State {
-    double cpu = 1;
-    uint64 mem_used = 3;
-    uint64 swap_used = 4;
-    uint64 disk_used = 5;
-    uint64 net_in_transfer = 6;
-    uint64 net_out_transfer = 7;
-    uint64 net_in_speed = 8;
-    uint64 net_out_speed = 9;
-    uint64 uptime = 10;
-    double load1 = 11;
-    double load5 = 12;
-    double load15 = 13;
-    uint64 tcp_conn_count = 14;
-    uint64 udp_conn_count = 15;
-    uint64 process_count = 16;
+  double cpu = 1;
+  uint64 mem_used = 2;
+  uint64 swap_used = 3;
+  uint64 disk_used = 4;
+  uint64 net_in_transfer = 5;
+  uint64 net_out_transfer = 6;
+  uint64 net_in_speed = 7;
+  uint64 net_out_speed = 8;
+  uint64 uptime = 9;
+  double load1 = 10;
+  double load5 = 11;
+  double load15 = 12;
+  uint64 tcp_conn_count = 13;
+  uint64 udp_conn_count = 14;
+  uint64 process_count = 15;
+  repeated State_SensorTemperature temperatures = 16;
+  repeated double gpu = 17;
+}
+
+message State_SensorTemperature {
+  string name = 1;
+  double temperature = 2;
 }
 
 message Task {
-    uint64 id = 1;
-    uint64 type = 2;
-    string data = 3;
+  uint64 id = 1;
+  uint64 type = 2;
+  string data = 3;
 }
 
 message TaskResult {
-    uint64 id = 1;
-    uint64 type = 2;
-    float delay = 3;
-    string data = 4;
-    bool successful = 5;
+  uint64 id = 1;
+  uint64 type = 2;
+  float delay = 3;
+  string data = 4;
+  bool successful = 5;
 }
 
-message Receipt{
-    bool proced = 1;
+message Receipt { bool proced = 1; }
+
+message Uint64Receipt { uint64 data = 1; }
+
+message IOStreamData { bytes data = 1; }
+
+message GeoIP {
+  bool use6 = 1;
+  IP ip = 2;
+  string country_code = 3;
+  uint64 dashboard_boot_time = 4;
+}
+
+message IP {
+  string ipv4 = 1;
+  string ipv6 = 2;
 }

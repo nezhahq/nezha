@@ -1,80 +1,83 @@
+version: 2
 before:
   hooks:
     - go mod tidy -v
 builds:
-  - id: universal
+  - id: linux_arm64
     env:
-      - CGO_ENABLED=0
+      - CGO_ENABLED=1
+      - CC=aarch64-linux-gnu-gcc
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.arch={{.Arch}}
+      - -s -w
+      - -X github.com/nezhahq/nezha/service/singleton.Version={{.Version}}
+      - -extldflags "-static -fpic"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    tags:
+      - go_json
     goos:
       - linux
-      - windows
-      - freebsd
     goarch:
-      - arm
       - arm64
-      - 386
+    main: ./cmd/dashboard
+    binary: dashboard-{{ .Os }}-{{ .Arch }}
+  - id: linux_amd64
+    env:
+      - CGO_ENABLED=1
+      - CC=x86_64-linux-gnu-gcc
+    ldflags:
+      - -s -w
+      - -X github.com/nezhahq/nezha/service/singleton.Version={{.Version}}
+      - -extldflags "-static -fpic"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    tags:
+      - go_json
+    goos:
+      - linux
+    goarch:
       - amd64
-      - mips
-      - mipsle
+    main: ./cmd/dashboard
+    binary: dashboard-{{ .Os }}-{{ .Arch }}
+  - id: linux_s390x
+    env:
+      - CGO_ENABLED=1
+      - CC=s390x-linux-gnu-gcc
+    ldflags:
+      - -s -w
+      - -X github.com/nezhahq/nezha/service/singleton.Version={{.Version}}
+      - -extldflags "-static -fpic"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    tags:
+      - go_json
+    goos:
+      - linux
+    goarch:
       - s390x
-      - riscv64
-    gomips:
-      - softfloat
-    ignore:
-      - goos: windows
-        goarch: arm
-      - goos: windows
-        goarch: arm64
-    main: ./cmd/agent
-    binary: nezha-agent
-  - id: darwin-amd64
+    main: ./cmd/dashboard
+    binary: dashboard-{{ .Os }}-{{ .Arch }}
+  - id: windows_amd64
     env:
       - CGO_ENABLED=1
-      - CC=o64-clang
-      - CXX=o64-clang++
+      - CC=x86_64-w64-mingw32-gcc
     ldflags:
-      - -s -w -X main.version={{.Version}} -X main.arch={{.Arch}}
+      - -s -w
+      - -X github.com/nezhahq/nezha/service/singleton.Version={{.Version}}
+      - -extldflags "-static -fpic"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    tags:
+      - go_json
     goos:
-      - darwin
+      - windows
     goarch:
       - amd64
-    main: ./cmd/agent
-    binary: nezha-agent
-  - id: darwin-arm64
-    env:
-      - CGO_ENABLED=1
-      - CC=oa64-clang
-      - CXX=oa64-clang++
-    ldflags:
-      - -s -w -X main.version={{.Version}} -X main.arch={{.Arch}}
-    goos:
-      - darwin
-    goarch:
-      - arm64
-    main: ./cmd/agent
-    binary: nezha-agent
-universal_binaries:
-  - name_template: "nezha-agent"
-    replace: false
-checksum:
-  name_template: "checksums.txt"
+    main: ./cmd/dashboard
+    binary: dashboard-{{ .Os }}-{{ .Arch }}
 snapshot:
-  name_template: "nezha-agent"
-archives:
-  - name_template: "nezha-agent_{{ .Os }}_{{ .Arch }}"
-    format: zip
-    files:
-      - none*
-changelog:
-  sort: asc
-  filters:
-    exclude:
-      - "^docs:"
-      - "^test:"
-      - "^chore"
-      - Merge pull request
-      - Merge branch
-      - go mod tidy
-      - New translations
+  version_template: "dashboard"

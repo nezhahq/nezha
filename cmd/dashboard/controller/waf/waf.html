@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blocked</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 90vh;
+            font-weight: bolder;
+            font-family: 'Courier New', Courier, monospace;
+        }
+        main {
+            text-align: center;
+        }
+        .emoji {
+            font-size: 200px;
+        }
+        p.secondary {
+            font-size: 12px;
+            color: #888;
+        }
+
+        @media (prefers-color-scheme: dark) {
+            body {
+                background-color: #111;
+                color: #007C41
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <main>
+        <div class="emoji">🤡</div>
+        <h1>Blocked</h1>
+        <p>{error}</p>
+        <p class="secondary">nezha WAF</p>
+    </main>
+</body>
+
+</html>

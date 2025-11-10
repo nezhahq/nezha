@@ -9,15 +9,18 @@
 *.test
 
 # Output of the go coverage tool, specifically when used with LiteIDE
+*~
 *.out
 *.pprof
 .idea
-/data
 /dist
 .DS_Store
-/main
-/cmd/agent/main
+/cmd/dashboard/data
 /cmd/dashboard/main
+/cmd/dashboard/*-dist
+!/cmd/dashboard/admin-dist/.gitkeep
+!/cmd/dashboard/user-dist/.gitkeep
 /config.yml
 /resource/template/theme-custom
-/resource/static/theme-custom
+/resource/static/custom
+/cmd/dashboard/docs

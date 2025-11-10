@@ -1,10 +1,13 @@
 package model
 
 import (
+	"slices"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"github.com/nezhahq/nezha/pkg/utils"
 )
 
 const (
@@ -20,19 +23,19 @@ type Rule struct {
 	// 指标类型，cpu、memory、swap、disk、net_in_speed、net_out_speed
 	// net_all_speed、transfer_in、transfer_out、transfer_all、offline
 	// transfer_in_cycle、transfer_out_cycle、transfer_all_cycle
-	Type          string          `json:"type,omitempty"`
-	Min           float64         `json:"min,omitempty"`            // 最小阈值 (百分比、字节 kb ÷ 1024)
-	Max           float64         `json:"max,omitempty"`            // 最大阈值 (百分比、字节 kb ÷ 1024)
-	CycleStart    *time.Time      `json:"cycle_start,omitempty"`    // 流量统计的开始时间
-	CycleInterval uint64          `json:"cycle_interval,omitempty"` // 流量统计周期
-	CycleUnit     string          `json:"cycle_unit,omitempty"`     // 流量统计周期单位，默认hour,可选(hour, day, week, month, year)
-	Duration      uint64          `json:"duration,omitempty"`       // 持续时间 (秒)
-	Cover         uint64          `json:"cover,omitempty"`          // 覆盖范围 RuleCoverAll/IgnoreAll
-	Ignore        map[uint64]bool `json:"ignore,omitempty"`         // 覆盖范围的排除
+	Type          string          `json:"type"`
+	Min           float64         `json:"min,omitempty" validate:"optional"`                                                        // 最小阈值 (百分比、字节 kb ÷ 1024)
+	Max           float64         `json:"max,omitempty" validate:"optional"`                                                        // 最大阈值 (百分比、字节 kb ÷ 1024)
+	CycleStart    *time.Time      `json:"cycle_start,omitempty" validate:"optional"`                                                // 流量统计的开始时间
+	CycleInterval uint64          `json:"cycle_interval,omitempty" validate:"optional"`                                             // 流量统计周期
+	CycleUnit     string          `json:"cycle_unit,omitempty" enums:"hour,day,week,month,year" validate:"optional" default:"hour"` // 流量统计周期单位，默认hour,可选(hour, day, week, month, year)
+	Duration      uint64          `json:"duration,omitempty" validate:"optional"`                                                   // 持续时间 (秒)
+	Cover         uint64          `json:"cover"`                                                                                    // 覆盖范围 RuleCoverAll/IgnoreAll
+	Ignore        map[uint64]bool `json:"ignore,omitempty" validate:"optional"`                                                     // 覆盖范围的排除
 
 	// 只作为缓存使用，记录下次该检测的时间
-	NextTransferAt  map[uint64]time.Time   `json:"-"`
-	LastCycleStatus map[uint64]interface{} `json:"-"`
+	NextTransferAt  map[uint64]time.Time `json:"-"`
+	LastCycleStatus map[uint64]bool      `json:"-"`
 }
 
 func percentage(used, total uint64) float64 {
@@ -42,15 +45,15 @@ func percentage(used, total uint64) float64 {
 	return float64(used) * 100 / float64(total)
 }
 
-// Snapshot 未通过规则返回 struct{}{}, 通过返回 nil
-func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) interface{} {
+// Snapshot 未通过规则返回 false, 通过返回 true
+func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
 	// 监控全部但是排除了此服务器
 	if u.Cover == RuleCoverAll && u.Ignore[server.ID] {
-		return nil
+		return true
 	}
 	// 忽略全部但是指定监控了此服务器
 	if u.Cover == RuleCoverIgnoreAll && !u.Ignore[server.ID] {
-		return nil
+		return true
 	}
 
 	// 循环区间流量检测 · 短期无需重复检测
@@ -63,6 +66,8 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	switch u.Type {
 	case "cpu":
 		src = float64(server.State.CPU)
+	case "gpu_max":
+		src = slices.Max(server.State.GPU)
 	case "memory":
 		src = percentage(server.State.MemUsed, server.Host.MemTotal)
 	case "swap":
@@ -88,24 +93,24 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 			src = float64(server.LastActive.Unix())
 		}
 	case "transfer_in_cycle":
-		src = float64(server.State.NetInTransfer - uint64(server.PrevHourlyTransferIn))
+		src = float64(utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("created_at > ? AND server_id = ?", u.GetTransferDurationStart(), server.ID).Scan(&res)
+			db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "transfer_out_cycle":
-		src = float64(server.State.NetOutTransfer - uint64(server.PrevHourlyTransferOut))
+		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("created_at > ? AND server_id = ?", u.GetTransferDurationStart(), server.ID).Scan(&res)
+			db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "transfer_all_cycle":
-		src = float64(server.State.NetOutTransfer - uint64(server.PrevHourlyTransferOut) + server.State.NetInTransfer - uint64(server.PrevHourlyTransferIn))
+		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot) + utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("created_at > ?  AND server_id = ?", u.GetTransferDurationStart(), server.ID).Scan(&res)
+			db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
 	case "load1":
@@ -120,25 +125,32 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(server.State.UdpConnCount)
 	case "process_count":
 		src = float64(server.State.ProcessCount)
+	case "temperature_max":
+		var temp []float64
+		if server.State.Temperatures != nil {
+			for _, tempStat := range server.State.Temperatures {
+				if tempStat.Temperature != 0 {
+					temp = append(temp, tempStat.Temperature)
+				}
+			}
+			src = slices.Max(temp)
+		}
 	}
 
 	// 循环区间流量检测 · 更新下次需要检测时间
 	if u.IsTransferDurationRule() {
-		seconds := 1800 * ((u.Max - src) / u.Max)
-		if seconds < 180 {
-			seconds = 180
-		}
+		seconds := max(1800*((u.Max-src)/u.Max), 180)
 		if u.NextTransferAt == nil {
 			u.NextTransferAt = make(map[uint64]time.Time)
 		}
 		if u.LastCycleStatus == nil {
-			u.LastCycleStatus = make(map[uint64]interface{})
+			u.LastCycleStatus = make(map[uint64]bool)
 		}
 		u.NextTransferAt[server.ID] = time.Now().Add(time.Second * time.Duration(seconds))
 		if (u.Max > 0 && src > u.Max) || (u.Min > 0 && src < u.Min) {
-			u.LastCycleStatus[server.ID] = struct{}{}
+			u.LastCycleStatus[server.ID] = false
 		} else {
-			u.LastCycleStatus[server.ID] = nil
+			u.LastCycleStatus[server.ID] = true
 		}
 		if cycleTransferStats.ServerName[server.ID] != server.Name {
 			cycleTransferStats.ServerName[server.ID] = server.Name
@@ -151,94 +163,98 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	}
 
 	if u.Type == "offline" && float64(time.Now().Unix())-src > 6 {
-		return struct{}{}
+		return false
 	} else if (u.Max > 0 && src > u.Max) || (u.Min > 0 && src < u.Min) {
-		return struct{}{}
+		return false
 	}
 
-	return nil
+	return true
 }
 
 // IsTransferDurationRule 判断该规则是否属于周期流量规则 属于则返回true
-func (rule Rule) IsTransferDurationRule() bool {
-	return strings.HasSuffix(rule.Type, "_cycle")
+func (u *Rule) IsTransferDurationRule() bool {
+	return strings.HasSuffix(u.Type, "_cycle")
+}
+
+func (u *Rule) IsOfflineRule() bool {
+	return u.Type == "offline"
 }
 
 // GetTransferDurationStart 获取周期流量的起始时间
-func (rule Rule) GetTransferDurationStart() time.Time {
+func (u *Rule) GetTransferDurationStart() time.Time {
 	// Accept uppercase and lowercase
-	unit := strings.ToLower(rule.CycleUnit)
-	startTime := *rule.CycleStart
+	unit := strings.ToLower(u.CycleUnit)
+	startTime := *u.CycleStart
 	var nextTime time.Time
 	switch unit {
 	case "year":
-		nextTime = startTime.AddDate(int(rule.CycleInterval), 0, 0)
+		nextTime = startTime.AddDate(int(u.CycleInterval), 0, 0)
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(int(rule.CycleInterval), 0, 0)
+			nextTime = nextTime.AddDate(int(u.CycleInterval), 0, 0)
 		}
 	case "month":
-		nextTime = startTime.AddDate(0, int(rule.CycleInterval), 0)
+		nextTime = startTime.AddDate(0, int(u.CycleInterval), 0)
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, int(rule.CycleInterval), 0)
+			nextTime = nextTime.AddDate(0, int(u.CycleInterval), 0)
 		}
 	case "week":
-		nextTime = startTime.AddDate(0, 0, 7*int(rule.CycleInterval))
+		nextTime = startTime.AddDate(0, 0, 7*int(u.CycleInterval))
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, 7*int(rule.CycleInterval))
+			nextTime = nextTime.AddDate(0, 0, 7*int(u.CycleInterval))
 		}
 	case "day":
-		nextTime = startTime.AddDate(0, 0, int(rule.CycleInterval))
+		nextTime = startTime.AddDate(0, 0, int(u.CycleInterval))
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, int(rule.CycleInterval))
+			nextTime = nextTime.AddDate(0, 0, int(u.CycleInterval))
 		}
 	default:
 		// For hour unit or not set.
-		interval := 3600 * int64(rule.CycleInterval)
-		startTime = time.Unix(rule.CycleStart.Unix()+(time.Now().Unix()-rule.CycleStart.Unix())/interval*interval, 0)
+		interval := 3600 * int64(u.CycleInterval)
+		startTime = time.Unix(u.CycleStart.Unix()+(time.Now().Unix()-u.CycleStart.Unix())/interval*interval, 0)
 	}
 
 	return startTime
 }
 
 // GetTransferDurationEnd 获取周期流量结束时间
-func (rule Rule) GetTransferDurationEnd() time.Time {
+func (u *Rule) GetTransferDurationEnd() time.Time {
 	// Accept uppercase and lowercase
-	unit := strings.ToLower(rule.CycleUnit)
-	startTime := *rule.CycleStart
+	unit := strings.ToLower(u.CycleUnit)
+	startTime := *u.CycleStart
 	var nextTime time.Time
 	switch unit {
 	case "year":
-		nextTime = startTime.AddDate(int(rule.CycleInterval), 0, 0)
+		nextTime = startTime.AddDate(int(u.CycleInterval), 0, 0)
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(int(rule.CycleInterval), 0, 0)
+			nextTime = nextTime.AddDate(int(u.CycleInterval), 0, 0)
 		}
 	case "month":
-		nextTime = startTime.AddDate(0, int(rule.CycleInterval), 0)
+		nextTime = startTime.AddDate(0, int(u.CycleInterval), 0)
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, int(rule.CycleInterval), 0)
+			nextTime = nextTime.AddDate(0, int(u.CycleInterval), 0)
 		}
 	case "week":
-		nextTime = startTime.AddDate(0, 0, 7*int(rule.CycleInterval))
+		nextTime = startTime.AddDate(0, 0, 7*int(u.CycleInterval))
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, 7*int(rule.CycleInterval))
+			nextTime = nextTime.AddDate(0, 0, 7*int(u.CycleInterval))
 		}
 	case "day":
-		nextTime = startTime.AddDate(0, 0, int(rule.CycleInterval))
+		nextTime = startTime.AddDate(0, 0, int(u.CycleInterval))
 		for time.Now().After(nextTime) {
 			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, int(rule.CycleInterval))
+			nextTime = nextTime.AddDate(0, 0, int(u.CycleInterval))
 		}
 	default:
 		// For hour unit or not set.
-		interval := 3600 * int64(rule.CycleInterval)
-		startTime = time.Unix(rule.CycleStart.Unix()+(time.Now().Unix()-rule.CycleStart.Unix())/interval*interval, 0)
+		interval := 3600 * int64(u.CycleInterval)
+		startTime = time.Unix(u.CycleStart.Unix()+(time.Now().Unix()-u.CycleStart.Unix())/interval*interval, 0)
 		nextTime = time.Unix(startTime.Unix()+interval, 0)
 	}
 

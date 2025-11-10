@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/stretchr/testify/assert"
 )
 
 var (
@@ -19,8 +17,8 @@ type testSt struct {
 	url               string
 	body              string
 	header            string
-	reqType           int
-	reqMethod         int
+	reqType           uint8
+	reqMethod         uint8
 	expectURL         string
 	expectBody        string
 	expectMethod      string
@@ -39,8 +37,6 @@ func execCase(t *testing.T, item testSt) {
 	server := Server{
 		Common:       Common{},
 		Name:         "ServerName",
-		Tag:          "",
-		Secret:       "",
 		Note:         "",
 		DisplayIndex: 0,
 		Host: &Host{
@@ -53,8 +49,6 @@ func execCase(t *testing.T, item testSt) {
 			Arch:            "",
 			Virtualization:  "",
 			BootTime:        0,
-			IP:              "1.1.1.1",
-			CountryCode:     "",
 			Version:         "",
 		},
 		State: &HostState{
@@ -74,31 +68,53 @@ func execCase(t *testing.T, item testSt) {
 			UdpConnCount:   0,
 			ProcessCount:   0,
 		},
-		LastActive:            time.Time{},
-		TaskClose:             nil,
-		TaskStream:            nil,
-		PrevHourlyTransferIn:  0,
-		PrevHourlyTransferOut: 0,
+		GeoIP: &GeoIP{
+			IP: IP{
+				IPv4Addr: "1.1.1.1",
+			},
+			CountryCode: "",
+		},
+		LastActive:              time.Time{},
+		TaskStream:              nil,
+		PrevTransferInSnapshot:  0,
+		PrevTransferOutSnapshot: 0,
 	}
 	ns := NotificationServerBundle{
 		Notification: &n,
 		Server:       &server,
+		Loc:          time.Local,
 	}
-	assert.Equal(t, item.expectURL, ns.reqURL(msg))
+	if item.expectURL != ns.reqURL(msg) {
+		t.Fatalf("Expected %s, but got %s", item.expectURL, ns.reqURL(msg))
+	}
 	reqBody, err := ns.reqBody(msg)
-	assert.Nil(t, err)
-	assert.Equal(t, item.expectBody, reqBody)
+	if err != nil {
+		t.Fatalf("Error: %s", err)
+	}
+	if item.expectBody != reqBody {
+		t.Fatalf("Expected %s, but got %s", item.expectBody, reqBody)
+	}
 	reqMethod, err := n.reqMethod()
-	assert.Nil(t, err)
-	assert.Equal(t, item.expectMethod, reqMethod)
+	if err != nil {
+		t.Fatalf("Error: %s", err)
+	}
+	if item.expectMethod != reqMethod {
+		t.Fatalf("Expected %s, but got %s", item.expectMethod, reqMethod)
+	}
 
 	req, err := http.NewRequest("", "", strings.NewReader(""))
-	assert.Nil(t, err)
+	if err != nil {
+		t.Fatalf("Error: %s", err)
+	}
 	n.setContentType(req)
-	assert.Equal(t, item.expectContentType, req.Header.Get("Content-Type"))
+	if item.expectContentType != req.Header.Get("Content-Type") {
+		t.Fatalf("Expected %s, but got %s", item.expectContentType, req.Header.Get("Content-Type"))
+	}
 	n.setRequestHeader(req)
 	for k, v := range item.expectHeader {
-		assert.Equal(t, v, req.Header.Get(k))
+		if v != req.Header.Get(k) {
+			t.Fatalf("Expected %s, but got %s", v, req.Header.Get(k))
+		}
 	}
 }
 

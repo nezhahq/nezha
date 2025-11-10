@@ -1,222 +1,236 @@
 package controller
 
 import (
-	"context"
-	"errors"
 	"fmt"
+	"io"
 	"net/http"
-	"net/url"
+	"strconv"
 	"strings"
-	"time"
 
-	"code.gitea.io/sdk/gitea"
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	GitHubAPI "github.com/google/go-github/v47/github"
 	"github.com/patrickmn/go-cache"
-	"github.com/xanzy/go-gitlab"
+	"github.com/tidwall/gjson"
 	"golang.org/x/oauth2"
-	GitHubOauth2 "golang.org/x/oauth2/github"
-	GitlabOauth2 "golang.org/x/oauth2/gitlab"
+	"gorm.io/gorm"
 
-	"github.com/naiba/nezha/model"
-	"github.com/naiba/nezha/pkg/mygin"
-	"github.com/naiba/nezha/pkg/utils"
-	"github.com/naiba/nezha/service/singleton"
+	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/nezhahq/nezha/service/singleton"
 )
 
-type oauth2controller struct {
-	r gin.IRoutes
-}
-
-func (oa *oauth2controller) serve() {
-	oa.r.GET("/oauth2/login", oa.login)
-	oa.r.GET("/oauth2/callback", oa.callback)
-}
-
-func (oa *oauth2controller) getCommonOauth2Config(c *gin.Context) *oauth2.Config {
-	if singleton.Conf.Oauth2.Type == model.ConfigTypeGitee {
-		return &oauth2.Config{
-			ClientID:     singleton.Conf.Oauth2.ClientID,
-			ClientSecret: singleton.Conf.Oauth2.ClientSecret,
-			Scopes:       []string{},
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  "https://gitee.com/oauth/authorize",
-				TokenURL: "https://gitee.com/oauth/token",
-			},
-			RedirectURL: oa.getRedirectURL(c),
-		}
-	} else if singleton.Conf.Oauth2.Type == model.ConfigTypeGitlab {
-		return &oauth2.Config{
-			ClientID:     singleton.Conf.Oauth2.ClientID,
-			ClientSecret: singleton.Conf.Oauth2.ClientSecret,
-			Scopes:       []string{"read_user", "read_api"},
-			Endpoint:     GitlabOauth2.Endpoint,
-			RedirectURL:  oa.getRedirectURL(c),
-		}
-	} else if singleton.Conf.Oauth2.Type == model.ConfigTypeJihulab {
-		return &oauth2.Config{
-			ClientID:     singleton.Conf.Oauth2.ClientID,
-			ClientSecret: singleton.Conf.Oauth2.ClientSecret,
-			Scopes:       []string{"read_user", "read_api"},
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  "https://jihulab.com/oauth/authorize",
-				TokenURL: "https://jihulab.com/oauth/token",
-			},
-			RedirectURL: oa.getRedirectURL(c),
-		}
-	} else if singleton.Conf.Oauth2.Type == model.ConfigTypeGitea {
-		return &oauth2.Config{
-			ClientID:     singleton.Conf.Oauth2.ClientID,
-			ClientSecret: singleton.Conf.Oauth2.ClientSecret,
-			Endpoint: oauth2.Endpoint{
-				AuthURL:  fmt.Sprintf("%s/login/oauth/authorize", singleton.Conf.Oauth2.Endpoint),
-				TokenURL: fmt.Sprintf("%s/login/oauth/access_token", singleton.Conf.Oauth2.Endpoint),
-			},
-			RedirectURL: oa.getRedirectURL(c),
-		}
-	} else {
-		return &oauth2.Config{
-			ClientID:     singleton.Conf.Oauth2.ClientID,
-			ClientSecret: singleton.Conf.Oauth2.ClientSecret,
-			Scopes:       []string{},
-			Endpoint:     GitHubOauth2.Endpoint,
-		}
-	}
-}
-
-func (oa *oauth2controller) getRedirectURL(c *gin.Context) string {
+func getRedirectURL(c *gin.Context) string {
 	scheme := "http://"
-	if strings.HasPrefix(c.Request.Referer(), "https://") {
+	referer := c.Request.Referer()
+	if forwardedProto := c.Request.Header.Get("X-Forwarded-Proto"); forwardedProto == "https" || strings.HasPrefix(referer, "https://") {
 		scheme = "https://"
 	}
-	return scheme + c.Request.Host + "/oauth2/callback"
+	return scheme + c.Request.Host + "/api/v1/oauth2/callback"
 }
 
-func (oa *oauth2controller) login(c *gin.Context) {
+// @Summary Get Oauth2 Redirect URL
+// @Description Get Oauth2 Redirect URL
+// @Produce json
+// @Param provider path string true "provider"
+// @Param type query int false "type" Enums(1, 2) default(1)
+// @Success 200 {object} model.Oauth2LoginResponse
+// @Router /api/v1/oauth2/{provider} [get]
+func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
+	provider := c.Param("provider")
+	if provider == "" {
+		return nil, singleton.Localizer.ErrorT("provider is required")
+	}
+
+	rTypeInt, err := strconv.ParseUint(c.Query("type"), 10, 8)
+	if err != nil {
+		return nil, err
+	}
+
+	o2confRaw, has := singleton.Conf.Oauth2[provider]
+	if !has {
+		return nil, singleton.Localizer.ErrorT("provider not found")
+	}
+	redirectURL := getRedirectURL(c)
+	o2conf := o2confRaw.Setup(redirectURL)
+
 	randomString, err := utils.GenerateRandomString(32)
 	if err != nil {
-		mygin.ShowErrorPage(c, mygin.ErrInfo{
-			Code:  http.StatusBadRequest,
-			Title: "Something Wrong",
-			Msg:   err.Error(),
-		}, true)
-		return
+		return nil, err
 	}
 	state, stateKey := randomString[:16], randomString[16:]
-	singleton.Cache.Set(fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey), state, cache.DefaultExpiration)
-	url := oa.getCommonOauth2Config(c).AuthCodeURL(state, oauth2.AccessTypeOnline)
-	c.SetCookie(singleton.Conf.Site.CookieName+"-sk", stateKey, 60*5, "", "", false, false)
-	c.HTML(http.StatusOK, "dashboard-"+singleton.Conf.Site.DashboardTheme+"/redirect", mygin.CommonEnvironment(c, gin.H{
-		"URL": url,
-	}))
+	singleton.Cache.Set(fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey), &model.Oauth2State{
+		Action:      model.Oauth2LoginType(rTypeInt),
+		Provider:    provider,
+		State:       state,
+		RedirectURL: redirectURL,
+	}, cache.DefaultExpiration)
+
+	url := o2conf.AuthCodeURL(state, oauth2.AccessTypeOnline)
+	c.SetCookie("nz-o2s", stateKey, 60*5, "", "", false, false)
+
+	return &model.Oauth2LoginResponse{Redirect: url}, nil
 }
 
-func (oa *oauth2controller) callback(c *gin.Context) {
-	var err error
-	// 验证登录跳转时的 State
-	stateKey, err := c.Cookie(singleton.Conf.Site.CookieName + "-sk")
-	if err == nil {
-		state, ok := singleton.Cache.Get(fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey))
-		if !ok || state.(string) != c.Query("state") {
-			err = errors.New("非法的登录方式")
+// @Summary Unbind Oauth2
+// @Description Unbind Oauth2
+// @Accept json
+// @Produce json
+// @Param provider path string true "provider"
+// @Success 200 {object} any
+// @Router /api/v1/oauth2/{provider}/unbind [post]
+func unbindOauth2(c *gin.Context) (any, error) {
+	provider := c.Param("provider")
+	if provider == "" {
+		return nil, singleton.Localizer.ErrorT("provider is required")
+	}
+	_, has := singleton.Conf.Oauth2[provider]
+	if !has {
+		return nil, singleton.Localizer.ErrorT("provider not found")
+	}
+	provider = strings.ToLower(provider)
+
+	u := c.MustGet(model.CtxKeyAuthorizedUser).(*model.User)
+	query := singleton.DB.Where("provider = ? AND user_id = ?", provider, u.ID)
+
+	var bindCount int64
+	if err := query.Model(&model.Oauth2Bind{}).Count(&bindCount).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+
+	if bindCount < 2 && u.RejectPassword {
+		return nil, singleton.Localizer.ErrorT("operation not permitted")
+	}
+
+	if err := query.Delete(&model.Oauth2Bind{}).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+
+	return nil, nil
+}
+
+// @Summary Oauth2 Callback
+// @Description Oauth2 Callback
+// @Accept json
+// @Produce json
+// @Param state query string true "state"
+// @Param code query string true "code"
+// @Success 200 {object} model.CommonResponse[any]
+// @Router /api/v1/oauth2/callback [get]
+func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, error) {
+	return func(c *gin.Context) (any, error) {
+		callbackData := &model.Oauth2Callback{
+			State: c.Query("state"),
+			Code:  c.Query("code"),
 		}
-	}
-	oauth2Config := oa.getCommonOauth2Config(c)
-	ctx := context.Background()
-	var otk *oauth2.Token
-	if err == nil {
-		otk, err = oauth2Config.Exchange(ctx, c.Query("code"))
-	}
 
-	var user model.User
+		state, err := verifyState(c, callbackData.State)
+		if err != nil {
+			return nil, err
+		}
 
-	if err == nil {
-		if singleton.Conf.Oauth2.Type == model.ConfigTypeGitlab || singleton.Conf.Oauth2.Type == model.ConfigTypeJihulab {
-			var gitlabApiClient *gitlab.Client
-			if singleton.Conf.Oauth2.Type == model.ConfigTypeGitlab {
-				gitlabApiClient, err = gitlab.NewOAuthClient(otk.AccessToken)
+		o2confRaw, has := singleton.Conf.Oauth2[state.Provider]
+		if !has {
+			return nil, singleton.Localizer.ErrorT("provider not found")
+		}
+
+		realip := c.GetString(model.CtxKeyRealIPStr)
+		if callbackData.Code == "" {
+			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
+			return nil, singleton.Localizer.ErrorT("code is required")
+		}
+
+		openId, err := exchangeOpenId(c, o2confRaw, callbackData, state.RedirectURL)
+		if err != nil {
+			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
+			return nil, err
+		}
+
+		var bind model.Oauth2Bind
+		state.Provider = strings.ToLower(state.Provider)
+		switch state.Action {
+		case model.RTypeBind:
+			u, authorized := c.Get(model.CtxKeyAuthorizedUser)
+			if !authorized {
+				return nil, singleton.Localizer.ErrorT("unauthorized")
+			}
+			user := u.(*model.User)
+
+			result := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).Limit(1).Find(&bind)
+			if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+				return nil, newGormError("%v", result.Error)
+			}
+			bind.UserID = user.ID
+			bind.Provider = state.Provider
+			bind.OpenID = openId
+
+			if result.Error == gorm.ErrRecordNotFound {
+				result = singleton.DB.Create(&bind)
 			} else {
-				gitlabApiClient, err = gitlab.NewOAuthClient(otk.AccessToken, gitlab.WithBaseURL("https://jihulab.com/api/v4/"))
+				result = singleton.DB.Save(&bind)
 			}
-			var u *gitlab.User
-			if err == nil {
-				u, _, err = gitlabApiClient.Users.CurrentUser()
+			if result.Error != nil {
+				return nil, newGormError("%v", result.Error)
 			}
-			if err == nil {
-				user = model.NewUserFromGitlab(u)
-			}
-		} else if singleton.Conf.Oauth2.Type == model.ConfigTypeGitea {
-			var giteaApiClient *gitea.Client
-			giteaApiClient, err = gitea.NewClient(singleton.Conf.Oauth2.Endpoint, gitea.SetToken(otk.AccessToken))
-			var u *gitea.User
-			if err == nil {
-				u, _, err = giteaApiClient.GetMyUserInfo()
-			}
-			if err == nil {
-				user = model.NewUserFromGitea(u)
-			}
-		} else {
-			var client *GitHubAPI.Client
-			oc := oauth2Config.Client(ctx, otk)
-			if singleton.Conf.Oauth2.Type == model.ConfigTypeGitee {
-				baseURL, _ := url.Parse("https://gitee.com/api/v5/")
-				uploadURL, _ := url.Parse("https://gitee.com/api/v5/uploads/")
-				client = GitHubAPI.NewClient(oc)
-				client.BaseURL = baseURL
-				client.UploadURL = uploadURL
-			} else {
-				client = GitHubAPI.NewClient(oc)
-			}
-			var gu *GitHubAPI.User
-			if err == nil {
-				gu, _, err = client.Users.Get(ctx, "")
-			}
-			if err == nil {
-				user = model.NewUserFromGitHub(gu)
+		default:
+			if err := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).First(&bind).Error; err != nil {
+				return nil, singleton.Localizer.ErrorT("oauth2 user not binded yet")
 			}
 		}
-	}
 
-	if err == nil && user.Login == "" {
-		err = errors.New("获取用户信息失败")
-	}
-
-	if err != nil || user.Login == "" {
-		mygin.ShowErrorPage(c, mygin.ErrInfo{
-			Code:  http.StatusBadRequest,
-			Title: "登录失败",
-			Msg:   fmt.Sprintf("错误信息：%s", err),
-		}, true)
-		return
-	}
-	var isAdmin bool
-	for _, admin := range strings.Split(singleton.Conf.Oauth2.Admin, ",") {
-		if admin != "" && strings.EqualFold(user.Login, admin) {
-			isAdmin = true
-			break
+		tokenString, _, err := jwtConfig.TokenGenerator(map[string]interface{}{
+			"user_id": fmt.Sprintf("%d", bind.UserID),
+			"ip":      realip,
+		})
+		if err != nil {
+			return nil, err
 		}
+
+		jwtConfig.SetCookie(c, tokenString)
+		c.Redirect(http.StatusFound, utils.IfOr(state.Action == model.RTypeBind, "/dashboard/profile?oauth2=true", "/dashboard/login?oauth2=true"))
+
+		return nil, errNoop
 	}
-	if !isAdmin {
-		mygin.ShowErrorPage(c, mygin.ErrInfo{
-			Code:  http.StatusBadRequest,
-			Title: "登录失败",
-			Msg:   fmt.Sprintf("错误信息：%s", "该用户不是本站点管理员，无法登录"),
-		}, true)
-		return
-	}
-	user.Token, err = utils.GenerateRandomString(32)
+}
+
+func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
+	callbackData *model.Oauth2Callback, redirectURL string) (string, error) {
+	o2conf := o2confRaw.Setup(redirectURL)
+
+	otk, err := o2conf.Exchange(c, callbackData.Code)
 	if err != nil {
-		mygin.ShowErrorPage(c, mygin.ErrInfo{
-			Code:  http.StatusBadRequest,
-			Title: "Something wrong",
-			Msg:   err.Error(),
-		}, true)
-		return
+		return "", err
 	}
-	user.TokenExpired = time.Now().AddDate(0, 2, 0)
-	singleton.DB.Save(&user)
-	c.SetCookie(singleton.Conf.Site.CookieName, user.Token, 60*60*24, "", "", false, false)
-	c.HTML(http.StatusOK, "dashboard-"+singleton.Conf.Site.DashboardTheme+"/redirect", mygin.CommonEnvironment(c, gin.H{
-		"URL": "/",
-	}))
+	oauth2client := o2conf.Client(c, otk)
+	resp, err := oauth2client.Get(o2confRaw.UserInfoURL)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	return gjson.GetBytes(body, o2confRaw.UserIDPath).String(), nil
+}
+
+func verifyState(c *gin.Context, state string) (*model.Oauth2State, error) {
+	// 验证登录跳转时的 State
+	stateKey, err := c.Cookie("nz-o2s")
+	if err != nil {
+		return nil, singleton.Localizer.ErrorT("invalid state key")
+	}
+
+	cacheKey := fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey)
+	istate, ok := singleton.Cache.Get(cacheKey)
+	if !ok {
+		return nil, singleton.Localizer.ErrorT("invalid state key")
+	}
+
+	oauth2State, ok := istate.(*model.Oauth2State)
+	if !ok || oauth2State.State != state {
+		return nil, singleton.Localizer.ErrorT("invalid state key")
+	}
+
+	return oauth2State, nil
 }

@@ -1,0 +1,317 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the PACKAGE package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: PACKAGE VERSION\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2025-01-30 21:58+0800\n"
+"PO-Revision-Date: 2025-06-21 16:01+0000\n"
+"Last-Translator: தமிழ்நேரம் <anishprabu.t@gmail.com>\n"
+"Language-Team: Tamil <https://hosted.weblate.org/projects/nezha/"
+"nezha-dashboard/ta/>\n"
+"Language: ta_IN\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=n != 1;\n"
+"X-Generator: Weblate 5.13-dev\n"
+
+#: cmd/dashboard/controller/alertrule.go:104
+#, c-format
+msgid "alert id %d does not exist"
+msgstr "எச்சரிக்கை ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/alertrule.go:108
+#: cmd/dashboard/controller/alertrule.go:156
+#: cmd/dashboard/controller/alertrule.go:176
+#: cmd/dashboard/controller/controller.go:226
+#: cmd/dashboard/controller/cron.go:58 cmd/dashboard/controller/cron.go:124
+#: cmd/dashboard/controller/cron.go:136 cmd/dashboard/controller/cron.go:195
+#: cmd/dashboard/controller/cron.go:224 cmd/dashboard/controller/ddns.go:131
+#: cmd/dashboard/controller/ddns.go:192 cmd/dashboard/controller/fm.go:43
+#: cmd/dashboard/controller/nat.go:59 cmd/dashboard/controller/nat.go:111
+#: cmd/dashboard/controller/nat.go:122 cmd/dashboard/controller/nat.go:162
+#: cmd/dashboard/controller/notification.go:112
+#: cmd/dashboard/controller/notification.go:166
+#: cmd/dashboard/controller/notification_group.go:76
+#: cmd/dashboard/controller/notification_group.go:152
+#: cmd/dashboard/controller/notification_group.go:164
+#: cmd/dashboard/controller/notification_group.go:233
+#: cmd/dashboard/controller/server.go:66 cmd/dashboard/controller/server.go:78
+#: cmd/dashboard/controller/server.go:137
+#: cmd/dashboard/controller/server.go:201
+#: cmd/dashboard/controller/server_group.go:75
+#: cmd/dashboard/controller/server_group.go:150
+#: cmd/dashboard/controller/server_group.go:229
+#: cmd/dashboard/controller/service.go:271
+#: cmd/dashboard/controller/service.go:342
+#: cmd/dashboard/controller/service.go:369
+#: cmd/dashboard/controller/terminal.go:41
+msgid "permission denied"
+msgstr "இசைவு மறுக்கப்பட்டது"
+
+#: cmd/dashboard/controller/alertrule.go:184
+msgid "duration need to be at least 3"
+msgstr "காலம் குறைந்தது 3 ஆக இருக்க வேண்டும்"
+
+#: cmd/dashboard/controller/alertrule.go:188
+msgid "cycle_interval need to be at least 1"
+msgstr "cycle_interval குறைந்தது 1 ஆக இருக்க வேண்டும்"
+
+#: cmd/dashboard/controller/alertrule.go:191
+msgid "cycle_start is not set"
+msgstr "cycle_start அமைக்கப்படவில்லை"
+
+#: cmd/dashboard/controller/alertrule.go:194
+msgid "cycle_start is a future value"
+msgstr "cycle_start என்பது எதிர்கால மதிப்பு"
+
+#: cmd/dashboard/controller/alertrule.go:199
+msgid "need to configure at least a single rule"
+msgstr "குறைந்தபட்சம் ஒரு விதியையாவது கட்டமைக்க வேண்டும்"
+
+#: cmd/dashboard/controller/controller.go:220
+#: cmd/dashboard/controller/oauth2.go:153
+#: cmd/dashboard/controller/server_group.go:162
+#: cmd/dashboard/controller/service.go:97 cmd/dashboard/controller/user.go:27
+#: cmd/dashboard/controller/user.go:63
+msgid "unauthorized"
+msgstr "அங்கீகரிக்கப்படாதது"
+
+#: cmd/dashboard/controller/controller.go:243
+msgid "database error"
+msgstr "தரவுத்தள பிழை"
+
+#: cmd/dashboard/controller/cron.go:75 cmd/dashboard/controller/cron.go:149
+msgid "scheduled tasks cannot be triggered by alarms"
+msgstr "திட்டமிடப்பட்ட பணிகளை அலாரங்களால் தூண்ட முடியாது"
+
+#: cmd/dashboard/controller/cron.go:132 cmd/dashboard/controller/cron.go:190
+#, c-format
+msgid "task id %d does not exist"
+msgstr "பணி ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/ddns.go:57 cmd/dashboard/controller/ddns.go:122
+msgid "the retry count must be an integer between 1 and 10"
+msgstr "மறுபயன்பாட்டு எண்ணிக்கை 1 முதல் 10 வரை ஒரு முழு எண்ணாக இருக்க வேண்டும்"
+
+#: cmd/dashboard/controller/ddns.go:81 cmd/dashboard/controller/ddns.go:154
+msgid "error parsing %s: %v"
+msgstr "பிழை பாகுபடுத்தல் %s: %v"
+
+#: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:118
+#, c-format
+msgid "profile id %d does not exist"
+msgstr "சுயவிவர ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/fm.go:39 cmd/dashboard/controller/terminal.go:37
+msgid "server not found or not connected"
+msgstr "சேவையகம் கண்டுபிடிக்கப்படவில்லை அல்லது இணைக்கப்படவில்லை"
+
+#: cmd/dashboard/controller/notification.go:69
+#: cmd/dashboard/controller/notification.go:131
+msgid "a test message"
+msgstr "ஒரு சோதனை செய்தி"
+
+#: cmd/dashboard/controller/notification.go:108
+#, c-format
+msgid "notification id %d does not exist"
+msgstr "அறிவிப்பு ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/notification_group.go:94
+#: cmd/dashboard/controller/notification_group.go:175
+msgid "have invalid notification id"
+msgstr "தவறான அறிவிப்பு ஐடி உள்ளது"
+
+#: cmd/dashboard/controller/notification_group.go:160
+#: cmd/dashboard/controller/server_group.go:158
+#, c-format
+msgid "group id %d does not exist"
+msgstr "குழு ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/oauth2.go:42 cmd/dashboard/controller/oauth2.go:83
+msgid "provider is required"
+msgstr "வழங்குநர் தேவை"
+
+#: cmd/dashboard/controller/oauth2.go:52 cmd/dashboard/controller/oauth2.go:87
+#: cmd/dashboard/controller/oauth2.go:132
+msgid "provider not found"
+msgstr "வழங்குநர் கண்டுபிடிக்கப்படவில்லை"
+
+#: cmd/dashboard/controller/oauth2.go:100
+msgid "operation not permitted"
+msgstr "செயல்பாடு அனுமதிக்கப்படவில்லை"
+
+#: cmd/dashboard/controller/oauth2.go:138
+msgid "code is required"
+msgstr "குறியீடு தேவை"
+
+#: cmd/dashboard/controller/oauth2.go:175
+msgid "oauth2 user not binded yet"
+msgstr "OAuth2 பயனர் இன்னும் பிணைக்கப்படவில்லை"
+
+#: cmd/dashboard/controller/oauth2.go:217
+#: cmd/dashboard/controller/oauth2.go:223
+#: cmd/dashboard/controller/oauth2.go:228
+msgid "invalid state key"
+msgstr "தவறான மாநில விசை"
+
+#: cmd/dashboard/controller/server.go:74
+#, c-format
+msgid "server id %d does not exist"
+msgstr "சேவையக ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/server.go:250
+msgid "operation timeout"
+msgstr "செயல்பாடு நேரம்கடந்தது"
+
+#: cmd/dashboard/controller/server.go:257
+msgid "get server config failed: %v"
+msgstr "சேவையக கட்டமைப்பு தோல்வியுற்றது: %v"
+
+#: cmd/dashboard/controller/server.go:261
+msgid "get server config failed"
+msgstr "சேவையக கட்டமைப்பு தோல்வியுற்றது"
+
+#: cmd/dashboard/controller/server_group.go:92
+#: cmd/dashboard/controller/server_group.go:172
+msgid "have invalid server id"
+msgstr "தவறான சேவையக ஐடி உள்ளது"
+
+#: cmd/dashboard/controller/service.go:90
+#: cmd/dashboard/controller/service.go:165
+msgid "server not found"
+msgstr "சேவையகம் கிடைக்கவில்லை"
+
+#: cmd/dashboard/controller/service.go:267
+#, c-format
+msgid "service id %d does not exist"
+msgstr "சேவை ஐடி %d இல்லை"
+
+#: cmd/dashboard/controller/user.go:68
+msgid "incorrect password"
+msgstr "தவறான கடவுச்சொல்"
+
+#: cmd/dashboard/controller/user.go:82
+msgid "you don't have any oauth2 bindings"
+msgstr "உங்களிடம் OAuth2 பிணைப்புகள் எதுவும் இல்லை"
+
+#: cmd/dashboard/controller/user.go:131
+msgid "password length must be greater than 6"
+msgstr "கடவுச்சொல் நீளம் 6 ஐ விட அதிகமாக இருக்க வேண்டும்"
+
+#: cmd/dashboard/controller/user.go:134
+msgid "username can't be empty"
+msgstr "பயனர்பெயர் காலியாக இருக்க முடியாது"
+
+#: cmd/dashboard/controller/user.go:137
+msgid "invalid role"
+msgstr "தவறான பங்கு"
+
+#: cmd/dashboard/controller/user.go:176
+msgid "can't delete yourself"
+msgstr "உங்களை நீங்களே நீக்க முடியாது"
+
+#: service/rpc/io_stream.go:128
+msgid "timeout: no connection established"
+msgstr "நேரம் முடிந்தது: எந்த தொடர்பும் நிறுவப்படவில்லை"
+
+#: service/rpc/io_stream.go:131
+msgid "timeout: user connection not established"
+msgstr "நேரம் முடிந்தது: பயனர் இணைப்பு நிறுவப்படவில்லை"
+
+#: service/rpc/io_stream.go:134
+msgid "timeout: agent connection not established"
+msgstr "நேரம் முடிந்தது: முகவர் இணைப்பு நிறுவப்படவில்லை"
+
+#: service/rpc/nezha.go:71
+msgid "Scheduled Task Executed Successfully"
+msgstr "திட்டமிடப்பட்ட பணி வெற்றிகரமாக செயல்படுத்தப்பட்டது"
+
+#: service/rpc/nezha.go:75
+msgid "Scheduled Task Executed Failed"
+msgstr "திட்டமிடப்பட்ட பணி செயல்படுத்தப்பட்டது தோல்வியடைந்தது"
+
+#: service/rpc/nezha.go:274
+msgid "IP Changed"
+msgstr "ஐபி மாற்றப்பட்டது"
+
+#: service/singleton/alertsentinel.go:169
+msgid "Incident"
+msgstr "நிகழ்வு"
+
+#: service/singleton/alertsentinel.go:179
+msgid "Resolved"
+msgstr "தீர்க்கப்பட்டது"
+
+#: service/singleton/crontask.go:54
+msgid "Tasks failed to register: ["
+msgstr "பணிகள் பதிவு செய்யத் தவறிவிட்டன: ["
+
+#: service/singleton/crontask.go:61
+msgid ""
+"] These tasks will not execute properly. Fix them in the admin dashboard."
+msgstr "] இந்த பணிகள் சரியாக இயங்காது. நிர்வாக டாச்போர்டில் அவற்றை சரிசெய்யவும்."
+
+#: service/singleton/crontask.go:144 service/singleton/crontask.go:169
+#, c-format
+msgid "[Task failed] %s: server %s is offline and cannot execute the task"
+msgstr ""
+"[பணி தோல்வியுற்றது] %s: சேவையகம் %s இணைப்பில்லாத மற்றும் பணியை செயல்படுத்த முடியாது"
+
+#: service/singleton/servicesentinel.go:468
+#, c-format
+msgid "[Latency] %s %2f > %2f, Reporter: %s"
+msgstr "[தாமதம்] %s %2f> %2f, நிருபர்: %s"
+
+#: service/singleton/servicesentinel.go:475
+#, c-format
+msgid "[Latency] %s %2f < %2f, Reporter: %s"
+msgstr "[தாமதம்] %s %2f < %2f, நிருபர்: %s"
+
+#: service/singleton/servicesentinel.go:501
+#, c-format
+msgid "[%s] %s Reporter: %s, Error: %s"
+msgstr "[ %s] %s நிருபர்: %s, பிழை: %s"
+
+#: service/singleton/servicesentinel.go:544
+#, c-format
+msgid "[TLS] Fetch cert info failed, Reporter: %s, Error: %s"
+msgstr "[TLS] சான்றிதழ் செய்தி தோல்வியுற்றது, நிருபர்: %s, பிழை: %s"
+
+#: service/singleton/servicesentinel.go:584
+#, c-format
+msgid "The TLS certificate will expire within seven days. Expiration time: %s"
+msgstr "டி.எல்.எச் சான்றிதழ் ஏழு நாட்களுக்குள் காலாவதியாகும். காலாவதி நேரம்: %s"
+
+#: service/singleton/servicesentinel.go:597
+#, c-format
+msgid ""
+"TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, "
+"expires at %s"
+msgstr ""
+"டி.எல்.எச் சான்றிதழ் மாற்றப்பட்டது, பழையது: வழங்குபவர் %s, %s காலாவதியாகின்றன; "
+"புதியது: வழங்குபவர் %s, %s இல் காலாவதியாகின்றன"
+
+#: service/singleton/servicesentinel.go:633
+msgid "No Data"
+msgstr "தரவு இல்லை"
+
+#: service/singleton/servicesentinel.go:635
+msgid "Good"
+msgstr "நல்லது"
+
+#: service/singleton/servicesentinel.go:637
+msgid "Low Availability"
+msgstr "குறைந்த கிடைக்கும் தன்மை"
+
+#: service/singleton/servicesentinel.go:639
+msgid "Down"
+msgstr "கீழே"
+
+#: service/singleton/user.go:60
+msgid "user id not specified"
+msgstr "பயனர் ஐடி குறிப்பிடப்படவில்லை"

@@ -1,0 +1,55 @@
+name: 问题反馈
+description: 提交 nezha 问题反馈
+
+body:
+  - type: input
+    attributes:
+      label: 运行环境
+      description: 请在这里输入你的系统信息及设备架构
+      placeholder: Debian GNU/Linux 12 6.1.0-22-amd64
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Nezha 版本
+      description: 在这里输入你的 nezha 版本号
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 描述问题
+      description: 一个清晰明了的问题描述
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      description: 在这里输入复现问题的步骤
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 配置信息
+      description: 在这里输入你的配置信息
+      value: |
+        <details></details>
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 附加信息
+      description: 在这里输入其它对问题解决有帮助的信息
+      value: |
+        <details></details>
+  - type: checkboxes
+    attributes:
+      label: 验证
+      options:
+        - label: 我确认这是一个 nezha (哪吒面板) 的问题。
+          required: true
+        - label: 我已经搜索了 Issues，并确认该问题之前没有被反馈过。
+          required: true

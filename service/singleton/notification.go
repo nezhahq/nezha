@@ -1,112 +1,208 @@
 package singleton
 
 import (
-	// #nosec
-
+	"cmp"
 	"fmt"
 	"log"
+	"slices"
 	"sync"
 	"time"
 
-	"github.com/naiba/nezha/model"
+	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 )
 
-const firstNotificationDelay = time.Minute * 15
-
-// 通知方式
-var (
-	NotificationList    map[string]map[uint64]*model.Notification // [NotificationMethodTag][NotificationID] -> model.Notification
-	NotificationIDToTag map[uint64]string                         // [NotificationID] -> NotificationTag
-	notificationsLock   sync.RWMutex
+const (
+	firstNotificationDelay = time.Minute * 15
 )
 
-// InitNotification 初始化 Tag <-> ID <-> Notification 的映射
-func InitNotification() {
-	NotificationList = make(map[string]map[uint64]*model.Notification)
-	NotificationIDToTag = make(map[uint64]string)
+type NotificationClass struct {
+	class[uint64, *model.Notification]
+
+	groupToIDList map[uint64]map[uint64]*model.Notification
+	idToGroupList map[uint64]map[uint64]struct{}
+
+	groupList map[uint64]string
+	groupMu   sync.RWMutex
 }
 
-// LoadNotifications 从 DB 初始化通知方式相关参数
-func LoadNotifications() {
-	InitNotification()
-	notificationsLock.Lock()
-	defer notificationsLock.Unlock()
+func NewNotificationClass() *NotificationClass {
+	var sortedList []*model.Notification
 
-	var notifications []model.Notification
-	if err := DB.Find(&notifications).Error; err != nil {
-		panic(err)
+	groupToIDList := make(map[uint64]map[uint64]*model.Notification)
+	idToGroupList := make(map[uint64]map[uint64]struct{})
+
+	groupNotifications := make(map[uint64][]uint64)
+	var ngn []model.NotificationGroupNotification
+	DB.Find(&ngn)
+
+	for _, n := range ngn {
+		groupNotifications[n.NotificationGroupID] = append(groupNotifications[n.NotificationGroupID], n.NotificationID)
 	}
-	for i := 0; i < len(notifications); i++ {
-		// 旧版本的Tag可能不存在 自动设置为默认值
-		if notifications[i].Tag == "" {
-			SetDefaultNotificationTagInDB(&notifications[i])
+
+	DB.Find(&sortedList)
+	list := make(map[uint64]*model.Notification, len(sortedList))
+	for _, n := range sortedList {
+		list[n.ID] = n
+	}
+
+	var groups []model.NotificationGroup
+	DB.Find(&groups)
+	groupList := make(map[uint64]string)
+	for _, grp := range groups {
+		groupList[grp.ID] = grp.Name
+	}
+
+	for gid, nids := range groupNotifications {
+		groupToIDList[gid] = make(map[uint64]*model.Notification)
+		for _, nid := range nids {
+			if n, ok := list[nid]; ok {
+				groupToIDList[gid][n.ID] = n
+
+				if idToGroupList[n.ID] == nil {
+					idToGroupList[n.ID] = make(map[uint64]struct{})
+				}
+
+				idToGroupList[n.ID][gid] = struct{}{}
+			}
 		}
-		AddNotificationToList(&notifications[i])
 	}
+
+	nc := &NotificationClass{
+		class: class[uint64, *model.Notification]{
+			list:       list,
+			sortedList: sortedList,
+		},
+		groupToIDList: groupToIDList,
+		idToGroupList: idToGroupList,
+		groupList:     groupList,
+	}
+	return nc
 }
 
-// SetDefaultNotificationTagInDB 设置默认通知方式的 Tag
-func SetDefaultNotificationTagInDB(n *model.Notification) {
-	n.Tag = "default"
-	if err := DB.Save(n).Error; err != nil {
-		log.Println("NEZHA>> SetDefaultNotificationTagInDB 错误: ", err)
+func (c *NotificationClass) Update(n *model.Notification) {
+	c.listMu.Lock()
+
+	_, ok := c.list[n.ID]
+	c.list[n.ID] = n
+
+	if ok {
+		if gids, ok := c.idToGroupList[n.ID]; ok {
+			for gid := range gids {
+				c.groupToIDList[gid][n.ID] = n
+			}
+		}
 	}
+
+	c.listMu.Unlock()
+	c.sortList()
 }
 
-// OnRefreshOrAddNotification 刷新通知方式相关参数
-func OnRefreshOrAddNotification(n *model.Notification) {
-	notificationsLock.Lock()
-	defer notificationsLock.Unlock()
+func (c *NotificationClass) UpdateGroup(ng *model.NotificationGroup, ngn []uint64) {
+	c.groupMu.Lock()
+	defer c.groupMu.Unlock()
 
-	var isEdit bool
-	if _, ok := NotificationIDToTag[n.ID]; ok {
-		isEdit = true
-	}
-	if !isEdit {
-		AddNotificationToList(n)
+	_, ok := c.groupList[ng.ID]
+	c.groupList[ng.ID] = ng.Name
+
+	c.listMu.Lock()
+	defer c.listMu.Unlock()
+	if !ok {
+		c.groupToIDList[ng.ID] = make(map[uint64]*model.Notification, len(ngn))
+		for _, n := range ngn {
+			if c.idToGroupList[n] == nil {
+				c.idToGroupList[n] = make(map[uint64]struct{})
+			}
+			c.idToGroupList[n][ng.ID] = struct{}{}
+			c.groupToIDList[ng.ID][n] = c.list[n]
+		}
 	} else {
-		UpdateNotificationInList(n)
+		oldList := make(map[uint64]struct{})
+		for nid := range c.groupToIDList[ng.ID] {
+			oldList[nid] = struct{}{}
+		}
+
+		c.groupToIDList[ng.ID] = make(map[uint64]*model.Notification)
+		for _, nid := range ngn {
+			c.groupToIDList[ng.ID][nid] = c.list[nid]
+			if c.idToGroupList[nid] == nil {
+				c.idToGroupList[nid] = make(map[uint64]struct{})
+			}
+			c.idToGroupList[nid][ng.ID] = struct{}{}
+		}
+
+		for oldID := range oldList {
+			if _, ok := c.groupToIDList[ng.ID][oldID]; !ok {
+				delete(c.groupToIDList[oldID], ng.ID)
+				if len(c.idToGroupList[oldID]) == 0 {
+					delete(c.idToGroupList, oldID)
+				}
+			}
+		}
 	}
 }
 
-// AddNotificationToList 添加通知方式到map中
-func AddNotificationToList(n *model.Notification) {
-	// 当前 Tag 不存在，创建对应该 Tag 的 子 map 后再添加
-	if _, ok := NotificationList[n.Tag]; !ok {
-		NotificationList[n.Tag] = make(map[uint64]*model.Notification)
+func (c *NotificationClass) Delete(idList []uint64) {
+	c.listMu.Lock()
+
+	for _, id := range idList {
+		delete(c.list, id)
+		// 如果绑定了通知组才删除
+		if gids, ok := c.idToGroupList[id]; ok {
+			for gid := range gids {
+				delete(c.groupToIDList[gid], id)
+				delete(c.idToGroupList, id)
+			}
+		}
 	}
-	NotificationList[n.Tag][n.ID] = n
-	NotificationIDToTag[n.ID] = n.Tag
+
+	c.listMu.Unlock()
+	c.sortList()
 }
 
-// UpdateNotificationInList 在 map 中更新通知方式
-func UpdateNotificationInList(n *model.Notification) {
-	if n.Tag != NotificationIDToTag[n.ID] {
-		// 如果 Tag 不一致，则需要先移除原有的映射关系
-		delete(NotificationList[NotificationIDToTag[n.ID]], n.ID)
-		delete(NotificationIDToTag, n.ID)
-		// 将新的 Tag 中的通知方式添加到 map 中
-		AddNotificationToList(n)
-	} else {
-		// 如果 Tag 一致，则直接更新
-		NotificationList[n.Tag][n.ID] = n
+func (c *NotificationClass) DeleteGroup(gids []uint64) {
+	c.listMu.Lock()
+	defer c.listMu.Unlock()
+	c.groupMu.Lock()
+	defer c.groupMu.Unlock()
+
+	for _, gid := range gids {
+		delete(c.groupList, gid)
+		delete(c.groupToIDList, gid)
 	}
 }
 
-// OnDeleteNotification 在map中删除通知方式
-func OnDeleteNotification(id uint64) {
-	notificationsLock.Lock()
-	defer notificationsLock.Unlock()
+func (c *NotificationClass) GetGroupName(gid uint64) string {
+	c.groupMu.RLock()
+	defer c.groupMu.RUnlock()
 
-	delete(NotificationList[NotificationIDToTag[id]], id)
-	delete(NotificationIDToTag, id)
+	return c.groupList[gid]
+}
+
+func (c *NotificationClass) sortList() {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+
+	sortedList := utils.MapValuesToSlice(c.list)
+	slices.SortFunc(sortedList, func(a, b *model.Notification) int {
+		return cmp.Compare(a.ID, b.ID)
+	})
+
+	c.sortedListMu.Lock()
+	defer c.sortedListMu.Unlock()
+	c.sortedList = sortedList
+}
+
+func (c *NotificationClass) UnMuteNotification(notificationGroupID uint64, muteLabel string) {
+	fullMuteLabel := NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
+	Cache.Delete(fullMuteLabel)
 }
 
 // SendNotification 向指定的通知方式组的所有通知方式发送通知
-func SendNotification(notificationTag string, desc string, muteLabel *string, ext ...*model.Server) {
-	if muteLabel != nil {
+func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc string, muteLabel string, ext ...*model.Server) {
+	if muteLabel != "" {
 		// 将通知方式组名称加入静音标志
-		muteLabel := fmt.Sprintf("%s:%s", *muteLabel, notificationTag)
+		muteLabel := NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
 		// 通知防骚扰策略
 		var flag bool
 		if cacheN, has := Cache.Get(muteLabel); has {
@@ -133,29 +229,30 @@ func SendNotification(notificationTag string, desc string, muteLabel *string, ex
 
 		if !flag {
 			if Conf.Debug {
-				log.Println("NEZHA>> 静音的重复通知：", desc, muteLabel)
+				log.Println("NEZHA>> Muted repeated notification", desc, muteLabel)
 			}
 			return
 		}
 	}
 	// 向该通知方式组的所有通知方式发出通知
-	notificationsLock.RLock()
-	defer notificationsLock.RUnlock()
-	for _, n := range NotificationList[notificationTag] {
-		log.Println("NEZHA>> 尝试通知", n.Name)
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+	for _, n := range c.groupToIDList[notificationGroupID] {
+		log.Printf("NEZHA>> Try to notify %s", n.Name)
 	}
-	for _, n := range NotificationList[notificationTag] {
+	for _, n := range c.groupToIDList[notificationGroupID] {
 		ns := model.NotificationServerBundle{
 			Notification: n,
 			Server:       nil,
+			Loc:          Loc,
 		}
 		if len(ext) > 0 {
 			ns.Server = ext[0]
 		}
 		if err := ns.Send(desc); err != nil {
-			log.Println("NEZHA>> 向 ", n.Name, " 发送通知失败：", err)
+			log.Printf("NEZHA>> Sending notification to %s failed: %v", n.Name, err)
 		} else {
-			log.Println("NEZHA>> 向 ", n.Name, " 发送通知成功：")
+			log.Printf("NEZHA>> Sending notification to %s succeeded", n.Name)
 		}
 	}
 }
@@ -164,37 +261,34 @@ type _NotificationMuteLabel struct{}
 
 var NotificationMuteLabel _NotificationMuteLabel
 
-func (_NotificationMuteLabel) IPChanged(serverId uint64) *string {
-	label := fmt.Sprintf("bf::ic-%d", serverId)
-	return &label
+func (_NotificationMuteLabel) IPChanged(serverId uint64) string {
+	return fmt.Sprintf("bf::ic-%d", serverId)
 }
 
-func (_NotificationMuteLabel) ServerIncident(alertId uint64, serverId uint64) *string {
-	label := fmt.Sprintf("bf::sei-%d-%d", alertId, serverId)
-	return &label
+func (_NotificationMuteLabel) ServerIncident(alertId uint64, serverId uint64) string {
+	return fmt.Sprintf("bf::sei-%d-%d", alertId, serverId)
 }
 
-func (_NotificationMuteLabel) ServerIncidentResolved(alertId uint64, serverId uint64) *string {
-	label := fmt.Sprintf("bf::seir-%d-%d", alertId, serverId)
-	return &label
+func (_NotificationMuteLabel) ServerIncidentResolved(alertId uint64, serverId uint64) string {
+	return fmt.Sprintf("bf::seir-%d-%d", alertId, serverId)
 }
 
-func (_NotificationMuteLabel) ServiceLatencyMin(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::sln-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) AppendNotificationGroupName(label string, notificationGroupName string) string {
+	return fmt.Sprintf("%s:%s", label, notificationGroupName)
 }
 
-func (_NotificationMuteLabel) ServiceLatencyMax(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::slm-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceLatencyMin(serviceId uint64) string {
+	return fmt.Sprintf("bf::sln-%d", serviceId)
 }
 
-func (_NotificationMuteLabel) ServiceStateChanged(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::ssc-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceLatencyMax(serviceId uint64) string {
+	return fmt.Sprintf("bf::slm-%d", serviceId)
 }
 
-func (_NotificationMuteLabel) ServiceSSL(serviceId uint64) *string {
-	label := fmt.Sprintf("bf::sssl-%d", serviceId)
-	return &label
+func (_NotificationMuteLabel) ServiceStateChanged(serviceId uint64) string {
+	return fmt.Sprintf("bf::ssc-%d", serviceId)
+}
+
+func (_NotificationMuteLabel) ServiceTLS(serviceId uint64, extraInfo string) string {
+	return fmt.Sprintf("bf::stls-%d-%s", serviceId, extraInfo)
 }
