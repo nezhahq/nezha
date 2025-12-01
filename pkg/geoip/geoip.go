@@ -106,26 +106,22 @@ func fetchIPInfoCountry(url string) (string, error) {
 	return strings.ToLower(code), nil
 }
 
-// 尝试从 ipinfo 获取国家代码，优先带 token，再不带 token
-// token 从环境变量 IPINFO_TOKEN 读取；为空则跳过带 token 的请求
+// 尝试从 ipinfo 获取国家代码；如果没有 TOKEN，直接视为失败
+// token 从环境变量 IPINFO_TOKEN 读取；为空则跳过 ipinfo 调用
 // token 位置dashboard\docker-compose.yaml
 func lookupFromIPInfo(ip net.IP) (string, error) {
 	if ip == nil {
 		return "", errors.New("nil ip")
 	}
 
-	baseURL := "https://ipinfo.io/" + ip.String() + "/country"
-
-	// 1) 如果有 token，先用带 token 的接口
-	if token := os.Getenv("IPINFO_TOKEN"); token != "" {
-		if code, err := fetchIPInfoCountry(baseURL + "?token=" + token); err == nil {
-			return code, nil
-		}
-		// 带 token 的请求失败，就继续尝试无 token
+	token := os.Getenv("IPINFO_TOKEN")
+	if token == "" {
+		// 没有设置 token，跳过 ipinfo，交给后续 mmdb 逻辑处理
+		return "", errors.New("ipinfo token not set")
 	}
 
-	// 2) 再尝试不带 token 的免费接口
-	return fetchIPInfoCountry(baseURL)
+	url := "https://ipinfo.io/" + ip.String() + "/country?token=" + token
+	return fetchIPInfoCountry(url)
 }
 
 //====================
