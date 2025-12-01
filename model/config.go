@@ -46,6 +46,8 @@ type ConfigDashboard struct {
 	IgnoredIPNotification       string `koanf:"ignored_ip_notification" json:"ignored_ip_notification,omitempty"` // 特定服务器IP（多个服务器用逗号分隔）
 
 	DNSServers string `koanf:"dns_servers" json:"dns_servers,omitempty"`
+	GeoIPDBPath string `koanf:"geoip_db_path" json:"geoip_db_path,omitempty"`
+	IPInfoToken string `koanf:"ipinfo_token" json:"ipinfo_token,omitempty"`
 }
 
 type Config struct {
