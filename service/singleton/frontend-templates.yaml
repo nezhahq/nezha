@@ -7,17 +7,7 @@
   is_official: true
 - path: "user-dist"
   name: "Official"
-  repository: "https://github.com/hamster1963/nezha-dash-v1"
+  repository: "https://github.com/TDSCDMAA/nezha-dash-v1"
   author: "hamster1963"
   version: "v1.32.0"
   is_official: true
-- path: "nezha-ascii-dist"
-  name: "Nezha-ASCII"
-  repository: "https://github.com/hamster1963/nezha-ascii"
-  author: "hamster1963"
-  version: "v1.1.0"
-- path: "nazhua-dist"
-  name: "Nazhua"
-  repository: "https://github.com/hi2shark/nazhua"
-  author: "hi2hi"
-  version: "v0.7.0"
