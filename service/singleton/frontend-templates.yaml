@@ -7,7 +7,7 @@
   is_official: true
 - path: "user-dist"
   name: "Official"
-  repository: "https://github.com/TDSCDMAA/nezha-dash-v1"
+  repository: "https://github.com/woneko/nezha-dash-v1"
   author: "hamster1963"
   version: "v1.32.1"
   is_official: true
