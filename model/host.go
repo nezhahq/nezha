@@ -136,7 +136,7 @@ func (h *Host) Filter() *Host {
 		DiskTotal:      h.DiskTotal,
 		SwapTotal:      h.SwapTotal,
 		Arch:           h.Arch,
-		Virtualization: h.Virtualization,
+//		Virtualization: h.Virtualization,
 		BootTime:       h.BootTime,
 		GPU:            h.GPU,
 	}
