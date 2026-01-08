@@ -33,14 +33,14 @@ type NotificationServerBundle struct {
 
 type Notification struct {
 	Common
-	Name          string `json:"name"`
-	URL           string `json:"url"`
-	RequestMethod uint8  `json:"request_method"`
-	RequestType   uint8  `json:"request_type"`
-	RequestHeader string `json:"request_header" gorm:"type:longtext"`
-	RequestBody   string `json:"request_body" gorm:"type:longtext"`
-	VerifyTLS     *bool  `json:"verify_tls,omitempty"`
-	FormatBody    *bool  `json:"format_body,omitempty"`
+	Name              string `json:"name"`
+	URL               string `json:"url"`
+	RequestMethod     uint8  `json:"request_method"`
+	RequestType       uint8  `json:"request_type"`
+	RequestHeader     string `json:"request_header" gorm:"type:longtext"`
+	RequestBody       string `json:"request_body" gorm:"type:longtext"`
+	VerifyTLS         *bool  `json:"verify_tls,omitempty"`
+	FormatMetricUnits *bool  `json:"format_metric_units,omitempty"`
 }
 
 func (ns *NotificationServerBundle) reqURL(message string) string {
@@ -229,7 +229,7 @@ func (ns *NotificationServerBundle) replaceParamsInString(str string, message st
 }
 
 func (ns *NotificationServerBundle) formatUsage(toPercentage bool, usage float64) string {
-	if ns.Notification.FormatBody != nil && *ns.Notification.FormatBody {
+	if ns.Notification.FormatMetricUnits != nil && *ns.Notification.FormatMetricUnits {
 		if toPercentage {
 			usage = usage * 100
 		}
@@ -240,7 +240,7 @@ func (ns *NotificationServerBundle) formatUsage(toPercentage bool, usage float64
 }
 
 func (ns *NotificationServerBundle) formatSize(size uint64) string {
-	if ns.Notification.FormatBody != nil && *ns.Notification.FormatBody {
+	if ns.Notification.FormatMetricUnits != nil && *ns.Notification.FormatMetricUnits {
 		return utils.Bytes(size)
 	}
 	return fmt.Sprintf("%d", size)

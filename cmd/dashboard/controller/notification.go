@@ -59,8 +59,8 @@ func createNotification(c *gin.Context) (uint64, error) {
 	n.URL = nf.URL
 	verifyTLS := nf.VerifyTLS
 	n.VerifyTLS = &verifyTLS
-	formatBody := nf.FormatBody
-	n.FormatBody = &formatBody
+	formatMetricUnits := nf.FormatMetricUnits
+	n.FormatMetricUnits = &formatMetricUnits
 
 	ns := model.NotificationServerBundle{
 		Notification: &n,
@@ -122,8 +122,8 @@ func updateNotification(c *gin.Context) (any, error) {
 	n.URL = nf.URL
 	verifyTLS := nf.VerifyTLS
 	n.VerifyTLS = &verifyTLS
-	formatBody := nf.FormatBody
-	n.FormatBody = &formatBody
+	formatMetricUnits := nf.FormatMetricUnits
+	n.FormatMetricUnits = &formatMetricUnits
 
 	ns := model.NotificationServerBundle{
 		Notification: &n,

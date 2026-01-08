@@ -29,12 +29,12 @@ type testSt struct {
 func execCase(t *testing.T, item testSt) {
 	trueBool := true
 	n := Notification{
-		URL:           item.url,
-		RequestMethod: item.reqMethod,
-		RequestType:   item.reqType,
-		RequestBody:   item.body,
-		RequestHeader: item.header,
-		FormatBody:    &trueBool,
+		URL:               item.url,
+		RequestMethod:     item.reqMethod,
+		RequestType:       item.reqType,
+		RequestBody:       item.body,
+		RequestHeader:     item.header,
+		FormatMetricUnits: &trueBool,
 	}
 	server := Server{
 		Common:       Common{},
