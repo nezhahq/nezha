@@ -9,4 +9,5 @@ type NotificationForm struct {
 	RequestBody   string `json:"request_body,omitempty"`
 	VerifyTLS     bool   `json:"verify_tls,omitempty" validate:"optional"`
 	SkipCheck     bool   `json:"skip_check,omitempty" validate:"optional"`
+	FormatBody    bool   `json:"format_body,omitempty" validate:"optional"`
 }

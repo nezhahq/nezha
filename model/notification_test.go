@@ -27,12 +27,14 @@ type testSt struct {
 }
 
 func execCase(t *testing.T, item testSt) {
+	trueBool := true
 	n := Notification{
 		URL:           item.url,
 		RequestMethod: item.reqMethod,
 		RequestType:   item.reqType,
 		RequestBody:   item.body,
 		RequestHeader: item.header,
+		FormatBody:    &trueBool,
 	}
 	server := Server{
 		Common:       Common{},
@@ -45,7 +47,7 @@ func execCase(t *testing.T, item testSt) {
 			CPU:             nil,
 			MemTotal:        0,
 			DiskTotal:       0,
-			SwapTotal:       0,
+			SwapTotal:       8888,
 			Arch:            "",
 			Virtualization:  "",
 			BootTime:        0,
@@ -184,7 +186,29 @@ func TestNotification(t *testing.T) {
 		},
 		{
 			url:               "https://example.com/?m=#NEZHA#",
-			body:              `{"Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":#SERVER.SWAP#}`,
+			body:              `{"Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":"#SERVER.SWAP#"}`,
+			reqMethod:         NotificationRequestMethodPOST,
+			header:            `{"asd":"dsa11"}`,
+			reqType:           NotificationRequestTypeJSON,
+			expectURL:         "https://example.com/?m=" + msg,
+			expectMethod:      http.MethodPost,
+			expectContentType: reqTypeJSON,
+			expectBody:        `{"Server":"ServerName","ServerIP":"1.1.1.1","ServerSWAP":"100.00 %"}`,
+			expectHeader:      map[string]string{"asd": "dsa11"},
+		},
+		{
+			url:               "https://example.com/?m=#NEZHA#",
+			body:              `{"#NEZHA#":"#NEZHA#","Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":"#SERVER.SWAP#"}`,
+			reqMethod:         NotificationRequestMethodPOST,
+			reqType:           NotificationRequestTypeForm,
+			expectURL:         "https://example.com/?m=" + msg,
+			expectMethod:      http.MethodPost,
+			expectContentType: reqTypeForm,
+			expectBody:        "%23NEZHA%23=" + msg + "&Server=ServerName&ServerIP=1.1.1.1&ServerSWAP=100.00+%25",
+		},
+		{
+			url:               "https://example.com/?m=#NEZHA#",
+			body:              `{"Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":#SERVER.SWAPUSED#}`,
 			reqMethod:         NotificationRequestMethodPOST,
 			header:            `{"asd":"dsa11"}`,
 			reqType:           NotificationRequestTypeJSON,
@@ -196,7 +220,7 @@ func TestNotification(t *testing.T) {
 		},
 		{
 			url:               "https://example.com/?m=#NEZHA#",
-			body:              `{"#NEZHA#":"#NEZHA#","Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":"#SERVER.SWAP#"}`,
+			body:              `{"#NEZHA#":"#NEZHA#","Server":"#SERVER.NAME#","ServerIP":"#SERVER.IP#","ServerSWAP":"#SERVER.SWAPUSED#"}`,
 			reqMethod:         NotificationRequestMethodPOST,
 			reqType:           NotificationRequestTypeForm,
 			expectURL:         "https://example.com/?m=" + msg,
