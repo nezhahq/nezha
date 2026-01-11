@@ -108,23 +108,23 @@ func authenticator() func(c *gin.Context) (any, error) {
 
 		if err := singleton.DB.Select("id", "password", "reject_password").Where("username = ?", loginVals.Username).First(&user).Error; err != nil {
 			if err == gorm.ErrRecordNotFound {
-				model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
+				singleton.BlockIP(realip, model.WAFBlockReasonTypeLoginFail, model.BlockIDUnknownUser)
 			}
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if user.RejectPassword {
-			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
+			singleton.BlockIP(realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			return nil, jwt.ErrFailedAuthentication
 		}
 
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginVals.Password)); err != nil {
-			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
+			singleton.BlockIP(realip, model.WAFBlockReasonTypeLoginFail, int64(user.ID))
 			return nil, jwt.ErrFailedAuthentication
 		}
 
-		model.UnblockIP(singleton.DB, realip, model.BlockIDUnknownUser)
-		model.UnblockIP(singleton.DB, realip, int64(user.ID))
+		singleton.UnblockIP(realip, model.BlockIDUnknownUser)
+		singleton.UnblockIP(realip, int64(user.ID))
 
 		// 返回用户ID和IP地址的组合，用于在payloadFunc中设置JWT claims
 		return map[string]interface{}{
@@ -201,12 +201,12 @@ func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 		identity := mw.IdentityHandler(c)
 
 		if identity != nil {
-			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
+			singleton.UnblockIP(realIP, model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
 		} else {
 			isIpMismatch := c.GetBool(model.CtxKeyIsIPMismatch)
 			if !isIpMismatch {
-				waf.ShowBlockPage(c, model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken))
+				waf.ShowBlockPage(c, singleton.BlockIP(realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken))
 				return
 			}
 		}

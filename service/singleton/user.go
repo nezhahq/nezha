@@ -97,10 +97,6 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 				}
 			}
 
-			if err := tx.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", servers).Error; err != nil {
-				return err
-			}
-
 			if err := tx.Where("id IN (?)", id).Delete(&model.User{}).Error; err != nil {
 				return err
 			}

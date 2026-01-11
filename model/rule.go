@@ -19,6 +19,9 @@ type NResult struct {
 	N uint64
 }
 
+// TransferQueryFunc 流量查询函数类型，用于从 TSDB 或数据库查询周期流量
+type TransferQueryFunc func(serverID uint64, start time.Time, transferType string) (uint64, error)
+
 type Rule struct {
 	// 指标类型，cpu、memory、swap、disk、net_in_speed、net_out_speed
 	// net_all_speed、transfer_in、transfer_out、transfer_all、offline
@@ -46,7 +49,8 @@ func percentage(used, total uint64) float64 {
 }
 
 // Snapshot 未通过规则返回 false, 通过返回 true
-func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
+// tsdbQuery 为 nil 时使用传统数据库查询
+func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB, tsdbQuery TransferQueryFunc) bool {
 	// 监控全部但是排除了此服务器
 	if u.Cover == RuleCoverAll && u.Ignore[server.ID] {
 		return true
@@ -94,24 +98,24 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		}
 	case "transfer_in_cycle":
 		src = float64(utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
-		if u.CycleInterval != 0 {
-			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
-			src += float64(res.N)
+		if u.CycleInterval != 0 && tsdbQuery != nil {
+			if val, err := tsdbQuery(server.ID, u.GetTransferDurationStart(), "in"); err == nil {
+				src += float64(val)
+			}
 		}
 	case "transfer_out_cycle":
 		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot))
-		if u.CycleInterval != 0 {
-			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
-			src += float64(res.N)
+		if u.CycleInterval != 0 && tsdbQuery != nil {
+			if val, err := tsdbQuery(server.ID, u.GetTransferDurationStart(), "out"); err == nil {
+				src += float64(val)
+			}
 		}
 	case "transfer_all_cycle":
 		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot) + utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
-		if u.CycleInterval != 0 {
-			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
-			src += float64(res.N)
+		if u.CycleInterval != 0 && tsdbQuery != nil {
+			if val, err := tsdbQuery(server.ID, u.GetTransferDurationStart(), "all"); err == nil {
+				src += float64(val)
+			}
 		}
 	case "load1":
 		src = server.State.Load1

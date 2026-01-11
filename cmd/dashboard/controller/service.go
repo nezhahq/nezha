@@ -5,15 +5,12 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
 
 	"github.com/nezhahq/nezha/model"
-	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
-	"gorm.io/gorm"
 )
 
 // Show service
@@ -66,105 +63,6 @@ func listService(c *gin.Context) ([]*model.Service, error) {
 	return ss, nil
 }
 
-// List service histories by server id
-// @Summary List service histories by server id
-// @Security BearerAuth
-// @Schemes
-// @Description List service histories by server id
-// @Tags common
-// @param id path uint true "Server ID"
-// @Produce json
-// @Success 200 {object} model.CommonResponse[[]model.ServiceInfos]
-// @Router /service/{id} [get]
-func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
-	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 64)
-	if err != nil {
-		return nil, err
-	}
-
-	m := singleton.ServerShared.GetList()
-	server, ok := m[id]
-	if !ok || server == nil {
-		return nil, singleton.Localizer.ErrorT("server not found")
-	}
-
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember // TODO || isViewPasswordVerfied
-
-	if server.HideForGuest && !authorized {
-		return nil, singleton.Localizer.ErrorT("unauthorized")
-	}
-
-	var serviceHistories []*model.ServiceHistory
-	if err := singleton.DB.Model(&model.ServiceHistory{}).Select("service_id, created_at, server_id, avg_delay").
-		Where("server_id = ?", id).Where("created_at >= ?", time.Now().Add(-24*time.Hour)).Order("service_id, created_at").
-		Scan(&serviceHistories).Error; err != nil {
-		return nil, err
-	}
-
-	var sortedServiceIDs []uint64
-	resultMap := make(map[uint64]*model.ServiceInfos)
-	for _, history := range serviceHistories {
-		infos, ok := resultMap[history.ServiceID]
-		service, _ := singleton.ServiceSentinelShared.Get(history.ServiceID)
-		if !ok {
-			infos = &model.ServiceInfos{
-				ServiceID:   history.ServiceID,
-				ServerID:    history.ServerID,
-				ServiceName: service.Name,
-				ServerName:  m[history.ServerID].Name,
-			}
-			resultMap[history.ServiceID] = infos
-			sortedServiceIDs = append(sortedServiceIDs, history.ServiceID)
-		}
-		infos.CreatedAt = append(infos.CreatedAt, history.CreatedAt.Truncate(time.Minute).Unix()*1000)
-		infos.AvgDelay = append(infos.AvgDelay, history.AvgDelay)
-	}
-
-	ret := make([]*model.ServiceInfos, 0, len(sortedServiceIDs))
-	for _, id := range sortedServiceIDs {
-		ret = append(ret, resultMap[id])
-	}
-
-	return ret, nil
-}
-
-// List server with service
-// @Summary List server with service
-// @Security BearerAuth
-// @Schemes
-// @Description List server with service
-// @Tags common
-// @Produce json
-// @Success 200 {object} model.CommonResponse[[]uint64]
-// @Router /service/server [get]
-func listServerWithServices(c *gin.Context) ([]uint64, error) {
-	var serverIdsWithService []uint64
-	if err := singleton.DB.Model(&model.ServiceHistory{}).
-		Select("distinct(server_id)").
-		Where("server_id != 0").
-		Find(&serverIdsWithService).Error; err != nil {
-		return nil, newGormError("%v", err)
-	}
-
-	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
-	authorized := isMember // TODO || isViewPasswordVerfied
-
-	var ret []uint64
-	for _, id := range serverIdsWithService {
-		server, ok := singleton.ServerShared.Get(id)
-		if !ok || server == nil {
-			return nil, singleton.Localizer.ErrorT("server not found")
-		}
-		if !server.HideForGuest || authorized {
-			ret = append(ret, id)
-		}
-	}
-
-	return ret, nil
-}
-
 // Create service
 // @Summary Create service
 // @Security BearerAuth
@@ -208,21 +106,6 @@ func createService(c *gin.Context) (uint64, error) {
 
 	if err := singleton.DB.Create(&m).Error; err != nil {
 		return 0, newGormError("%v", err)
-	}
-
-	var skipServers []uint64
-	for k := range m.SkipServers {
-		skipServers = append(skipServers, k)
-	}
-
-	var err error
-	if m.Cover == 0 {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, skipServers).Error
-	} else {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?)", m.ID, skipServers).Error
-	}
-	if err != nil {
-		return 0, err
 	}
 
 	if err := singleton.ServiceSentinelShared.Update(&m); err != nil {
@@ -288,17 +171,6 @@ func updateService(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	skipServers := utils.MapKeysToSlice(mf.SkipServers)
-
-	if m.Cover == model.ServiceCoverAll {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, skipServers).Error
-	} else {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?) and server_id > 0", m.ID, skipServers).Error
-	}
-	if err != nil {
-		return nil, err
-	}
-
 	if err := singleton.ServiceSentinelShared.Update(&m); err != nil {
 		return nil, err
 	}
@@ -328,15 +200,10 @@ func batchDeleteService(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
-	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error; err != nil {
-			return err
-		}
-		return tx.Unscoped().Delete(&model.ServiceHistory{}, "service_id in (?)", ids).Error
-	})
-	if err != nil {
-		return nil, err
+	if err := singleton.DB.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error; err != nil {
+		return nil, newGormError("%v", err)
 	}
+
 	singleton.ServiceSentinelShared.Delete(ids)
 	singleton.ServiceSentinelShared.UpdateServiceList()
 	return nil, nil

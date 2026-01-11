@@ -134,6 +134,14 @@ func checkStatus() {
 	defer AlertsLock.RUnlock()
 	m := ServerShared.GetList()
 
+	// TSDB 查询函数，用于周期流量统计
+	var tsdbQuery model.TransferQueryFunc
+	if TSDBShared != nil {
+		tsdbQuery = func(serverID uint64, start time.Time, transferType string) (uint64, error) {
+			return GetCycleTransfer(serverID, start, transferType)
+		}
+	}
+
 	for _, alert := range Alerts {
 		// 跳过未启用
 		if !alert.Enabled() {
@@ -153,7 +161,7 @@ func checkStatus() {
 				continue
 			}
 			alertsStore[alert.ID][server.ID] = append(alertsStore[alert.
-				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB))
+				ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB, tsdbQuery))
 			// 发送通知，分为触发报警和恢复通知
 			max, passed := alert.Check(alertsStore[alert.ID][server.ID])
 			// 保存当前服务器状态信息

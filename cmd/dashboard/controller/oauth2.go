@@ -135,13 +135,13 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 
 		realip := c.GetString(model.CtxKeyRealIPStr)
 		if callbackData.Code == "" {
-			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
+			singleton.BlockIP(realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
 			return nil, singleton.Localizer.ErrorT("code is required")
 		}
 
 		openId, err := exchangeOpenId(c, o2confRaw, callbackData, state.RedirectURL)
 		if err != nil {
-			model.BlockIP(singleton.DB, realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
+			singleton.BlockIP(realip, model.WAFBlockReasonTypeBruteForceOauth2, model.BlockIDToken)
 			return nil, err
 		}
 

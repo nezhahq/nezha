@@ -2,9 +2,11 @@ package singleton
 
 import (
 	_ "embed"
+	"fmt"
 	"iter"
 	"log"
 	"maps"
+	"path/filepath"
 	"slices"
 	"sync"
 	"time"
@@ -87,21 +89,28 @@ func InitDBFromPath(path string) error {
 	}
 	err = DB.AutoMigrate(model.Server{}, model.User{}, model.ServerGroup{}, model.NotificationGroup{},
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
-		model.ServiceHistory{}, model.Cron{}, model.Transfer{}, model.ServerGroupServer{},
+		model.Cron{}, model.ServerGroupServer{}, model.WAF{},
 		model.NAT{}, model.DDNSProfile{}, model.NotificationGroupNotification{},
-		model.WAF{}, model.Oauth2Bind{})
+		model.Oauth2Bind{})
 	if err != nil {
 		return err
 	}
+
+	// 初始化 TSDB，使用与数据库相同的数据目录
+	dataDir := filepath.Dir(path)
+	if err := InitTSDB(dataDir); err != nil {
+		return fmt.Errorf("failed to initialize TSDB: %w", err)
+	}
+
 	return nil
 }
 
-// RecordTransferHourlyUsage 对流量记录进行打点
+// RecordTransferHourlyUsage 对流量记录进行打点（仅写入 TSDB）
 func RecordTransferHourlyUsage(servers ...*model.Server) {
-	now := time.Now()
-	nowTrimSeconds := time.Date(now.Year(), now.Month(), now.Day(), now.Hour(), 0, 0, 0, now.Location())
+	if TSDBShared == nil {
+		return
+	}
 
-	var txs []model.Transfer
 	var slist iter.Seq[*model.Server]
 	if len(servers) > 0 {
 		slist = slices.Values(servers)
@@ -109,73 +118,33 @@ func RecordTransferHourlyUsage(servers ...*model.Server) {
 		slist = utils.Seq2To1(ServerShared.Range)
 	}
 
+	var count int
 	for server := range slist {
-		tx := model.Transfer{
-			ServerID: server.ID,
-			In:       utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot),
-			Out:      utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot),
-		}
-		if tx.In == 0 && tx.Out == 0 {
+		inTransfer := utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot)
+		outTransfer := utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot)
+		if inTransfer == 0 && outTransfer == 0 {
 			continue
 		}
 		server.PrevTransferInSnapshot = server.State.NetInTransfer
 		server.PrevTransferOutSnapshot = server.State.NetOutTransfer
-		tx.CreatedAt = nowTrimSeconds
-		txs = append(txs, tx)
+
+		if err := TSDBShared.WriteTransfer(server.ID, inTransfer, outTransfer); err != nil {
+			log.Printf("NEZHA>> Failed to write transfer to TSDB: %v", err)
+		}
+		count++
 	}
 
-	if len(txs) == 0 {
-		return
+	if count > 0 && Conf.Debug {
+		log.Printf("NEZHA>> Saved traffic metrics to TSDB. Affected %d server(s)", count)
 	}
-	log.Printf("NEZHA>> Saved traffic metrics to database. Affected %d row(s), Error: %v", len(txs), DB.Create(txs).Error)
 }
 
-// CleanServiceHistory 清理无效或过时的 监控记录 和 流量记录
-func CleanServiceHistory() {
-	// 清理已被删除的服务器的监控记录与流量记录
-	DB.Unscoped().Delete(&model.ServiceHistory{}, "created_at < ? OR service_id NOT IN (SELECT `id` FROM services)", time.Now().AddDate(0, 0, -30))
-	// 由于网络监控记录的数据较多，并且前端仅使用了 1 天的数据
-	// 考虑到 sqlite 数据量问题，仅保留一天数据，
-	// server_id = 0 的数据会用于/service页面的可用性展示
-	DB.Unscoped().Delete(&model.ServiceHistory{}, "(created_at < ? AND server_id != 0) OR service_id NOT IN (SELECT `id` FROM services)", time.Now().AddDate(0, 0, -1))
-	DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (SELECT `id` FROM servers)")
-	// 计算可清理流量记录的时长
-	var allServerKeep time.Time
-	specialServerKeep := make(map[uint64]time.Time)
-	var specialServerIDs []uint64
-	var alerts []model.AlertRule
-	DB.Find(&alerts)
-	for _, alert := range alerts {
-		for _, rule := range alert.Rules {
-			// 是不是流量记录规则
-			if !rule.IsTransferDurationRule() {
-				continue
-			}
-			dataCouldRemoveBefore := rule.GetTransferDurationStart().UTC()
-			// 判断规则影响的机器范围
-			if rule.Cover == model.RuleCoverAll {
-				// 更新全局可以清理的数据点
-				if allServerKeep.IsZero() || allServerKeep.After(dataCouldRemoveBefore) {
-					allServerKeep = dataCouldRemoveBefore
-				}
-			} else {
-				// 更新特定机器可以清理数据点
-				for id := range rule.Ignore {
-					if specialServerKeep[id].IsZero() || specialServerKeep[id].After(dataCouldRemoveBefore) {
-						specialServerKeep[id] = dataCouldRemoveBefore
-						specialServerIDs = append(specialServerIDs, id)
-					}
-				}
-			}
-		}
-	}
-	for id, couldRemove := range specialServerKeep {
-		DB.Unscoped().Delete(&model.Transfer{}, "server_id = ? AND datetime(`created_at`) < datetime(?)", id, couldRemove)
-	}
-	if allServerKeep.IsZero() {
-		DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (?)", specialServerIDs)
-	} else {
-		DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (?) AND datetime(`created_at`) < datetime(?)", specialServerIDs, allServerKeep)
+// CleanMonitorHistory 清理过时的监控数据
+// TSDB 有自己的数据保留策略，此函数保留用于未来扩展
+func CleanMonitorHistory() {
+	// TSDB 数据保留由 TSDB 配置控制，无需手动清理
+	if Conf.Debug {
+		log.Println("NEZHA>> Monitor history cleanup: TSDB handles retention automatically")
 	}
 }
 
