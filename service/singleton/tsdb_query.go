@@ -7,11 +7,11 @@ import (
 
 // HistoryQueryParams 历史数据查询参数
 type HistoryQueryParams struct {
-	ServerID  uint64
-	ServiceID uint64
+	ServerID   uint64
+	ServiceID  uint64
 	MetricType string
-	Start     time.Time
-	End       time.Time
+	Start      time.Time
+	End        time.Time
 }
 
 // HostHistoryData 主机历史数据
@@ -164,6 +164,11 @@ type ServiceDailySummary struct {
 func QueryServiceDailySummary(serviceID uint64, days int) ([]ServiceDailySummary, error) {
 	if TSDBShared == nil {
 		return nil, fmt.Errorf("TSDB not initialized")
+	}
+
+	// Validate days to prevent excessively large allocations
+	if days <= 0 || days > 90 {
+		return nil, fmt.Errorf("invalid days value: %d", days)
 	}
 
 	now := time.Now()

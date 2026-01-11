@@ -66,11 +66,11 @@ const (
 	// <= 7 天：10 分钟聚合（约 1008 个点）
 	// <= 30 天：1 小时聚合（约 720 个点）
 	// > 30 天：6 小时聚合（约 360 个点/90天）
-	QueryRangeRaw       = 1 * time.Hour
-	QueryRange30Sec     = 6 * time.Hour
-	QueryRange2Min      = 24 * time.Hour
-	QueryRange10Min     = 7 * 24 * time.Hour
-	QueryRange1Hour     = 30 * 24 * time.Hour
+	QueryRangeRaw   = 1 * time.Hour
+	QueryRange30Sec = 6 * time.Hour
+	QueryRange2Min  = 24 * time.Hour
+	QueryRange10Min = 7 * 24 * time.Hour
+	QueryRange1Hour = 30 * 24 * time.Hour
 )
 
 // TSDBStorage TSDB 存储管理器
@@ -101,7 +101,7 @@ func InitTSDB(dataDir string) error {
 	dbPath := filepath.Join(dataDir, "tsdb")
 
 	// 确保目录存在
-	if err := os.MkdirAll(dbPath, 0755); err != nil {
+	if err := os.MkdirAll(dbPath, 0750); err != nil {
 		return fmt.Errorf("failed to create tsdb directory: %w", err)
 	}
 
