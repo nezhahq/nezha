@@ -30,7 +30,7 @@ func BlockByIPs(ipList []string) error {
 	defer OnlineUserMapLock.Unlock()
 
 	for _, ip := range ipList {
-		if err := model.BlockIP(DB, ip, model.WAFBlockReasonTypeManual, model.BlockIDManual); err != nil {
+		if err := BlockIP(ip, model.WAFBlockReasonTypeManual, model.BlockIDManual); err != nil {
 			return err
 		}
 		for _, user := range OnlineUserMap {

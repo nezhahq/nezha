@@ -30,7 +30,7 @@ func ServeRPC() *grpc.Server {
 
 func waf(ctx context.Context, req any, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (any, error) {
 	realip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
-	if err := model.CheckIP(singleton.DB, realip); err != nil {
+	if err := singleton.CheckIP(realip); err != nil {
 		return nil, err
 	}
 	return handler(ctx, req)

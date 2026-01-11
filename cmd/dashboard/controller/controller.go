@@ -73,8 +73,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	optionalAuth.GET("/server-group", commonHandler(listServerGroup))
 
 	optionalAuth.GET("/service", commonHandler(showService))
-	optionalAuth.GET("/service/:id", commonHandler(listServiceHistory))
-	optionalAuth.GET("/service/server", commonHandler(listServerWithServices))
+	optionalAuth.GET("/service/:id/history", commonHandler(getServiceHistory))
+	optionalAuth.GET("/service/:id/summary", commonHandler(getServiceDailySummary))
 
 	auth := api.Group("", authMw)
 
@@ -110,6 +110,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 
 	auth.GET("/server", listHandler(listServer))
 	auth.PATCH("/server/:id", commonHandler(updateServer))
+	auth.GET("/server/:id/history", commonHandler(getServerHistory))
+	auth.GET("/server/:id/history/metric", commonHandler(getServerMetricHistory))
+	auth.GET("/server/:id/transfer/history", commonHandler(getServerTransferHistory))
 	auth.GET("/server/config/:id", commonHandler(getServerConfig))
 	auth.POST("/server/config", commonHandler(setServerConfig))
 	auth.POST("/batch-delete/server", commonHandler(batchDeleteServer))
@@ -144,6 +147,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/batch-delete/nat", commonHandler(batchDeleteNAT))
 
 	auth.GET("/waf", pCommonHandler(listBlockedAddress))
+	auth.GET("/waf/stats", commonHandler(getWAFStats))
 	auth.POST("/batch-delete/waf", adminHandler(batchDeleteBlockedAddress))
 
 	auth.GET("/online-user", pCommonHandler(listOnlineUser))

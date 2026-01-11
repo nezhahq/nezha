@@ -42,7 +42,7 @@ func RealIp(c *gin.Context) {
 }
 
 func Waf(c *gin.Context) {
-	if err := model.CheckIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr)); err != nil {
+	if err := singleton.CheckIP(c.GetString(model.CtxKeyRealIPStr)); err != nil {
 		ShowBlockPage(c, err)
 		return
 	}

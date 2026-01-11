@@ -114,6 +114,13 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 		server.LastActive = time.Now()
 		server.State = &innerState
 
+		// 写入 TSDB
+		if singleton.TSDBShared != nil {
+			if err := singleton.TSDBShared.WriteHostState(clientID, &innerState); err != nil {
+				log.Printf("NEZHA>> Failed to write host state to TSDB: %v", err)
+			}
+		}
+
 		// 应对 dashboard / agent 重启的情况，如果从未记录过，先打点，等到小时时间点时入库
 		if server.PrevTransferInSnapshot == 0 || server.PrevTransferOutSnapshot == 0 {
 			server.PrevTransferInSnapshot = state.NetInTransfer

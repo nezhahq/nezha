@@ -64,11 +64,11 @@ func (r *AlertRule) Enabled() bool {
 }
 
 // Snapshot 对传入的Server进行该报警规则下所有type的检查 返回每项检查结果
-func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) []bool {
+func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB, tsdbQuery TransferQueryFunc) []bool {
 	point := make([]bool, len(r.Rules))
 
 	for i, rule := range r.Rules {
-		point[i] = rule.Snapshot(cycleTransferStats, server, db)
+		point[i] = rule.Snapshot(cycleTransferStats, server, db, tsdbQuery)
 	}
 	return point
 }

@@ -40,12 +40,12 @@ func (a *authHandler) Check(ctx context.Context) (uint64, error) {
 	userId, ok := singleton.AgentSecretToUserId[clientSecret]
 	if !ok {
 		singleton.UserLock.RUnlock()
-		model.BlockIP(singleton.DB, ip, model.WAFBlockReasonTypeAgentAuthFail, model.BlockIDgRPC)
+		singleton.BlockIP(ip, model.WAFBlockReasonTypeAgentAuthFail, model.BlockIDgRPC)
 		return 0, status.Error(codes.Unauthenticated, "客户端认证失败")
 	}
 	singleton.UserLock.RUnlock()
 
-	model.UnblockIP(singleton.DB, ip, model.BlockIDgRPC)
+	singleton.UnblockIP(ip, model.BlockIDgRPC)
 
 	var clientUUID string
 	if value, ok := md["client_uuid"]; ok {

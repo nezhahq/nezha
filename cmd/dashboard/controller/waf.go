@@ -1,9 +1,8 @@
 package controller
 
 import (
-	"net"
-	"slices"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -16,7 +15,7 @@ import (
 // @Summary List blocked addresses
 // @Security BearerAuth
 // @Schemes
-// @Description List server
+// @Description List blocked IP addresses
 // @Tags auth required
 // @Param limit query uint false "Page limit"
 // @Param offset query uint false "Page offset"
@@ -34,26 +33,13 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAFApiMock], erro
 		offset = 0
 	}
 
-	var waf []*model.WAF
-	if err := singleton.DB.Order("block_timestamp DESC").Limit(limit).Offset(offset).Find(&waf).Error; err != nil {
-		return nil, err
-	}
-
-	var total int64
-	if err := singleton.DB.Model(&model.WAF{}).Count(&total).Error; err != nil {
+	list, total, err := singleton.ListBlockedIPs(limit, offset)
+	if err != nil {
 		return nil, err
 	}
 
 	return &model.Value[[]*model.WAFApiMock]{
-		Value: slices.Collect(utils.ConvertSeq(slices.Values(waf), func(e *model.WAF) *model.WAFApiMock {
-			return &model.WAFApiMock{
-				IP:              net.IP(e.IP).String(),
-				BlockIdentifier: e.BlockIdentifier,
-				BlockReason:     e.BlockReason,
-				BlockTimestamp:  e.BlockTimestamp,
-				Count:           e.Count,
-			}
-		})),
+		Value: list,
 		Pagination: model.Pagination{
 			Offset: offset,
 			Limit:  limit,
@@ -63,13 +49,13 @@ func listBlockedAddress(c *gin.Context) (*model.Value[[]*model.WAFApiMock], erro
 }
 
 // Batch delete blocked addresses
-// @Summary Edit server
+// @Summary Unblock IP addresses
 // @Security BearerAuth
 // @Schemes
-// @Description Edit server
+// @Description Unblock IP addresses (in TSDB mode, blocks expire automatically)
 // @Tags admin required
 // @Accept json
-// @Param request body []string true "block list"
+// @Param request body []string true "IP list to unblock"
 // @Produce json
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /batch-delete/waf [patch]
@@ -79,9 +65,48 @@ func batchDeleteBlockedAddress(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if err := model.BatchUnblockIP(singleton.DB, utils.Unique(list)); err != nil {
-		return nil, newGormError("%v", err)
+	if err := singleton.BatchUnblockIP(utils.Unique(list)); err != nil {
+		return nil, err
 	}
 
 	return nil, nil
+}
+
+// WAF Stats response
+// @Summary Get WAF attack statistics
+// @Security BearerAuth
+// @Schemes
+// @Description Get WAF attack statistics and trends
+// @Tags auth required
+// @Param hours query int false "Hours to look back (default 24)"
+// @Param limit query int false "Limit for top IPs and recent events (default 10)"
+// @Produce json
+// @Success 200 {object} model.CommonResponse[singleton.WAFStats]
+// @Router /waf/stats [get]
+func getWAFStats(c *gin.Context) (*singleton.WAFStats, error) {
+	hours, err := strconv.Atoi(c.Query("hours"))
+	if err != nil || hours < 1 {
+		hours = 24
+	}
+	if hours > 720 { // 最多30天
+		hours = 720
+	}
+
+	limit, err := strconv.Atoi(c.Query("limit"))
+	if err != nil || limit < 1 {
+		limit = 10
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	end := time.Now()
+	start := end.Add(-time.Duration(hours) * time.Hour)
+
+	stats, err := singleton.QueryWAFStats(start, end, limit)
+	if err != nil {
+		return nil, err
+	}
+
+	return stats, nil
 }
