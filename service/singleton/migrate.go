@@ -20,6 +20,12 @@ func Migrate(sqlitePath string) error {
 	if err != nil {
 		return fmt.Errorf("打开源 SQLite 数据库失败: %v", err)
 	}
+	// 确保在迁移完成后关闭源 SQLite 数据库连接，及时释放文件句柄
+	sourceSQLDB, err := sourceDB.DB()
+	if err != nil {
+		return fmt.Errorf("获取源 SQLite 数据库底层连接失败: %v", err)
+	}
+	defer sourceSQLDB.Close()
 
 	log.Println("NEZHA>> 正在迁移数据到新数据库...")
 
