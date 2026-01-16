@@ -6,6 +6,7 @@ import (
 	"iter"
 	"log"
 	"maps"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
@@ -84,11 +85,11 @@ func InitDBFromPath(path string) error {
 
 	switch Conf.DB.Type {
 	case "mysql":
-		// 验证必需字段
+		// Validate required fields
 		if Conf.DB.Host == "" || Conf.DB.User == "" || Conf.DB.DBName == "" {
-			return fmt.Errorf("MySQL 配置缺少必需字段: Host, User, DBName")
+			return fmt.Errorf("MySQL configuration missing required fields: Host, User, DBName")
 		}
-		// 使用 MySQL Config 构建 DSN 以正确处理密码中的特殊字符
+		// Use MySQL Config to build DSN to properly handle special characters in password
 		cfg := mysqlDriver.Config{
 			User:                 Conf.DB.User,
 			Passwd:               Conf.DB.Password,
@@ -100,17 +101,17 @@ func InitDBFromPath(path string) error {
 		}
 		dialector = mysql.Open(cfg.FormatDSN())
 	case "postgres", "postgresql":
-		// 验证必需字段
+		// Validate required fields
 		if Conf.DB.Host == "" || Conf.DB.User == "" || Conf.DB.DBName == "" {
-			return fmt.Errorf("PostgreSQL 配置缺少必需字段: Host, User, DBName")
+			return fmt.Errorf("PostgreSQL configuration missing required fields: Host, User, DBName")
 		}
 		sslMode := Conf.DB.SSLMode
 		if sslMode == "" {
 			sslMode = "disable"
 		}
-		// PostgreSQL 连接字符串，密码中的特殊字符会被 driver 正确处理
+		// Use url.QueryEscape for password to properly handle special characters
 		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s",
-			Conf.DB.Host, Conf.DB.User, Conf.DB.Password, Conf.DB.DBName, Conf.DB.Port, sslMode, Conf.Location)
+			Conf.DB.Host, Conf.DB.User, url.QueryEscape(Conf.DB.Password), Conf.DB.DBName, Conf.DB.Port, sslMode, Conf.Location)
 		dialector = postgres.Open(dsn)
 	default:
 		dialector = sqlite.Open(path)
