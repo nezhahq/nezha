@@ -61,6 +61,12 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		return u.LastCycleStatus[server.ID]
 	}
 
+	// 根据数据库类型选择引用符号
+	quote := "`"
+	if db.Dialector.Name() == "postgres" {
+		quote = "\""
+	}
+
 	var src float64
 
 	switch u.Type {
@@ -96,10 +102,6 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			quote := "`"
-			if db.Dialector.Name() == "postgres" {
-				quote = "\""
-			}
 			db.Model(&Transfer{}).Select("SUM("+quote+"in"+quote+") AS n").Where("created_at >= ? AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
@@ -107,10 +109,6 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			quote := "`"
-			if db.Dialector.Name() == "postgres" {
-				quote = "\""
-			}
 			db.Model(&Transfer{}).Select("SUM("+quote+"out"+quote+") AS n").Where("created_at >= ? AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
@@ -118,10 +116,6 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(utils.SubUintChecked(server.State.NetOutTransfer, server.PrevTransferOutSnapshot) + utils.SubUintChecked(server.State.NetInTransfer, server.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			quote := "`"
-			if db.Dialector.Name() == "postgres" {
-				quote = "\""
-			}
 			db.Model(&Transfer{}).Select("SUM("+quote+"in"+quote+"+"+quote+"out"+quote+") AS n").Where("created_at >= ? AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
 			src += float64(res.N)
 		}
