@@ -16,6 +16,10 @@ func Migrate(sqlitePath string) error {
 		return fmt.Errorf("目标数据库不能是 SQLite，请先在配置文件中配置 MySQL 或 PostgreSQL")
 	}
 
+	if DB == nil {
+		return fmt.Errorf("目标数据库未初始化")
+	}
+
 	sourceDB, err := gorm.Open(sqlite.Open(sqlitePath), &gorm.Config{})
 	if err != nil {
 		return fmt.Errorf("打开源 SQLite 数据库失败: %v", err)
@@ -92,16 +96,17 @@ func Migrate(sqlitePath string) error {
 }
 
 func migrateTable[T any](source, dest *gorm.DB, model T) error {
-	var results []T
-	log.Printf("NEZHA>> 正在迁移表: %v", fmt.Sprintf("%T", model))
+	log.Printf("NEZHA>> 正在迁移表: %T", model)
 
 	// 分批读取和写入，防止内存溢出
 	batchSize := 100
 	var count int64
-	source.Model(model).Count(&count)
+	if err := source.Model(model).Count(&count).Error; err != nil {
+		return fmt.Errorf("统计表 %T 行数失败: %v", model, err)
+	}
 
 	for i := 0; i < int(count); i += batchSize {
-		results = nil
+		var results []T
 		if err := source.Offset(i).Limit(batchSize).Find(&results).Error; err != nil {
 			return fmt.Errorf("读取模型 %T 失败: %v", model, err)
 		}

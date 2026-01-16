@@ -21,6 +21,13 @@ const (
 	ConfigCoverIgnoreAll
 )
 
+// 数据库默认端口配置
+var defaultDBPorts = map[string]uint16{
+	"mysql":      3306,
+	"postgres":   5432,
+	"postgresql": 5432,
+}
+
 type ConfigForGuests struct {
 	Language            string `koanf:"language" json:"language"` // 系统语言，默认 zh_CN
 	SiteName            string `koanf:"site_name" json:"site_name"`
@@ -180,16 +187,12 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	// 补全数据库默认配置
-	defaultDBPorts := map[string]uint16{
-		"mysql":      3306,
-		"postgres":   5432,
-		"postgresql": 5432,
-	}
 	if c.DB.Port == 0 {
 		if port, ok := defaultDBPorts[c.DB.Type]; ok {
 			c.DB.Port = port
 		}
 	}
+	// 设置连接池参数默认值，如果用户显式设置为 0，将使用以下默认值
 	if c.DB.MaxIdleConns == 0 {
 		c.DB.MaxIdleConns = 10
 	}
