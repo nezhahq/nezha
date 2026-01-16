@@ -101,6 +101,7 @@ func migrateTable[T any](source, dest *gorm.DB, model T) error {
 	source.Model(model).Count(&count)
 
 	for i := 0; i < int(count); i += batchSize {
+		results = nil
 		if err := source.Offset(i).Limit(batchSize).Find(&results).Error; err != nil {
 			return fmt.Errorf("读取模型 %T 失败: %v", model, err)
 		}
