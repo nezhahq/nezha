@@ -109,10 +109,15 @@ func InitDBFromPath(path string) error {
 		if sslMode == "" {
 			sslMode = "disable"
 		}
-		// Use url.QueryEscape for all user-controlled fields to properly handle special characters
-		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s",
-			url.QueryEscape(Conf.DB.Host), url.QueryEscape(Conf.DB.User), url.QueryEscape(Conf.DB.Password), 
-			url.QueryEscape(Conf.DB.DBName), Conf.DB.Port, sslMode, url.QueryEscape(Conf.Location))
+		// Use URL format with proper escaping - pgx handles URL-encoded values correctly
+		dsn := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=%s&TimeZone=%s",
+			url.QueryEscape(Conf.DB.User),
+			url.QueryEscape(Conf.DB.Password),
+			Conf.DB.Host,
+			Conf.DB.Port,
+			Conf.DB.DBName,
+			sslMode,
+			url.QueryEscape(Conf.Location))
 		dialector = postgres.Open(dsn)
 	default:
 		dialector = sqlite.Open(path)
