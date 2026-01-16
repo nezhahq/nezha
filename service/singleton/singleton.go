@@ -87,11 +87,12 @@ func InitDBFromPath(path string) error {
 			Conf.DB.User, Conf.DB.Password, Conf.DB.Host, Conf.DB.Port, Conf.DB.DBName)
 		dialector = mysql.Open(dsn)
 	case "postgres", "postgresql":
-		if Conf.DB.SSLMode == "" {
-			Conf.DB.SSLMode = "disable"
+		sslMode := Conf.DB.SSLMode
+		if sslMode == "" {
+			sslMode = "disable"
 		}
 		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s",
-			Conf.DB.Host, Conf.DB.User, Conf.DB.Password, Conf.DB.DBName, Conf.DB.Port, Conf.DB.SSLMode, Conf.Location)
+			Conf.DB.Host, Conf.DB.User, Conf.DB.Password, Conf.DB.DBName, Conf.DB.Port, sslMode, Conf.Location)
 		dialector = postgres.Open(dsn)
 	default:
 		dialector = sqlite.Open(path)
