@@ -10,7 +10,7 @@ import (
 	"github.com/nezhahq/nezha/model"
 )
 
-// Migrate 将 SQLite 数据迁移到当前配置的数据库
+// Migrate migrates SQLite data to the currently configured database
 func Migrate(sqlitePath string) error {
 	if Conf.DB.Type == "sqlite" || Conf.DB.Type == "" {
 		return fmt.Errorf("target database cannot be SQLite, please configure MySQL or PostgreSQL in the config file first")
@@ -35,7 +35,7 @@ func Migrate(sqlitePath string) error {
 
 	// Use transaction to ensure migration atomicity
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 按照依赖顺序迁移表
+		// Migrate tables in dependency order
 		if err := migrateTable(sourceDB, tx, &model.User{}); err != nil {
 			return err
 		}
