@@ -32,6 +32,7 @@ type DashboardCliParam struct {
 	Version          bool   // 当前版本号
 	ConfigFile       string // 配置文件路径
 	DatabaseLocation string // Sqlite3 数据库文件路径
+	Migrate          bool   // 迁移 SQLite 数据到新的数据库
 }
 
 var (
@@ -102,6 +103,7 @@ func main() {
 	flag.BoolVar(&dashboardCliParam.Version, "v", false, "查看当前版本号")
 	flag.StringVar(&dashboardCliParam.ConfigFile, "c", "data/config.yaml", "配置文件路径")
 	flag.StringVar(&dashboardCliParam.DatabaseLocation, "db", "data/sqlite.db", "Sqlite3数据库文件路径")
+	flag.BoolVar(&dashboardCliParam.Migrate, "migrate", false, "迁移 SQLite 数据到 MySQL 或 PostgreSQL (需先在 config.yaml 配置目标库)")
 	flag.Parse()
 
 	if dashboardCliParam.Version {
@@ -115,6 +117,15 @@ func main() {
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
 		singleton.InitTimezoneAndCache,
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
+		func() error {
+			if dashboardCliParam.Migrate {
+				if err := singleton.Migrate(dashboardCliParam.DatabaseLocation); err != nil {
+					return err
+				}
+				os.Exit(0)
+			}
+			return nil
+		},
 		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
 		log.Fatal(err)
 	}

@@ -51,7 +51,7 @@ type Service struct {
 	Name                string `json:"name"`
 	Type                uint8  `json:"type"`
 	Target              string `json:"target"`
-	SkipServersRaw      string `json:"-"`
+	SkipServersRaw      string `gorm:"type:longtext" json:"-"`
 	Duration            uint64 `json:"duration"`
 	Notify              bool   `json:"notify,omitempty"`
 	NotificationGroupID uint64 `json:"notification_group_id"` // 当前服务监控所属的通知组 ID
@@ -59,8 +59,8 @@ type Service struct {
 
 	EnableTriggerTask      bool   `gorm:"default: false" json:"enable_trigger_task,omitempty"`
 	EnableShowInService    bool   `gorm:"default: false" json:"enable_show_in_service,omitempty"`
-	FailTriggerTasksRaw    string `gorm:"default:'[]'" json:"-"`
-	RecoverTriggerTasksRaw string `gorm:"default:'[]'" json:"-"`
+	FailTriggerTasksRaw    string `gorm:"default:'[]';type:longtext" json:"-"`
+	RecoverTriggerTasksRaw string `gorm:"default:'[]';type:longtext" json:"-"`
 
 	FailTriggerTasks    []uint64 `gorm:"-" json:"fail_trigger_tasks"`    // 失败时执行的触发任务id
 	RecoverTriggerTasks []uint64 `gorm:"-" json:"recover_trigger_tasks"` // 恢复时执行的触发任务id

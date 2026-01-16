@@ -2,6 +2,7 @@ package singleton
 
 import (
 	_ "embed"
+	"fmt"
 	"iter"
 	"log"
 	"maps"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
+	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"sigs.k8s.io/yaml"
@@ -73,10 +76,28 @@ func InitFrontendTemplates() error {
 	return nil
 }
 
-// InitDBFromPath 从给出的文件路径中加载数据库
+// InitDBFromPath 从配置或给出的文件路径中加载数据库
 func InitDBFromPath(path string) error {
 	var err error
-	DB, err = gorm.Open(sqlite.Open(path), &gorm.Config{
+	var dialector gorm.Dialector
+
+	switch Conf.DB.Type {
+	case "mysql":
+		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+			Conf.DB.User, Conf.DB.Password, Conf.DB.Host, Conf.DB.Port, Conf.DB.DBName)
+		dialector = mysql.Open(dsn)
+	case "postgres", "postgresql":
+		if Conf.DB.SSLMode == "" {
+			Conf.DB.SSLMode = "disable"
+		}
+		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s",
+			Conf.DB.Host, Conf.DB.User, Conf.DB.Password, Conf.DB.DBName, Conf.DB.Port, Conf.DB.SSLMode, Conf.Location)
+		dialector = postgres.Open(dsn)
+	default:
+		dialector = sqlite.Open(path)
+	}
+
+	DB, err = gorm.Open(dialector, &gorm.Config{
 		CreateBatchSize: 200,
 	})
 	if err != nil {
@@ -85,6 +106,15 @@ func InitDBFromPath(path string) error {
 	if Conf.Debug {
 		DB = DB.Debug()
 	}
+
+	sqlDB, err := DB.DB()
+	if err != nil {
+		return err
+	}
+	sqlDB.SetMaxIdleConns(Conf.DB.MaxIdleConns)
+	sqlDB.SetMaxOpenConns(Conf.DB.MaxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Hour)
+
 	err = DB.AutoMigrate(model.Server{}, model.User{}, model.ServerGroup{}, model.NotificationGroup{},
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
 		model.ServiceHistory{}, model.Cron{}, model.Transfer{}, model.ServerGroupServer{},
@@ -132,13 +162,12 @@ func RecordTransferHourlyUsage(servers ...*model.Server) {
 
 // CleanServiceHistory 清理无效或过时的 监控记录 和 流量记录
 func CleanServiceHistory() {
-	// 清理已被删除的服务器的监控记录与流量记录
-	DB.Unscoped().Delete(&model.ServiceHistory{}, "created_at < ? OR service_id NOT IN (SELECT `id` FROM services)", time.Now().AddDate(0, 0, -30))
+	DB.Unscoped().Delete(&model.ServiceHistory{}, "created_at < ? OR service_id NOT IN (SELECT id FROM services)", time.Now().AddDate(0, 0, -30))
 	// 由于网络监控记录的数据较多，并且前端仅使用了 1 天的数据
 	// 考虑到 sqlite 数据量问题，仅保留一天数据，
 	// server_id = 0 的数据会用于/service页面的可用性展示
-	DB.Unscoped().Delete(&model.ServiceHistory{}, "(created_at < ? AND server_id != 0) OR service_id NOT IN (SELECT `id` FROM services)", time.Now().AddDate(0, 0, -1))
-	DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (SELECT `id` FROM servers)")
+	DB.Unscoped().Delete(&model.ServiceHistory{}, "(created_at < ? AND server_id != 0) OR service_id NOT IN (SELECT id FROM services)", time.Now().AddDate(0, 0, -1))
+	DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (SELECT id FROM servers)")
 	// 计算可清理流量记录的时长
 	var allServerKeep time.Time
 	specialServerKeep := make(map[uint64]time.Time)
@@ -170,12 +199,12 @@ func CleanServiceHistory() {
 		}
 	}
 	for id, couldRemove := range specialServerKeep {
-		DB.Unscoped().Delete(&model.Transfer{}, "server_id = ? AND datetime(`created_at`) < datetime(?)", id, couldRemove)
+		DB.Unscoped().Delete(&model.Transfer{}, "server_id = ? AND created_at < ?", id, couldRemove)
 	}
 	if allServerKeep.IsZero() {
 		DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (?)", specialServerIDs)
 	} else {
-		DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (?) AND datetime(`created_at`) < datetime(?)", specialServerIDs, allServerKeep)
+		DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (?) AND created_at < ?", specialServerIDs, allServerKeep)
 	}
 }
 

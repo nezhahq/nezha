@@ -48,6 +48,19 @@ type ConfigDashboard struct {
 	DNSServers string `koanf:"dns_servers" json:"dns_servers,omitempty"`
 }
 
+type DBConf struct {
+	Type     string `koanf:"type" json:"type,omitempty"` // sqlite, mysql, postgres
+	Host     string `koanf:"host" json:"host,omitempty"`
+	Port     uint16 `koanf:"port" json:"port,omitempty"`
+	User     string `koanf:"user" json:"user,omitempty"`
+	Password string `koanf:"password" json:"password,omitempty"`
+	DBName   string `koanf:"dbname" json:"dbname,omitempty"`
+	SSLMode  string `koanf:"sslmode" json:"sslmode,omitempty"` // for postgres
+
+	MaxIdleConns int `koanf:"max_idle_conns" json:"max_idle_conns,omitempty"`
+	MaxOpenConns int `koanf:"max_open_conns" json:"max_open_conns,omitempty"`
+}
+
 type Config struct {
 	ConfigForGuests
 	ConfigDashboard
@@ -69,6 +82,9 @@ type Config struct {
 
 	// HTTPS 配置
 	HTTPS HTTPSConf `koanf:"https" json:"https"`
+
+	// Database 配置
+	DB DBConf `koanf:"db" json:"db"`
 
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
@@ -161,6 +177,20 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		if err = c.Save(); err != nil {
 			return err
 		}
+	}
+
+	// 补全数据库默认配置
+	if c.DB.Type == "mysql" && c.DB.Port == 0 {
+		c.DB.Port = 3306
+	}
+	if (c.DB.Type == "postgres" || c.DB.Type == "postgresql") && c.DB.Port == 0 {
+		c.DB.Port = 5432
+	}
+	if c.DB.MaxIdleConns == 0 {
+		c.DB.MaxIdleConns = 10
+	}
+	if c.DB.MaxOpenConns == 0 {
+		c.DB.MaxOpenConns = 100
 	}
 
 	return nil

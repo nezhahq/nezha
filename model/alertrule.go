@@ -15,12 +15,12 @@ const (
 type AlertRule struct {
 	Common
 	Name                   string   `json:"name"`
-	RulesRaw               string   `json:"-"`
+	RulesRaw               string   `gorm:"type:longtext" json:"-"`
 	Enable                 *bool    `json:"enable,omitempty"`
 	TriggerMode            uint8    `gorm:"default:0" json:"trigger_mode"` // 触发模式: 0-始终触发(默认) 1-单次触发
 	NotificationGroupID    uint64   `json:"notification_group_id"`         // 该报警规则所在的通知组
-	FailTriggerTasksRaw    string   `gorm:"default:'[]'" json:"-"`
-	RecoverTriggerTasksRaw string   `gorm:"default:'[]'" json:"-"`
+	FailTriggerTasksRaw    string   `gorm:"default:'[]';type:longtext" json:"-"`
+	RecoverTriggerTasksRaw string   `gorm:"default:'[]';type:longtext" json:"-"`
 	Rules                  []*Rule  `gorm:"-" json:"rules"`
 	FailTriggerTasks       []uint64 `gorm:"-" json:"fail_trigger_tasks"`    // 失败时执行的触发任务id
 	RecoverTriggerTasks    []uint64 `gorm:"-" json:"recover_trigger_tasks"` // 恢复时执行的触发任务id
