@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	mysqlDriver "github.com/go-sql-driver/mysql"
 	"github.com/patrickmn/go-cache"
 	"gorm.io/driver/mysql"
 	"gorm.io/driver/postgres"
@@ -83,14 +84,31 @@ func InitDBFromPath(path string) error {
 
 	switch Conf.DB.Type {
 	case "mysql":
-		dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
-			Conf.DB.User, Conf.DB.Password, Conf.DB.Host, Conf.DB.Port, Conf.DB.DBName)
-		dialector = mysql.Open(dsn)
+		// 验证必需字段
+		if Conf.DB.Host == "" || Conf.DB.User == "" || Conf.DB.DBName == "" {
+			return fmt.Errorf("MySQL 配置缺少必需字段: Host, User, DBName")
+		}
+		// 使用 MySQL Config 构建 DSN 以正确处理密码中的特殊字符
+		cfg := mysqlDriver.Config{
+			User:                 Conf.DB.User,
+			Passwd:               Conf.DB.Password,
+			Net:                  "tcp",
+			Addr:                 fmt.Sprintf("%s:%d", Conf.DB.Host, Conf.DB.Port),
+			DBName:               Conf.DB.DBName,
+			Params:               map[string]string{"charset": "utf8mb4", "parseTime": "True", "loc": "Local"},
+			AllowNativePasswords: true,
+		}
+		dialector = mysql.Open(cfg.FormatDSN())
 	case "postgres", "postgresql":
+		// 验证必需字段
+		if Conf.DB.Host == "" || Conf.DB.User == "" || Conf.DB.DBName == "" {
+			return fmt.Errorf("PostgreSQL 配置缺少必需字段: Host, User, DBName")
+		}
 		sslMode := Conf.DB.SSLMode
 		if sslMode == "" {
 			sslMode = "disable"
 		}
+		// PostgreSQL 连接字符串，密码中的特殊字符会被 driver 正确处理
 		dsn := fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s",
 			Conf.DB.Host, Conf.DB.User, Conf.DB.Password, Conf.DB.DBName, Conf.DB.Port, sslMode, Conf.Location)
 		dialector = postgres.Open(dsn)

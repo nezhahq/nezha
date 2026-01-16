@@ -45,6 +45,17 @@ func percentage(used, total uint64) float64 {
 	return float64(used) * 100 / float64(total)
 }
 
+// getIdentifierQuote 根据数据库类型返回标识符引用符号
+func getIdentifierQuote(db *gorm.DB) string {
+	if db == nil || db.Dialector == nil {
+		return "`" // 默认使用 MySQL/SQLite 样式的引用符号
+	}
+	if db.Dialector.Name() == "postgres" {
+		return "\""
+	}
+	return "`"
+}
+
 // Snapshot 未通过规则返回 false, 通过返回 true
 func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
 	// 监控全部但是排除了此服务器
@@ -62,10 +73,7 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	}
 
 	// 根据数据库类型选择引用符号
-	quote := "`"
-	if db.Dialector.Name() == "postgres" {
-		quote = "\""
-	}
+	quote := getIdentifierQuote(db)
 
 	var src float64
 
