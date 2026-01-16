@@ -180,11 +180,15 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	// 补全数据库默认配置
-	if c.DB.Type == "mysql" && c.DB.Port == 0 {
-		c.DB.Port = 3306
+	defaultDBPorts := map[string]uint16{
+		"mysql":      3306,
+		"postgres":   5432,
+		"postgresql": 5432,
 	}
-	if (c.DB.Type == "postgres" || c.DB.Type == "postgresql") && c.DB.Port == 0 {
-		c.DB.Port = 5432
+	if c.DB.Port == 0 {
+		if port, ok := defaultDBPorts[c.DB.Type]; ok {
+			c.DB.Port = port
+		}
 	}
 	if c.DB.MaxIdleConns == 0 {
 		c.DB.MaxIdleConns = 10
