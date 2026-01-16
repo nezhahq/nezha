@@ -47,6 +47,9 @@ func percentage(used, total uint64) float64 {
 
 // getIdentifierQuote 根据数据库类型返回标识符引用符号
 func getIdentifierQuote(db *gorm.DB) string {
+	if db == nil || db.Dialector == nil {
+		return "`" // 默认使用 MySQL/SQLite 样式的引用符号
+	}
 	if db.Dialector.Name() == "postgres" {
 		return "\""
 	}
