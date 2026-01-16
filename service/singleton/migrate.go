@@ -23,68 +23,60 @@ func Migrate(sqlitePath string) error {
 
 	log.Println("NEZHA>> 正在迁移数据到新数据库...")
 
-	// 按照依赖顺序迁移表
-	err = migrateTable(sourceDB, DB, &model.User{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Server{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.ServerGroup{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.ServerGroupServer{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.NotificationGroup{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Notification{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.NotificationGroupNotification{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.AlertRule{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Service{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.ServiceHistory{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Cron{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Transfer{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.NAT{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.DDNSProfile{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.WAF{})
-	if err != nil {
-		return err
-	}
-	err = migrateTable(sourceDB, DB, &model.Oauth2Bind{})
+	// 使用事务确保迁移的原子性
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		// 按照依赖顺序迁移表
+		if err := migrateTable(sourceDB, tx, &model.User{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Server{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.ServerGroup{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.ServerGroupServer{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.NotificationGroup{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Notification{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.NotificationGroupNotification{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.AlertRule{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Service{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.ServiceHistory{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Cron{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Transfer{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.NAT{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.DDNSProfile{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.WAF{}); err != nil {
+			return err
+		}
+		if err := migrateTable(sourceDB, tx, &model.Oauth2Bind{}); err != nil {
+			return err
+		}
+
+		return nil
+	})
 	if err != nil {
 		return err
 	}
