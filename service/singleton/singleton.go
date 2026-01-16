@@ -111,9 +111,11 @@ func InitDBFromPath(path string) error {
 	if err != nil {
 		return err
 	}
-	sqlDB.SetMaxIdleConns(Conf.DB.MaxIdleConns)
-	sqlDB.SetMaxOpenConns(Conf.DB.MaxOpenConns)
-	sqlDB.SetConnMaxLifetime(time.Hour)
+	if Conf.DB.Type == "mysql" || Conf.DB.Type == "postgres" || Conf.DB.Type == "postgresql" {
+		sqlDB.SetMaxIdleConns(Conf.DB.MaxIdleConns)
+		sqlDB.SetMaxOpenConns(Conf.DB.MaxOpenConns)
+		sqlDB.SetConnMaxLifetime(time.Hour)
+	}
 
 	err = DB.AutoMigrate(model.Server{}, model.User{}, model.ServerGroup{}, model.NotificationGroup{},
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
