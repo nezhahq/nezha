@@ -81,31 +81,25 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 			continue
 		}
 
-		switch task.Cover {
-		case model.ServiceCoverIgnoreAll:
-			for id, enabled := range task.SkipServers {
-				if !enabled {
-					continue
-				}
-
-				server, _ := singleton.ServerShared.Get(id)
-				if server == nil || server.TaskStream == nil {
-					continue
-				}
-
-				if canSendTaskToServer(task, server) {
-					server.TaskStream.Send(task.PB())
-				}
+		var skipServers []uint64
+		for id, enable := range task.SkipServers {
+			if enable {
+				skipServers = append(skipServers, id)
 			}
-		case model.ServiceCoverAll:
-			for id, server := range singleton.ServerShared.Range {
-				if server == nil || server.TaskStream == nil || task.SkipServers[id] {
-					continue
-				}
+		}
+		coverServerIds, err := singleton.GetServiceCoveredServerIds(task.Cover, task.GroupCover, skipServers, task.CoverServerGroups)
+		if err != nil {
+			log.Printf("NEZHA>> DispatchTask: %v", err)
+			continue
+		}
+		for _, serverId := range coverServerIds {
+			server, _ := singleton.ServerShared.Get(serverId)
+			if server == nil || server.TaskStream == nil {
+				continue
+			}
 
-				if canSendTaskToServer(task, server) {
-					server.TaskStream.Send(task.PB())
-				}
+			if canSendTaskToServer(task, server) {
+				server.TaskStream.Send(task.PB())
 			}
 		}
 	}

@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"maps"
 	"slices"
 	"strconv"
 	"strings"
@@ -191,6 +190,8 @@ func createService(c *gin.Context) (uint64, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.GroupCover = mf.GroupCover
+	m.CoverServerGroups = mf.CoverServerGroups
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
@@ -202,7 +203,17 @@ func createService(c *gin.Context) (uint64, error) {
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
 
-	if err := validateServers(c, &m); err != nil {
+	// 根据覆盖模式决定覆盖的服务器范围
+	var skipServers []uint64
+	for k := range m.SkipServers {
+		skipServers = append(skipServers, k)
+	}
+	serverIds, err := singleton.GetServiceCoveredServerIds(m.Cover, m.GroupCover, skipServers, m.CoverServerGroups)
+	if err != nil {
+		return 0, err
+	}
+
+	if err := validateServers(c, serverIds); err != nil {
 		return 0, err
 	}
 
@@ -210,18 +221,8 @@ func createService(c *gin.Context) (uint64, error) {
 		return 0, newGormError("%v", err)
 	}
 
-	var skipServers []uint64
-	for k := range m.SkipServers {
-		skipServers = append(skipServers, k)
-	}
-
-	var err error
-	if m.Cover == 0 {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, skipServers).Error
-	} else {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?)", m.ID, skipServers).Error
-	}
-	if err != nil {
+	// 删除对应服务器的历史数据
+	if err := singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, serverIds).Error; err != nil {
 		return 0, err
 	}
 
@@ -269,6 +270,8 @@ func updateService(c *gin.Context) (any, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.GroupCover = mf.GroupCover
+	m.CoverServerGroups = mf.CoverServerGroups
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
@@ -280,7 +283,12 @@ func updateService(c *gin.Context) (any, error) {
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
 
-	if err := validateServers(c, &m); err != nil {
+	skipServers := utils.MapKeysToSlice(mf.SkipServers)
+	serverIds, err := singleton.GetServiceCoveredServerIds(m.Cover, m.GroupCover, skipServers, m.CoverServerGroups)
+	if err != nil {
+		return 0, err
+	}
+	if err := validateServers(c, serverIds); err != nil {
 		return 0, err
 	}
 
@@ -288,17 +296,10 @@ func updateService(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	skipServers := utils.MapKeysToSlice(mf.SkipServers)
-
-	if m.Cover == model.ServiceCoverAll {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, skipServers).Error
-	} else {
-		err = singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id not in (?) and server_id > 0", m.ID, skipServers).Error
-	}
-	if err != nil {
+	// 删除对应服务器的历史数据
+	if err := singleton.DB.Unscoped().Delete(&model.ServiceHistory{}, "service_id = ? and server_id in (?)", m.ID, serverIds).Error; err != nil {
 		return nil, err
 	}
-
 	if err := singleton.ServiceSentinelShared.Update(&m); err != nil {
 		return nil, err
 	}
@@ -342,8 +343,8 @@ func batchDeleteService(c *gin.Context) (any, error) {
 	return nil, nil
 }
 
-func validateServers(c *gin.Context, ss *model.Service) error {
-	if !singleton.ServerShared.CheckPermission(c, maps.Keys(ss.SkipServers)) {
+func validateServers(c *gin.Context, serverIds []uint64) error {
+	if !singleton.ServerShared.CheckPermission(c, slices.Values(serverIds)) {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
 

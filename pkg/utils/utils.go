@@ -193,3 +193,28 @@ func SubUintChecked[T constraints.Unsigned](a, b T) T {
 
 	return a - b
 }
+
+// SubtractUintSlices 从切片 a 中减去切片 b 中存在的元素，返回结果切片
+func SubtractUintSlices(a, b []uint64) []uint64 {
+	setB := make(map[uint64]struct{}, len(b))
+	for _, v := range b {
+		setB[v] = struct{}{}
+	}
+
+	var result []uint64
+	for _, v := range a {
+		if _, found := setB[v]; !found {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// SliceToUintSet 将 uint64 切片转换为集合（map）
+func SliceToUintSet(slice []uint64) map[uint64]struct{} {
+	set := make(map[uint64]struct{}, len(slice))
+	for _, v := range slice {
+		set[v] = struct{}{}
+	}
+	return set
+}

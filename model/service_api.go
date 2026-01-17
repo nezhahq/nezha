@@ -7,6 +7,7 @@ type ServiceForm struct {
 	Target              string          `json:"target,omitempty"`
 	Type                uint8           `json:"type,omitempty"`
 	Cover               uint8           `json:"cover,omitempty"`
+	GroupCover          uint8           `json:"group_cover,omitempty"`
 	Notify              bool            `json:"notify,omitempty" validate:"optional"`
 	Duration            uint64          `json:"duration,omitempty"`
 	MinLatency          float32         `json:"min_latency,omitempty" default:"0.0"`
@@ -17,6 +18,7 @@ type ServiceForm struct {
 	FailTriggerTasks    []uint64        `json:"fail_trigger_tasks,omitempty"`
 	RecoverTriggerTasks []uint64        `json:"recover_trigger_tasks,omitempty"`
 	SkipServers         map[uint64]bool `json:"skip_servers,omitempty"`
+	CoverServerGroups   []uint64        `json:"cover_server_groups,omitempty"`
 	NotificationGroupID uint64          `json:"notification_group_id,omitempty"`
 }
 
