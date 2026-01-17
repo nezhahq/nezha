@@ -13,11 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
-	"golang.org/x/exp/constraints"
-
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
+	"golang.org/x/exp/constraints"
 )
 
 const (
@@ -83,6 +82,64 @@ type ServiceSentinel struct {
 	// 30天数据缓存
 	monthlyStatusLock sync.Mutex
 	monthlyStatus     map[uint64]*serviceResponseItem
+}
+
+// GetServiceCoveredServerIds 获取服务监控覆盖的服务器ID列表
+func GetServiceCoveredServerIds(cover, groupCover uint8, skipServers, coverServerGroups []uint64) ([]uint64, error) {
+	var serverIds map[uint64]struct{}
+	if cover == model.ServiceCoverAll {
+		// 覆盖所有，跳过的服务器不监控，删除跳过服务器的历史数据
+		serverIds = utils.SliceToUintSet(skipServers)
+	} else if cover == model.ServiceCoverIgnoreAll {
+		// 忽略所有，只有跳过的服务器不监控，删除非跳过服务器的历史数据
+		var allServerIds []uint64
+		for id := range ServerShared.Range {
+			allServerIds = append(allServerIds, id)
+		}
+		serverIds = utils.SliceToUintSet(utils.SubtractUintSlices(allServerIds, skipServers))
+	}
+
+	// 初始化 serverIds（如果还未初始化）
+	if serverIds == nil {
+		serverIds = make(map[uint64]struct{})
+	}
+
+	if groupCover == model.ServiceGroupCoverAll {
+		// 覆盖选中组，在serverIds中追加选中组的所有服务器ID
+		if len(coverServerGroups) > 0 {
+			var groupServers []model.ServerGroupServer
+			if err := DB.Where("server_group_id IN (?)", coverServerGroups).Find(&groupServers).Error; err != nil {
+				return nil, err
+			}
+			for _, gs := range groupServers {
+				serverIds[gs.ServerId] = struct{}{}
+			}
+		}
+	} else if groupCover == model.ServiceGroupCoverIgnoreAll {
+		// 忽略选中组，在serverIds中追加除选中组外的所有服务器ID
+		// 先获取选中组中的服务器ID集合
+		groupServerIds := make(map[uint64]struct{})
+		if len(coverServerGroups) > 0 {
+			var groupServers []model.ServerGroupServer
+			if err := DB.Where("server_group_id IN (?)", coverServerGroups).Find(&groupServers).Error; err != nil {
+				return nil, err
+			}
+			for _, gs := range groupServers {
+				groupServerIds[gs.ServerId] = struct{}{}
+			}
+		}
+		// 遍历所有服务器，追加不在选中组中的服务器
+		for id := range ServerShared.Range {
+			if _, inGroup := groupServerIds[id]; !inGroup {
+				serverIds[id] = struct{}{}
+			}
+		}
+	}
+	var result []uint64
+	for id := range serverIds {
+		result = append(result, id)
+	}
+	return result, nil
 }
 
 // NewServiceSentinel 创建服务监控器

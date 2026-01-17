@@ -46,16 +46,23 @@ const (
 	ServiceCoverIgnoreAll
 )
 
+const (
+	ServiceGroupCoverAll       = iota // 覆盖选中组的所有服务器
+	ServiceGroupCoverIgnoreAll        // 忽略选中组的所有服务器
+)
+
 type Service struct {
 	Common
-	Name                string `json:"name"`
-	Type                uint8  `json:"type"`
-	Target              string `json:"target"`
-	SkipServersRaw      string `json:"-"`
-	Duration            uint64 `json:"duration"`
-	Notify              bool   `json:"notify,omitempty"`
-	NotificationGroupID uint64 `json:"notification_group_id"` // 当前服务监控所属的通知组 ID
-	Cover               uint8  `json:"cover"`
+	Name                 string `json:"name"`
+	Type                 uint8  `json:"type"`
+	Target               string `json:"target"`
+	SkipServersRaw       string `json:"-"`
+	CoverServerGroupsRaw string `json:"-"`
+	Duration             uint64 `json:"duration"`
+	Notify               bool   `json:"notify,omitempty"`
+	NotificationGroupID  uint64 `json:"notification_group_id"` // 当前服务监控所属的通知组 ID
+	Cover                uint8  `json:"cover"`
+	GroupCover           uint8  `json:"group_cover" gorm:"default:0"` // 服务器分组模式 0=禁用 1=覆盖选中组 2=忽略选中组
 
 	EnableTriggerTask      bool   `gorm:"default: false" json:"enable_trigger_task,omitempty"`
 	EnableShowInService    bool   `gorm:"default: false" json:"enable_show_in_service,omitempty"`
@@ -69,8 +76,9 @@ type Service struct {
 	MaxLatency    float32 `json:"max_latency"`
 	LatencyNotify bool    `json:"latency_notify,omitempty"`
 
-	SkipServers map[uint64]bool `gorm:"-" json:"skip_servers"`
-	CronJobID   cron.EntryID    `gorm:"-" json:"-"`
+	SkipServers       map[uint64]bool `gorm:"-" json:"skip_servers"`
+	CoverServerGroups []uint64        `gorm:"-" json:"cover_server_groups"`
+	CronJobID         cron.EntryID    `gorm:"-" json:"-"`
 }
 
 func (m *Service) PB() *pb.Task {
@@ -96,6 +104,11 @@ func (m *Service) BeforeSave(tx *gorm.DB) error {
 	} else {
 		m.SkipServersRaw = string(data)
 	}
+	if data, err := json.Marshal(m.CoverServerGroups); err != nil {
+		return err
+	} else {
+		m.CoverServerGroupsRaw = string(data)
+	}
 	if data, err := json.Marshal(m.FailTriggerTasks); err != nil {
 		return err
 	} else {
@@ -113,7 +126,11 @@ func (m *Service) AfterFind(tx *gorm.DB) error {
 	m.SkipServers = make(map[uint64]bool)
 	if err := json.Unmarshal([]byte(m.SkipServersRaw), &m.SkipServers); err != nil {
 		log.Println("NEZHA>> Service.AfterFind:", err)
-		return nil
+		return err
+	}
+	if err := json.Unmarshal([]byte(m.CoverServerGroupsRaw), &m.CoverServerGroups); err != nil {
+		log.Println("NEZHA>> Service.AfterFind:", err)
+		return err
 	}
 
 	// 加载触发任务列表
