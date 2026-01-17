@@ -98,23 +98,42 @@ func Migrate(sqlitePath string) error {
 func migrateTable[T any](source, dest *gorm.DB, model T) error {
 	log.Printf("NEZHA>> Migrating table: %T", model)
 
-	// Read and write in batches to prevent memory overflow
+	// Read and write in batches to prevent memory overflow.
+	// Use keyset pagination on the primary key (assumed to be "id") instead of OFFSET-based pagination
+	// to avoid skipping or duplicating records if the source table is modified during migration.
 	batchSize := 100
-	var count int64
-	if err := source.Model(model).Count(&count).Error; err != nil {
-		return fmt.Errorf("failed to count rows in table %T: %v", model, err)
-	}
+	var lastID int64
 
-	for i := 0; i < int(count); i += batchSize {
+	for {
+		// Fetch the next batch of primary keys in a stable order.
+		var ids []int64
+		if err := source.Model(model).
+			Where("id > ?", lastID).
+			Order("id").
+			Limit(batchSize).
+			Pluck("id", &ids).Error; err != nil {
+			return fmt.Errorf("failed to fetch primary keys for table %T: %v", model, err)
+		}
+
+		if len(ids) == 0 {
+			// No more records to migrate.
+			break
+		}
+
+		// Fetch the actual records for this batch of IDs, ordered by id for determinism.
 		var results []T
-		if err := source.Offset(i).Limit(batchSize).Find(&results).Error; err != nil {
+		if err := source.Where("id IN ?", ids).Order("id").Find(&results).Error; err != nil {
 			return fmt.Errorf("failed to read model %T: %v", model, err)
 		}
+
 		if len(results) > 0 {
 			if err := dest.Create(&results).Error; err != nil {
 				return fmt.Errorf("failed to write model %T: %v", model, err)
 			}
 		}
+
+		// Advance the cursor to the highest ID we've processed so far.
+		lastID = ids[len(ids)-1]
 	}
 	return nil
 }
