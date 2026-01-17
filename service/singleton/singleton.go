@@ -114,7 +114,7 @@ func InitDBFromPath(path string) error {
 			Scheme: "postgres",
 			User:   url.UserPassword(Conf.DB.User, Conf.DB.Password),
 			Host:   fmt.Sprintf("%s:%d", Conf.DB.Host, Conf.DB.Port),
-			Path:   "/" + Conf.DB.DBName,
+			Path:   "/" + url.PathEscape(Conf.DB.DBName),
 		}
 		q := u.Query()
 		q.Set("sslmode", sslMode)
