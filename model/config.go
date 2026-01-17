@@ -192,7 +192,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 			c.DB.Port = port
 		}
 	}
-	// 设置连接池参数默认值，如果用户显式设置为 0，将使用以下默认值
+	// Set connection pool parameter defaults when values are not set (zero values)
 	if c.DB.MaxIdleConns == 0 {
 		c.DB.MaxIdleConns = 10
 	}

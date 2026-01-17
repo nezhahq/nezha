@@ -10,32 +10,32 @@ import (
 	"github.com/nezhahq/nezha/model"
 )
 
-// Migrate 将 SQLite 数据迁移到当前配置的数据库
+// Migrate migrates SQLite data to the currently configured database
 func Migrate(sqlitePath string) error {
 	if Conf.DB.Type == "sqlite" || Conf.DB.Type == "" {
-		return fmt.Errorf("目标数据库不能是 SQLite，请先在配置文件中配置 MySQL 或 PostgreSQL")
+		return fmt.Errorf("target database cannot be SQLite, please configure MySQL or PostgreSQL in the config file first")
 	}
 
 	if DB == nil {
-		return fmt.Errorf("目标数据库未初始化")
+		return fmt.Errorf("target database not initialized")
 	}
 
 	sourceDB, err := gorm.Open(sqlite.Open(sqlitePath), &gorm.Config{})
 	if err != nil {
-		return fmt.Errorf("打开源 SQLite 数据库失败: %v", err)
+		return fmt.Errorf("failed to open source SQLite database: %v", err)
 	}
-	// 确保在迁移完成后关闭源 SQLite 数据库连接，及时释放文件句柄
+	// Ensure source SQLite database connection is closed after migration to release file handle promptly
 	sourceSQLDB, err := sourceDB.DB()
 	if err != nil {
-		return fmt.Errorf("获取源 SQLite 数据库底层连接失败: %v", err)
+		return fmt.Errorf("failed to get underlying source SQLite database connection: %v", err)
 	}
 	defer sourceSQLDB.Close()
 
-	log.Println("NEZHA>> 正在迁移数据到新数据库...")
+	log.Println("NEZHA>> Migrating data to new database...")
 
-	// 使用事务确保迁移的原子性
+	// Use transaction to ensure migration atomicity
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		// 按照依赖顺序迁移表
+		// Migrate tables in dependency order
 		if err := migrateTable(sourceDB, tx, &model.User{}); err != nil {
 			return err
 		}
@@ -91,28 +91,28 @@ func Migrate(sqlitePath string) error {
 		return err
 	}
 
-	log.Println("NEZHA>> 数据迁移完成！")
+	log.Println("NEZHA>> Data migration completed!")
 	return nil
 }
 
 func migrateTable[T any](source, dest *gorm.DB, model T) error {
-	log.Printf("NEZHA>> 正在迁移表: %T", model)
+	log.Printf("NEZHA>> Migrating table: %T", model)
 
-	// 分批读取和写入，防止内存溢出
+	// Read and write in batches to prevent memory overflow
 	batchSize := 100
 	var count int64
 	if err := source.Model(model).Count(&count).Error; err != nil {
-		return fmt.Errorf("统计表 %T 行数失败: %v", model, err)
+		return fmt.Errorf("failed to count rows in table %T: %v", model, err)
 	}
 
 	for i := 0; i < int(count); i += batchSize {
 		var results []T
 		if err := source.Offset(i).Limit(batchSize).Find(&results).Error; err != nil {
-			return fmt.Errorf("读取模型 %T 失败: %v", model, err)
+			return fmt.Errorf("failed to read model %T: %v", model, err)
 		}
 		if len(results) > 0 {
 			if err := dest.Create(&results).Error; err != nil {
-				return fmt.Errorf("写入模型 %T 失败: %v", model, err)
+				return fmt.Errorf("failed to write model %T: %v", model, err)
 			}
 		}
 	}
