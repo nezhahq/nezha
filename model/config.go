@@ -70,6 +70,9 @@ type Config struct {
 	// HTTPS 配置
 	HTTPS HTTPSConf `koanf:"https" json:"https"`
 
+	// TSDB 配置
+	TSDB TSDBConf `koanf:"tsdb" json:"tsdb"`
+
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
 }
@@ -79,6 +82,13 @@ type HTTPSConf struct {
 	ListenPort  uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
 	TLSCertPath string `koanf:"tls_cert_path" json:"tls_cert_path,omitempty"`
 	TLSKeyPath  string `koanf:"tls_key_path" json:"tls_key_path,omitempty"`
+}
+
+// TSDBConf TSDB 配置
+type TSDBConf struct {
+	DataPath       string  `koanf:"data_path" json:"data_path,omitempty"`                 // 数据存储路径，默认 data/tsdb
+	RetentionDays  uint16  `koanf:"retention_days" json:"retention_days,omitempty"`       // 数据保留天数，默认 30 天
+	MaxDiskUsageGB float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"` // 最大磁盘使用量(GB)，默认 5GB
 }
 
 // Read 读取配置文件并应用

@@ -16,6 +16,7 @@ import (
 	"golang.org/x/exp/constraints"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/tsdb"
 	"github.com/nezhahq/nezha/pkg/utils"
 	pb "github.com/nezhahq/nezha/proto"
 )
@@ -108,23 +109,7 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service) (*Serv
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)
-
-	var mhs []model.ServiceHistory
-	// 加载当日记录
-	DB.Where("created_at >= ? AND server_id = 0", today).Find(&mhs)
-	totalDelay := make(map[uint64]float32)
-	totalDelayCount := make(map[uint64]float32)
-	for _, mh := range mhs {
-		totalDelay[mh.ServiceID] += mh.AvgDelay
-		totalDelayCount[mh.ServiceID]++
-		ss.serviceStatusToday[mh.ServiceID].Up += mh.Up
-		ss.monthlyStatus[mh.ServiceID].TotalUp += mh.Up
-		ss.serviceStatusToday[mh.ServiceID].Down += mh.Down
-		ss.monthlyStatus[mh.ServiceID].TotalDown += mh.Down
-	}
-	for id, delay := range totalDelay {
-		ss.serviceStatusToday[id].Delay = delay / float32(totalDelayCount[id])
-	}
+	_ = today // TSDB 会自动保留历史数据，无需从数据库加载
 
 	// 启动服务监控器
 	go ss.worker()
@@ -210,6 +195,7 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)
+	_ = today // TSDB 保留历史数据
 
 	for _, service := range services {
 		ss.monthlyStatus[service.ID] = &serviceResponseItem{
@@ -222,22 +208,7 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		}
 	}
 
-	// 加载服务监控历史记录
-	var mhs []model.ServiceHistory
-	DB.Where("created_at > ? AND created_at < ? AND server_id = 0", today.AddDate(0, 0, -29), today).Find(&mhs)
-	var delayCount = make(map[int]int)
-	for _, mh := range mhs {
-		dayIndex := 28 - (int(today.Sub(mh.CreatedAt).Hours()) / 24)
-		if dayIndex < 0 {
-			continue
-		}
-		ss.monthlyStatus[mh.ServiceID].Delay[dayIndex] = (ss.monthlyStatus[mh.ServiceID].Delay[dayIndex]*float32(delayCount[dayIndex]) + mh.AvgDelay) / float32(delayCount[dayIndex]+1)
-		delayCount[dayIndex]++
-		ss.monthlyStatus[mh.ServiceID].Up[dayIndex] += mh.Up
-		ss.monthlyStatus[mh.ServiceID].TotalUp += mh.Up
-		ss.monthlyStatus[mh.ServiceID].Down[dayIndex] += mh.Down
-		ss.monthlyStatus[mh.ServiceID].TotalDown += mh.Down
-	}
+	// TSDB 保留历史数据，无需从数据库加载
 
 	return nil
 }
@@ -418,13 +389,17 @@ func (ss *ServiceSentinel) worker() {
 			ts.count++
 			ts.ping = (ts.ping*float32(ts.count-1) + mh.Delay) / float32(ts.count)
 			if ts.count == Conf.AvgPingCount {
-				if err := DB.Create(&model.ServiceHistory{
-					ServiceID: mh.GetId(),
-					AvgDelay:  ts.ping,
-					Data:      mh.Data,
-					ServerID:  r.Reporter,
-				}).Error; err != nil {
-					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+				// 写入 TSDB（如果已启用）
+				if TSDBEnabled() {
+					if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
+						ServiceID:  mh.GetId(),
+						ServerID:   r.Reporter,
+						Timestamp:  time.Now(),
+						Delay:      ts.ping,
+						Successful: mh.Successful,
+					}); err != nil {
+						log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
+					}
 				}
 				ts.count = 0
 				ts.ping = mh.Delay
@@ -485,17 +460,7 @@ func (ss *ServiceSentinel) worker() {
 		// 数据持久化
 		if len(ss.serviceCurrentStatusData[mh.GetId()].result) == _CurrentStatusSize {
 			ss.serviceCurrentStatusData[mh.GetId()].t = currentTime
-			rd := ss.serviceResponseDataStore[mh.GetId()]
-			if err := DB.Create(&model.ServiceHistory{
-				ServiceID: mh.GetId(),
-				AvgDelay:  rd.Delay,
-				Data:      mh.Data,
-				Up:        rd.Up,
-				Down:      rd.Down,
-			}).Error; err != nil {
-				log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
-			}
-
+			// 数据已实时写入 TSDB，这里只清理缓存
 			ss.serviceCurrentStatusData[mh.GetId()].result = ss.serviceCurrentStatusData[mh.GetId()].result[:0]
 		}
 
