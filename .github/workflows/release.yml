@@ -16,8 +16,6 @@ jobs:
         goarch: [amd64]
         include:
           - goos: linux
-            goarch: s390x
-          - goos: linux
             goarch: arm64
 
     name: Build artifacts
@@ -53,7 +51,7 @@ jobs:
       - name: generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
-          swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
+          swag init --pd -d cmd/dashboard -g main.go -o docs
 
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
@@ -199,7 +197,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/s390x
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:latest
@@ -213,7 +211,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
-          platforms: linux/amd64,linux/arm64,linux/s390x
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.image-name.outputs.GHCR_IMAGE_NAME }}:${{ steps.extract_branch.outputs.tag }}
