@@ -46,5 +46,7 @@ jobs:
       - name: Run Gosec Security Scanner
         if: runner.os == 'Linux'
         uses: securego/gosec@master
+        env:
+          GOTOOLCHAIN: auto
         with:
           args: --exclude=G104,G402,G115,G203 ./...
