@@ -183,6 +183,28 @@ func CleanMonitorHistory() {
 	}
 }
 
+// PerformMaintenance 执行系统维护（SQLite VACUUM 和 TSDB 维护）
+func PerformMaintenance() {
+	log.Println("NEZHA>> Starting system maintenance...")
+
+	// 1. SQLite 维护
+	if DB != nil {
+		log.Println("NEZHA>> SQLite: Starting VACUUM...")
+		if err := DB.Exec("VACUUM").Error; err != nil {
+			log.Printf("NEZHA>> SQLite: VACUUM failed: %v", err)
+		} else {
+			log.Println("NEZHA>> SQLite: VACUUM completed")
+		}
+	}
+
+	// 2. TSDB 维护
+	if TSDBEnabled() {
+		TSDBShared.Maintenance()
+	}
+
+	log.Println("NEZHA>> System maintenance completed")
+}
+
 // IPDesensitize 根据设置选择是否对IP进行打码处理 返回处理后的IP(关闭打码则返回原IP)
 func IPDesensitize(ip string) string {
 	if Conf.EnablePlainIPInNotification {
