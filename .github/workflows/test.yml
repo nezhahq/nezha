@@ -34,7 +34,7 @@ jobs:
           go install github.com/swaggo/swag/cmd/swag@latest
           touch ./cmd/dashboard/user-dist/a
           touch ./cmd/dashboard/admin-dist/a
-          swag init --pd -d cmd/dashboard -g main.go -o docs
+          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
 
       - name: Unit test
         run: |

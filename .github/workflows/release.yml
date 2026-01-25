@@ -51,7 +51,8 @@ jobs:
       - name: generate swagger docs
         run: |
           go install github.com/swaggo/swag/cmd/swag@latest
-          swag init --pd -d cmd/dashboard -g main.go -o docs
+          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
+          go mod tidy
 
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
