@@ -73,6 +73,9 @@ type Config struct {
 	// TSDB 配置
 	TSDB TSDBConf `koanf:"tsdb" json:"tsdb"`
 
+	// 内存配置
+	Memory MemoryConf `koanf:"memory" json:"memory"`
+
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
 }
@@ -86,9 +89,18 @@ type HTTPSConf struct {
 
 // TSDBConf TSDB 配置
 type TSDBConf struct {
-	DataPath       string  `koanf:"data_path" json:"data_path,omitempty"`                 // 数据存储路径，默认 data/tsdb
-	RetentionDays  uint16  `koanf:"retention_days" json:"retention_days,omitempty"`       // 数据保留天数，默认 30 天
-	MaxDiskUsageGB float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"` // 最大磁盘使用量(GB)，默认 5GB
+	DataPath                 string  `koanf:"data_path" json:"data_path,omitempty"`
+	RetentionDays            uint16  `koanf:"retention_days" json:"retention_days,omitempty"`
+	MaxDiskUsageGB           float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"`
+	MaxMemoryMB              int64   `koanf:"max_memory_mb" json:"max_memory_mb,omitempty"`
+	WriteBufferSize          int     `koanf:"write_buffer_size" json:"write_buffer_size,omitempty"`
+	WriteBufferFlushInterval int     `koanf:"write_buffer_flush_interval" json:"write_buffer_flush_interval,omitempty"`
+}
+
+// MemoryConf 内存配置
+type MemoryConf struct {
+	// GoMemLimitMB Go 运行时内存限制(MB)，0 表示不限制
+	GoMemLimitMB int64 `koanf:"go_mem_limit_mb" json:"go_mem_limit_mb,omitempty"`
 }
 
 // Read 读取配置文件并应用

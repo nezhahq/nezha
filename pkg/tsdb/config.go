@@ -10,17 +10,48 @@ type Config struct {
 	RetentionDays uint16 `koanf:"retention_days" json:"retention_days,omitempty"`
 	// MaxDiskUsageGB 最大磁盘使用量(GB)，默认 5GB
 	MaxDiskUsageGB float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"`
+	// MaxMemoryMB 最大内存使用量(MB)，默认 256MB，用于限制 VictoriaMetrics 缓存
+	MaxMemoryMB int64 `koanf:"max_memory_mb" json:"max_memory_mb,omitempty"`
 	// DedupInterval 去重间隔，默认 30 秒
 	DedupInterval time.Duration `koanf:"dedup_interval" json:"dedup_interval,omitempty"`
+	// WriteBufferSize 写入缓冲区大小，默认 512，达到此数量后批量写入
+	WriteBufferSize int `koanf:"write_buffer_size" json:"write_buffer_size,omitempty"`
+	// WriteBufferFlushInterval 写入缓冲区刷新间隔，默认 5 秒
+	WriteBufferFlushInterval time.Duration `koanf:"write_buffer_flush_interval" json:"write_buffer_flush_interval,omitempty"`
 }
 
 // DefaultConfig 返回默认配置（不设置 DataPath，需要显式配置才启用）
 func DefaultConfig() *Config {
 	return &Config{
-		DataPath:       "", // 默认为空，不启用 TSDB
-		RetentionDays:  30,
-		MaxDiskUsageGB: 5,
-		DedupInterval:  30 * time.Second,
+		DataPath:                 "",
+		RetentionDays:            30,
+		MaxDiskUsageGB:           5,
+		MaxMemoryMB:              256,
+		DedupInterval:            30 * time.Second,
+		WriteBufferSize:          512,
+		WriteBufferFlushInterval: 5 * time.Second,
+	}
+}
+
+// Validate 验证配置有效性并填充默认值
+func (c *Config) Validate() {
+	if c.RetentionDays == 0 {
+		c.RetentionDays = 30
+	}
+	if c.MaxDiskUsageGB <= 0 {
+		c.MaxDiskUsageGB = 5
+	}
+	if c.MaxMemoryMB <= 0 {
+		c.MaxMemoryMB = 256
+	}
+	if c.DedupInterval <= 0 {
+		c.DedupInterval = 30 * time.Second
+	}
+	if c.WriteBufferSize <= 0 {
+		c.WriteBufferSize = 512
+	}
+	if c.WriteBufferFlushInterval <= 0 {
+		c.WriteBufferFlushInterval = 5 * time.Second
 	}
 }
 

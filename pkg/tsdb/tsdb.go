@@ -16,12 +16,11 @@ type TSDB struct {
 	config  *Config
 	mu      sync.RWMutex
 	closed  bool
+
+	writer *bufferedWriter
 }
 
-var (
-	instance *TSDB
-	once     sync.Once
-)
+var instance *TSDB
 
 // Open 打开或创建 TSDB 存储
 func Open(config *Config) (*TSDB, error) {
@@ -29,7 +28,8 @@ func Open(config *Config) (*TSDB, error) {
 		config = DefaultConfig()
 	}
 
-	// 确保数据路径是绝对路径或相对于工作目录
+	config.Validate()
+
 	dataPath := config.DataPath
 	if !filepath.IsAbs(dataPath) {
 		absPath, err := filepath.Abs(dataPath)
@@ -39,12 +39,15 @@ func Open(config *Config) (*TSDB, error) {
 		dataPath = absPath
 	}
 
-	// 设置存储选项
+	memBytes := int(config.MaxMemoryMB * 1024 * 1024)
+	storage.SetTSIDCacheSize(memBytes * 37 / 100)
+	storage.SetMetricNameCacheSize(memBytes * 10 / 100)
+	storage.SetMetadataStorageSize(memBytes * 1 / 100)
+
 	storage.SetDedupInterval(config.DedupInterval)
 	storage.SetFreeDiskSpaceLimit(config.FreeDiskSpaceLimitBytes())
 	storage.SetDataFlushInterval(5 * time.Second)
 
-	// 打开存储
 	opts := storage.OpenOptions{
 		Retention: time.Duration(config.RetentionDays) * 24 * time.Hour,
 	}
@@ -56,8 +59,10 @@ func Open(config *Config) (*TSDB, error) {
 		config:  config,
 	}
 
-	log.Printf("NEZHA>> TSDB opened at %s, retention: %d days, max disk: %.1f GB",
-		dataPath, config.RetentionDays, config.MaxDiskUsageGB)
+	db.writer = newBufferedWriter(db, config.WriteBufferSize, config.WriteBufferFlushInterval)
+
+	log.Printf("NEZHA>> TSDB opened at %s, retention: %d days, max disk: %.1f GB, max memory: %d MB",
+		dataPath, config.RetentionDays, config.MaxDiskUsageGB, config.MaxMemoryMB)
 
 	return db, nil
 }
@@ -79,6 +84,10 @@ func (db *TSDB) Close() error {
 
 	if db.closed {
 		return nil
+	}
+
+	if db.writer != nil {
+		db.writer.stop()
 	}
 
 	db.storage.MustClose()
@@ -106,5 +115,8 @@ func (db *TSDB) IsClosed() bool {
 
 // Flush 强制刷盘（主要用于测试）
 func (db *TSDB) Flush() {
+	if db.writer != nil {
+		db.writer.flush()
+	}
 	db.storage.DebugFlush()
 }

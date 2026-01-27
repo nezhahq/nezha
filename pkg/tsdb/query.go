@@ -127,43 +127,41 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 		Servers:   make([]ServerServiceStats, 0),
 	}
 
-	// 按 server_id 聚合数据
-	serverDataMap := make(map[uint64][]rawDataPoint)
+	serverDataMap := make(map[uint64]map[int64]*rawDataPoint)
 
-	// 处理延迟数据
 	for serverID, points := range delayData {
+		if serverDataMap[serverID] == nil {
+			serverDataMap[serverID] = make(map[int64]*rawDataPoint)
+		}
 		for _, p := range points {
-			serverDataMap[serverID] = append(serverDataMap[serverID], rawDataPoint{
+			serverDataMap[serverID][p.timestamp] = &rawDataPoint{
 				timestamp: p.timestamp,
 				delay:     p.value,
-			})
+			}
 		}
 	}
 
-	// 处理状态数据
 	for serverID, points := range statusData {
-		existingPoints := serverDataMap[serverID]
+		if serverDataMap[serverID] == nil {
+			serverDataMap[serverID] = make(map[int64]*rawDataPoint)
+		}
 		for _, p := range points {
-			// 查找对应时间戳的点并更新状态
-			found := false
-			for i := range existingPoints {
-				if existingPoints[i].timestamp == p.timestamp {
-					existingPoints[i].status = p.value
-					found = true
-					break
-				}
-			}
-			if !found {
-				serverDataMap[serverID] = append(serverDataMap[serverID], rawDataPoint{
+			if existing, ok := serverDataMap[serverID][p.timestamp]; ok {
+				existing.status = p.value
+			} else {
+				serverDataMap[serverID][p.timestamp] = &rawDataPoint{
 					timestamp: p.timestamp,
 					status:    p.value,
-				})
+				}
 			}
 		}
 	}
 
-	// 计算每个服务器的统计数据
-	for serverID, points := range serverDataMap {
+	for serverID, pointsMap := range serverDataMap {
+		points := make([]rawDataPoint, 0, len(pointsMap))
+		for _, p := range pointsMap {
+			points = append(points, *p)
+		}
 		stats := calculateStats(points, period.DownsampleInterval())
 		result.Servers = append(result.Servers, ServerServiceStats{
 			ServerID: serverID,

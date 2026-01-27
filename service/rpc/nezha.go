@@ -115,8 +115,7 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 		server.LastActive = time.Now()
 		server.State = &innerState
 
-		// 写入 TSDB
-		if singleton.TSDBShared != nil {
+		if singleton.TSDBEnabled() {
 			maxTemp := 0.0
 			for _, t := range innerState.Temperatures {
 				if t.Temperature > maxTemp {
@@ -129,29 +128,28 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 					maxGPU = g
 				}
 			}
-			// 写入 TSDB（如果已启用）
-			if singleton.TSDBEnabled() {
-				singleton.TSDBShared.WriteServerMetrics(&tsdb.ServerMetrics{
-					ServerID:       clientID,
-					Timestamp:      time.Now(),
-					CPU:            innerState.CPU,
-					MemUsed:        innerState.MemUsed,
-					SwapUsed:       innerState.SwapUsed,
-					DiskUsed:       innerState.DiskUsed,
-					NetInSpeed:     innerState.NetInSpeed,
-					NetOutSpeed:    innerState.NetOutSpeed,
-					NetInTransfer:  innerState.NetInTransfer,
-					NetOutTransfer: innerState.NetOutTransfer,
-					Load1:          innerState.Load1,
-					Load5:          innerState.Load5,
-					Load15:         innerState.Load15,
-					TCPConnCount:   innerState.TcpConnCount,
-					UDPConnCount:   innerState.UdpConnCount,
-					ProcessCount:   innerState.ProcessCount,
-					Temperature:    maxTemp,
-					Uptime:         innerState.Uptime,
-					GPU:            maxGPU,
-				})
+			if err := singleton.TSDBShared.WriteServerMetrics(&tsdb.ServerMetrics{
+				ServerID:       clientID,
+				Timestamp:      time.Now(),
+				CPU:            innerState.CPU,
+				MemUsed:        innerState.MemUsed,
+				SwapUsed:       innerState.SwapUsed,
+				DiskUsed:       innerState.DiskUsed,
+				NetInSpeed:     innerState.NetInSpeed,
+				NetOutSpeed:    innerState.NetOutSpeed,
+				NetInTransfer:  innerState.NetInTransfer,
+				NetOutTransfer: innerState.NetOutTransfer,
+				Load1:          innerState.Load1,
+				Load5:          innerState.Load5,
+				Load15:         innerState.Load15,
+				TCPConnCount:   innerState.TcpConnCount,
+				UDPConnCount:   innerState.UdpConnCount,
+				ProcessCount:   innerState.ProcessCount,
+				Temperature:    maxTemp,
+				Uptime:         innerState.Uptime,
+				GPU:            maxGPU,
+			}); err != nil {
+				log.Printf("NEZHA>> Failed to write server metrics to TSDB: %v", err)
 			}
 		}
 

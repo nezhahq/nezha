@@ -2,11 +2,78 @@ package tsdb
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/prompb"
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
 )
+
+type bufferedWriter struct {
+	db          *TSDB
+	buffer      []storage.MetricRow
+	mu          sync.Mutex
+	maxSize     int
+	flushTicker *time.Ticker
+	stopCh      chan struct{}
+	wg          sync.WaitGroup
+}
+
+func newBufferedWriter(db *TSDB, maxSize int, flushInterval time.Duration) *bufferedWriter {
+	w := &bufferedWriter{
+		db:          db,
+		buffer:      make([]storage.MetricRow, 0, maxSize),
+		maxSize:     maxSize,
+		flushTicker: time.NewTicker(flushInterval),
+		stopCh:      make(chan struct{}),
+	}
+	w.wg.Add(1)
+	go w.flushLoop()
+	return w
+}
+
+func (w *bufferedWriter) flushLoop() {
+	defer w.wg.Done()
+	for {
+		select {
+		case <-w.flushTicker.C:
+			w.flush()
+		case <-w.stopCh:
+			w.flush()
+			return
+		}
+	}
+}
+
+func (w *bufferedWriter) write(rows []storage.MetricRow) {
+	w.mu.Lock()
+	w.buffer = append(w.buffer, rows...)
+	shouldFlush := len(w.buffer) >= w.maxSize
+	w.mu.Unlock()
+
+	if shouldFlush {
+		w.flush()
+	}
+}
+
+func (w *bufferedWriter) flush() {
+	w.mu.Lock()
+	if len(w.buffer) == 0 {
+		w.mu.Unlock()
+		return
+	}
+	rows := w.buffer
+	w.buffer = make([]storage.MetricRow, 0, w.maxSize)
+	w.mu.Unlock()
+
+	w.db.storage.AddRows(rows, 64)
+}
+
+func (w *bufferedWriter) stop() {
+	w.flushTicker.Stop()
+	close(w.stopCh)
+	w.wg.Wait()
+}
 
 // MetricType 指标类型
 type MetricType string
@@ -68,7 +135,7 @@ type ServiceMetrics struct {
 	Successful bool
 }
 
-// WriteServerMetrics 写入服务器指标
+// WriteServerMetrics 写入服务器指标（通过缓冲区批量写入）
 func (db *TSDB) WriteServerMetrics(m *ServerMetrics) error {
 	if db.IsClosed() {
 		return fmt.Errorf("TSDB is closed")
@@ -97,7 +164,11 @@ func (db *TSDB) WriteServerMetrics(m *ServerMetrics) error {
 		db.makeMetricRow(MetricServerGPU, serverIDStr, "", ts, m.GPU),
 	}
 
-	db.storage.AddRows(rows, 64)
+	if db.writer != nil {
+		db.writer.write(rows)
+	} else {
+		db.storage.AddRows(rows, 64)
+	}
 	return nil
 }
 
@@ -121,7 +192,11 @@ func (db *TSDB) WriteServiceMetrics(m *ServiceMetrics) error {
 		db.makeMetricRow(MetricServiceStatus, serviceIDStr, serverIDStr, ts, status),
 	}
 
-	db.storage.AddRows(rows, 64)
+	if db.writer != nil {
+		db.writer.write(rows)
+	} else {
+		db.storage.AddRows(rows, 64)
+	}
 	return nil
 }
 

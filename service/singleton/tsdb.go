@@ -2,24 +2,20 @@ package singleton
 
 import (
 	"log"
+	"time"
 
 	"github.com/nezhahq/nezha/pkg/tsdb"
 )
 
-var (
-	// TSDBShared 全局 TSDB 实例，可能为 nil（未启用）
-	TSDBShared *tsdb.TSDB
-)
+var TSDBShared *tsdb.TSDB
 
-// InitTSDB 初始化 TSDB
-// 如果配置中未设置 TSDB DataPath，则不启用 TSDB 功能
 func InitTSDB() error {
 	config := &tsdb.Config{
 		RetentionDays:  30,
 		MaxDiskUsageGB: 5,
+		MaxMemoryMB:    256,
 	}
 
-	// 从配置文件加载 TSDB 配置
 	if Conf.TSDB.DataPath != "" {
 		config.DataPath = Conf.TSDB.DataPath
 	}
@@ -29,8 +25,16 @@ func InitTSDB() error {
 	if Conf.TSDB.MaxDiskUsageGB > 0 {
 		config.MaxDiskUsageGB = Conf.TSDB.MaxDiskUsageGB
 	}
+	if Conf.TSDB.MaxMemoryMB > 0 {
+		config.MaxMemoryMB = Conf.TSDB.MaxMemoryMB
+	}
+	if Conf.TSDB.WriteBufferSize > 0 {
+		config.WriteBufferSize = Conf.TSDB.WriteBufferSize
+	}
+	if Conf.TSDB.WriteBufferFlushInterval > 0 {
+		config.WriteBufferFlushInterval = time.Duration(Conf.TSDB.WriteBufferFlushInterval) * time.Second
+	}
 
-	// 如果未配置 DataPath，则不启用 TSDB
 	if !config.Enabled() {
 		log.Println("NEZHA>> TSDB is disabled (tsdb.data_path not configured)")
 		return nil
@@ -47,15 +51,12 @@ func InitTSDB() error {
 	return nil
 }
 
-// TSDBEnabled 检查 TSDB 是否已启用
 func TSDBEnabled() bool {
 	return TSDBShared != nil && !TSDBShared.IsClosed()
 }
 
-// CloseTSDB 关闭 TSDB
 func CloseTSDB() {
 	if TSDBShared != nil {
 		TSDBShared.Close()
-		TSDBShared = nil
 	}
 }

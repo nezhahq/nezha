@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -109,11 +110,17 @@ func main() {
 		os.Exit(0)
 	}
 
-	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
-	// 初始化 dao 包
+	serviceSentinelDispatchBus := make(chan *model.Service)
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
 		singleton.InitTimezoneAndCache,
+		func() error {
+			if singleton.Conf.Memory.GoMemLimitMB > 0 {
+				debug.SetMemoryLimit(singleton.Conf.Memory.GoMemLimitMB * 1024 * 1024)
+				log.Printf("NEZHA>> Go memory limit set to %d MB", singleton.Conf.Memory.GoMemLimitMB)
+			}
+			return nil
+		},
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
 		singleton.InitTSDB,
 		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
