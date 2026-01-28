@@ -31,13 +31,6 @@ jobs:
           wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
           chmod +x /usr/bin/yq
 
-      - name: Install cross-compile zstd library
-        if: matrix.goarch == 's390x'
-        run: |
-          dpkg --add-architecture s390x
-          apt update
-          apt install -y libzstd-dev:s390x
-
       - run: git config --global --add safe.directory /__w/nezha/nezha
 
       - uses: actions/checkout@v4
@@ -63,6 +56,20 @@ jobs:
           go install github.com/swaggo/swag/cmd/swag@latest
           swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
           go mod tidy
+
+      - name: Build zstd for s390x
+        if: matrix.goarch == 's390x'
+        run: |
+          # gozstd doesn't ship prebuilt libzstd for s390x, build it manually
+          GOZSTD_VER=$(go list -m -f '{{.Version}}' github.com/valyala/gozstd)
+          GOZSTD_PATH=$(go env GOMODCACHE)/github.com/valyala/gozstd@${GOZSTD_VER}
+          cd ${GOZSTD_PATH}/zstd/lib
+          CC=s390x-linux-gnu-gcc \
+            CXX=s390x-linux-gnu-g++ \
+            AR=s390x-linux-gnu-ar \
+            ZSTD_LEGACY_SUPPORT=0 \
+            make clean libzstd.a
+          cp libzstd.a ${GOZSTD_PATH}/libzstd_linux_s390x.a
 
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
