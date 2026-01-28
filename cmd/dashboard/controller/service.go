@@ -205,6 +205,11 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return result, nil
 	}
 
+	historyResults, err := singleton.TSDBShared.QueryServiceHistoryByServerID(serverID, period)
+	if err != nil {
+		return nil, err
+	}
+
 	for serviceID, service := range services {
 		if service.Cover == model.ServiceCoverAll {
 			if service.SkipServers[serverID] {
@@ -216,33 +221,28 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 			}
 		}
 
-		historyResult, err := singleton.TSDBShared.QueryServiceHistory(serviceID, period)
-		if err != nil {
+		historyResult, ok := historyResults[serviceID]
+		if !ok || len(historyResult.Servers) == 0 {
 			continue
 		}
 
-		for _, serverStats := range historyResult.Servers {
-			if serverStats.ServerID != serverID {
-				continue
-			}
+		serverStats := historyResult.Servers[0]
 
-			infos := &model.ServiceInfos{
-				ServiceID:   serviceID,
-				ServerID:    serverID,
-				ServiceName: service.Name,
-				ServerName:  server.Name,
-				CreatedAt:   make([]int64, len(serverStats.Stats.DataPoints)),
-				AvgDelay:    make([]float32, len(serverStats.Stats.DataPoints)),
-			}
-
-			for i, dp := range serverStats.Stats.DataPoints {
-				infos.CreatedAt[i] = dp.Timestamp
-				infos.AvgDelay[i] = dp.Delay
-			}
-
-			result = append(result, infos)
-			break
+		infos := &model.ServiceInfos{
+			ServiceID:   serviceID,
+			ServerID:    serverID,
+			ServiceName: service.Name,
+			ServerName:  server.Name,
+			CreatedAt:   make([]int64, len(serverStats.Stats.DataPoints)),
+			AvgDelay:    make([]float32, len(serverStats.Stats.DataPoints)),
 		}
+
+		for i, dp := range serverStats.Stats.DataPoints {
+			infos.CreatedAt[i] = dp.Timestamp
+			infos.AvgDelay[i] = dp.Delay
+		}
+
+		result = append(result, infos)
 	}
 
 	return result, nil

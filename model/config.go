@@ -91,7 +91,7 @@ type HTTPSConf struct {
 type TSDBConf struct {
 	DataPath                 string  `koanf:"data_path" json:"data_path,omitempty"`
 	RetentionDays            uint16  `koanf:"retention_days" json:"retention_days,omitempty"`
-	MaxDiskUsageGB           float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"`
+	MinFreeDiskSpaceGB       float64 `koanf:"min_free_disk_space_gb" json:"min_free_disk_space_gb,omitempty"`
 	MaxMemoryMB              int64   `koanf:"max_memory_mb" json:"max_memory_mb,omitempty"`
 	WriteBufferSize          int     `koanf:"write_buffer_size" json:"write_buffer_size,omitempty"`
 	WriteBufferFlushInterval int     `koanf:"write_buffer_flush_interval" json:"write_buffer_flush_interval,omitempty"`

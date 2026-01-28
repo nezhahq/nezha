@@ -15,7 +15,7 @@ func TestConfig_Defaults(t *testing.T) {
 
 	assert.Equal(t, "", config.DataPath) // 默认为空，不启用 TSDB
 	assert.Equal(t, uint16(30), config.RetentionDays)
-	assert.Equal(t, float64(5), config.MaxDiskUsageGB)
+	assert.Equal(t, float64(1), config.MinFreeDiskSpaceGB)
 	assert.Equal(t, 30*time.Second, config.DedupInterval)
 	assert.False(t, config.Enabled())
 }
@@ -28,10 +28,10 @@ func TestConfig_Enabled(t *testing.T) {
 	assert.True(t, config.Enabled())
 }
 
-func TestConfig_MaxDiskUsageBytes(t *testing.T) {
-	config := &Config{MaxDiskUsageGB: 5}
+func TestConfig_MinFreeDiskSpaceBytes(t *testing.T) {
+	config := &Config{MinFreeDiskSpaceGB: 5}
 	expected := int64(5 * 1024 * 1024 * 1024)
-	assert.Equal(t, expected, config.MaxDiskUsageBytes())
+	assert.Equal(t, expected, config.MinFreeDiskSpaceBytes())
 }
 
 func TestTSDB_OpenClose(t *testing.T) {
@@ -40,10 +40,10 @@ func TestTSDB_OpenClose(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -69,10 +69,10 @@ func TestTSDB_WriteServerMetrics(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -114,10 +114,10 @@ func TestTSDB_WriteServiceMetrics(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -157,10 +157,10 @@ func TestTSDB_WriteBatchMetrics(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -196,10 +196,10 @@ func TestTSDB_WriteToClosedDB(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -260,10 +260,10 @@ func TestTSDB_QueryServiceHistory(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -334,10 +334,10 @@ func TestTSDB_QueryServerMetrics(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -373,10 +373,10 @@ func TestTSDB_QueryEmptyResult(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -401,10 +401,10 @@ func TestTSDB_QueryClosedDB(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)
@@ -447,10 +447,10 @@ func TestDownsample(t *testing.T) {
 
 func TestCalculateStats(t *testing.T) {
 	points := []rawDataPoint{
-		{timestamp: 1000, delay: 10, status: 1},
-		{timestamp: 2000, delay: 20, status: 1},
-		{timestamp: 3000, delay: 30, status: 0},
-		{timestamp: 4000, delay: 40, status: 1},
+		{timestamp: 1000, delay: 10, status: 1, hasStatus: true},
+		{timestamp: 2000, delay: 20, status: 1, hasStatus: true},
+		{timestamp: 3000, delay: 30, status: 0, hasStatus: true},
+		{timestamp: 4000, delay: 40, status: 1, hasStatus: true},
 	}
 
 	stats := calculateStats(points, 5*time.Minute)
@@ -482,10 +482,10 @@ func TestInstance(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	config := &Config{
-		DataPath:       filepath.Join(tempDir, "tsdb"),
-		RetentionDays:  1,
-		MaxDiskUsageGB: 1,
-		DedupInterval:  time.Second,
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
 	}
 
 	db, err := Open(config)

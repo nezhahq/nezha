@@ -40,12 +40,13 @@ func Open(config *Config) (*TSDB, error) {
 	}
 
 	memBytes := int(config.MaxMemoryMB * 1024 * 1024)
-	storage.SetTSIDCacheSize(memBytes * 37 / 100)
+	storage.SetTSIDCacheSize(memBytes * 35 / 100)
 	storage.SetMetricNameCacheSize(memBytes * 10 / 100)
+	storage.SetTagFiltersCacheSize(memBytes * 5 / 100)
 	storage.SetMetadataStorageSize(memBytes * 1 / 100)
 
 	storage.SetDedupInterval(config.DedupInterval)
-	storage.SetFreeDiskSpaceLimit(config.FreeDiskSpaceLimitBytes())
+	storage.SetFreeDiskSpaceLimit(config.MinFreeDiskSpaceBytes())
 	storage.SetDataFlushInterval(5 * time.Second)
 
 	opts := storage.OpenOptions{
@@ -61,8 +62,8 @@ func Open(config *Config) (*TSDB, error) {
 
 	db.writer = newBufferedWriter(db, config.WriteBufferSize, config.WriteBufferFlushInterval)
 
-	log.Printf("NEZHA>> TSDB opened at %s, retention: %d days, max disk: %.1f GB, max memory: %d MB",
-		dataPath, config.RetentionDays, config.MaxDiskUsageGB, config.MaxMemoryMB)
+	log.Printf("NEZHA>> TSDB opened at %s, retention: %d days, min free disk: %.1f GB, max memory: %d MB",
+		dataPath, config.RetentionDays, config.MinFreeDiskSpaceGB, config.MaxMemoryMB)
 
 	return db, nil
 }

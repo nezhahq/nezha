@@ -11,9 +11,9 @@ var TSDBShared *tsdb.TSDB
 
 func InitTSDB() error {
 	config := &tsdb.Config{
-		RetentionDays:  30,
-		MaxDiskUsageGB: 5,
-		MaxMemoryMB:    256,
+		RetentionDays:      30,
+		MinFreeDiskSpaceGB: 1,
+		MaxMemoryMB:        256,
 	}
 
 	if Conf.TSDB.DataPath != "" {
@@ -22,8 +22,8 @@ func InitTSDB() error {
 	if Conf.TSDB.RetentionDays > 0 {
 		config.RetentionDays = Conf.TSDB.RetentionDays
 	}
-	if Conf.TSDB.MaxDiskUsageGB > 0 {
-		config.MaxDiskUsageGB = Conf.TSDB.MaxDiskUsageGB
+	if Conf.TSDB.MinFreeDiskSpaceGB > 0 {
+		config.MinFreeDiskSpaceGB = Conf.TSDB.MinFreeDiskSpaceGB
 	}
 	if Conf.TSDB.MaxMemoryMB > 0 {
 		config.MaxMemoryMB = Conf.TSDB.MaxMemoryMB

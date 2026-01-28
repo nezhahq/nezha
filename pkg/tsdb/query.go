@@ -3,6 +3,7 @@ package tsdb
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
@@ -93,6 +94,7 @@ type rawDataPoint struct {
 	timestamp int64
 	delay     float64
 	status    float64
+	hasStatus bool
 }
 
 // QueryServiceHistory 查询服务监控历史
@@ -148,10 +150,12 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 		for _, p := range points {
 			if existing, ok := serverDataMap[serverID][p.timestamp]; ok {
 				existing.status = p.value
+				existing.hasStatus = true
 			} else {
 				serverDataMap[serverID][p.timestamp] = &rawDataPoint{
 					timestamp: p.timestamp,
 					status:    p.value,
+					hasStatus: true,
 				}
 			}
 		}
@@ -268,10 +272,12 @@ func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) Ser
 			totalDelay += p.delay
 			delayCount++
 		}
-		if p.status >= 0.5 {
-			totalUp++
-		} else {
-			totalDown++
+		if p.hasStatus {
+			if p.status >= 0.5 {
+				totalUp++
+			} else {
+				totalDown++
+			}
 		}
 	}
 
@@ -325,14 +331,18 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 		var totalDelay float64
 		var delayCount int
 		var upCount int
+		var statusCount int
 
 		for _, p := range bucket {
 			if p.delay > 0 {
 				totalDelay += p.delay
 				delayCount++
 			}
-			if p.status >= 0.5 {
-				upCount++
+			if p.hasStatus {
+				statusCount++
+				if p.status >= 0.5 {
+					upCount++
+				}
 			}
 		}
 
@@ -342,7 +352,7 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 		}
 
 		var status uint8
-		if upCount > len(bucket)/2 {
+		if statusCount > 0 && upCount > statusCount/2 {
 			status = 1
 		}
 
@@ -415,4 +425,145 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 	// 降采样
 	downsampled := downsample(points, period.DownsampleInterval())
 	return downsampled, nil
+}
+
+// QueryServiceHistoryByServerID 按服务器ID批量查询所有服务监控历史
+func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPeriod) (map[uint64]*ServiceHistoryResult, error) {
+	if db.IsClosed() {
+		return nil, fmt.Errorf("TSDB is closed")
+	}
+
+	now := time.Now()
+	tr := storage.TimeRange{
+		MinTimestamp: now.Add(-period.Duration()).UnixMilli(),
+		MaxTimestamp: now.UnixMilli(),
+	}
+
+	serverIDStr := fmt.Sprintf("%d", serverID)
+
+	delayData, err := db.queryMetricByServerID(MetricServiceDelay, serverIDStr, tr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query delay data: %w", err)
+	}
+
+	statusData, err := db.queryMetricByServerID(MetricServiceStatus, serverIDStr, tr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query status data: %w", err)
+	}
+
+	serviceDataMap := make(map[uint64]map[int64]*rawDataPoint)
+
+	for serviceID, points := range delayData {
+		if serviceDataMap[serviceID] == nil {
+			serviceDataMap[serviceID] = make(map[int64]*rawDataPoint)
+		}
+		for _, p := range points {
+			serviceDataMap[serviceID][p.timestamp] = &rawDataPoint{
+				timestamp: p.timestamp,
+				delay:     p.value,
+			}
+		}
+	}
+
+	for serviceID, points := range statusData {
+		if serviceDataMap[serviceID] == nil {
+			serviceDataMap[serviceID] = make(map[int64]*rawDataPoint)
+		}
+		for _, p := range points {
+			if existing, ok := serviceDataMap[serviceID][p.timestamp]; ok {
+				existing.status = p.value
+				existing.hasStatus = true
+			} else {
+				serviceDataMap[serviceID][p.timestamp] = &rawDataPoint{
+					timestamp: p.timestamp,
+					status:    p.value,
+					hasStatus: true,
+				}
+			}
+		}
+	}
+
+	results := make(map[uint64]*ServiceHistoryResult)
+
+	for serviceID, pointsMap := range serviceDataMap {
+		points := make([]rawDataPoint, 0, len(pointsMap))
+		for _, p := range pointsMap {
+			points = append(points, *p)
+		}
+		stats := calculateStats(points, period.DownsampleInterval())
+		results[serviceID] = &ServiceHistoryResult{
+			ServiceID: serviceID,
+			Servers: []ServerServiceStats{{
+				ServerID: serverID,
+				Stats:    stats,
+			}},
+		}
+	}
+
+	return results, nil
+}
+
+// queryMetricByServerID 按 server_id 查询所有服务的指标数据
+func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr storage.TimeRange) (map[uint64][]metricPoint, error) {
+	tfs := storage.NewTagFilters()
+	if err := tfs.Add(nil, []byte(metric), false, false); err != nil {
+		return nil, err
+	}
+	if err := tfs.Add([]byte("server_id"), []byte(serverID), false, false); err != nil {
+		return nil, err
+	}
+
+	deadline := uint64(time.Now().Add(30 * time.Second).Unix())
+
+	var search storage.Search
+	search.Init(nil, db.storage, []*storage.TagFilters{tfs}, tr, 100000, deadline)
+	defer search.MustClose()
+
+	result := make(map[uint64][]metricPoint)
+
+	for search.NextMetricBlock() {
+		mbr := search.MetricBlockRef
+		var block storage.Block
+		mbr.BlockRef.MustReadBlock(&block)
+
+		mn := storage.GetMetricName()
+		if err := mn.Unmarshal(mbr.MetricName); err != nil {
+			storage.PutMetricName(mn)
+			continue
+		}
+
+		serviceIDBytes := mn.GetTagValue("service_id")
+		if len(serviceIDBytes) == 0 {
+			storage.PutMetricName(mn)
+			continue
+		}
+
+		serviceID, err := strconv.ParseUint(string(serviceIDBytes), 10, 64)
+		if err != nil {
+			storage.PutMetricName(mn)
+			continue
+		}
+		storage.PutMetricName(mn)
+
+		if err := block.UnmarshalData(); err != nil {
+			continue
+		}
+
+		timestamps := make([]int64, 0)
+		values := make([]float64, 0)
+		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
+
+		for i := range timestamps {
+			result[serviceID] = append(result[serviceID], metricPoint{
+				timestamp: timestamps[i],
+				value:     values[i],
+			})
+		}
+	}
+
+	if err := search.Error(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
 }

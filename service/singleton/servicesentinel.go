@@ -52,8 +52,9 @@ type serviceTaskStatus struct {
 }
 
 type pingStore struct {
-	count int
-	ping  float32
+	count        int
+	ping         float32
+	successCount int
 }
 
 /*
@@ -395,21 +396,24 @@ func (ss *ServiceSentinel) worker() {
 			}
 			ts.count++
 			ts.ping = (ts.ping*float32(ts.count-1) + mh.Delay) / float32(ts.count)
+			if mh.Successful {
+				ts.successCount++
+			}
 			if ts.count == Conf.AvgPingCount {
-				// 写入 TSDB（如果已启用）
 				if TSDBEnabled() {
 					if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
 						ServiceID:  mh.GetId(),
 						ServerID:   r.Reporter,
 						Timestamp:  time.Now(),
 						Delay:      ts.ping,
-						Successful: mh.Successful,
+						Successful: ts.successCount*2 >= ts.count,
 					}); err != nil {
 						log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
 					}
 				}
 				ts.count = 0
 				ts.ping = mh.Delay
+				ts.successCount = 0
 			}
 			serviceTcpMap[r.Reporter] = ts
 		} else {

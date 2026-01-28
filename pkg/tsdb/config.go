@@ -8,8 +8,9 @@ type Config struct {
 	DataPath string `koanf:"data_path" json:"data_path,omitempty"`
 	// RetentionDays 数据保留天数，默认 30 天
 	RetentionDays uint16 `koanf:"retention_days" json:"retention_days,omitempty"`
-	// MaxDiskUsageGB 最大磁盘使用量(GB)，默认 5GB
-	MaxDiskUsageGB float64 `koanf:"max_disk_usage_gb" json:"max_disk_usage_gb,omitempty"`
+	// MinFreeDiskSpaceGB 最小磁盘剩余空间(GB)，默认 1GB
+	// 当磁盘剩余空间低于此值时，TSDB 将停止接收新数据以防止磁盘耗尽
+	MinFreeDiskSpaceGB float64 `koanf:"min_free_disk_space_gb" json:"min_free_disk_space_gb,omitempty"`
 	// MaxMemoryMB 最大内存使用量(MB)，默认 256MB，用于限制 VictoriaMetrics 缓存
 	MaxMemoryMB int64 `koanf:"max_memory_mb" json:"max_memory_mb,omitempty"`
 	// DedupInterval 去重间隔，默认 30 秒
@@ -25,7 +26,7 @@ func DefaultConfig() *Config {
 	return &Config{
 		DataPath:                 "",
 		RetentionDays:            30,
-		MaxDiskUsageGB:           5,
+		MinFreeDiskSpaceGB:       1,
 		MaxMemoryMB:              256,
 		DedupInterval:            30 * time.Second,
 		WriteBufferSize:          512,
@@ -38,8 +39,8 @@ func (c *Config) Validate() {
 	if c.RetentionDays == 0 {
 		c.RetentionDays = 30
 	}
-	if c.MaxDiskUsageGB <= 0 {
-		c.MaxDiskUsageGB = 5
+	if c.MinFreeDiskSpaceGB <= 0 {
+		c.MinFreeDiskSpaceGB = 1
 	}
 	if c.MaxMemoryMB <= 0 {
 		c.MaxMemoryMB = 256
@@ -60,13 +61,7 @@ func (c *Config) Enabled() bool {
 	return c.DataPath != ""
 }
 
-// MaxDiskUsageBytes 返回最大磁盘使用量（字节）
-func (c *Config) MaxDiskUsageBytes() int64 {
-	return int64(c.MaxDiskUsageGB * 1024 * 1024 * 1024)
-}
-
-// FreeDiskSpaceLimitBytes 返回磁盘空闲空间限制（字节）
-// 设置为最大使用量的 10%，确保不会耗尽磁盘
-func (c *Config) FreeDiskSpaceLimitBytes() int64 {
-	return int64(c.MaxDiskUsageGB * 1024 * 1024 * 1024 * 0.1)
+// MinFreeDiskSpaceBytes 返回最小磁盘剩余空间（字节）
+func (c *Config) MinFreeDiskSpaceBytes() int64 {
+	return int64(c.MinFreeDiskSpaceGB * 1024 * 1024 * 1024)
 }
