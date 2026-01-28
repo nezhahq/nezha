@@ -94,13 +94,6 @@ func InitDBFromPath(path string) error {
 		return err
 	}
 
-	if DB.Migrator().HasTable("service_histories") {
-		log.Println("NEZHA>> WARNING: Dropping legacy service_histories table. Historical data will NOT be migrated to TSDB.")
-		if err := DB.Migrator().DropTable("service_histories"); err != nil {
-			log.Printf("NEZHA>> Warning: failed to drop service_histories table: %v", err)
-		}
-	}
-
 	return nil
 }
 

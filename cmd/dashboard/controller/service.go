@@ -102,9 +102,14 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
 	}
 
-	// 从 TSDB 查询数据
+	response := &model.ServiceHistoryResponse{
+		ServiceID:   serviceID,
+		ServiceName: service.Name,
+		Servers:     make([]model.ServerServiceStats, 0),
+	}
+
 	if !singleton.TSDBEnabled() {
-		return nil, singleton.Localizer.ErrorT("TSDB is not enabled")
+		return response, nil
 	}
 
 	result, err := singleton.TSDBShared.QueryServiceHistory(serviceID, period)
@@ -112,14 +117,7 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 		return nil, err
 	}
 
-	// 填充服务名称和服务器名称
 	serverMap := singleton.ServerShared.GetList()
-
-	response := &model.ServiceHistoryResponse{
-		ServiceID:   result.ServiceID,
-		ServiceName: service.Name,
-		Servers:     make([]model.ServerServiceStats, 0, len(result.Servers)),
-	}
 
 	for _, serverStats := range result.Servers {
 		serverName := ""
@@ -199,13 +197,15 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
 	}
 
-	// 获取所有服务
 	services := singleton.ServiceSentinelShared.GetList()
 
 	var result []*model.ServiceInfos
 
+	if !singleton.TSDBEnabled() {
+		return result, nil
+	}
+
 	for serviceID, service := range services {
-		// 检查这个服务器是否应该监控这个服务
 		if service.Cover == model.ServiceCoverAll {
 			if service.SkipServers[serverID] {
 				continue
@@ -216,17 +216,11 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 			}
 		}
 
-		// 从 TSDB 查询这个服务的数据
-		if !singleton.TSDBEnabled() {
-			continue
-		}
-
 		historyResult, err := singleton.TSDBShared.QueryServiceHistory(serviceID, period)
 		if err != nil {
 			continue
 		}
 
-		// 找到这个服务器的数据
 		for _, serverStats := range historyResult.Servers {
 			if serverStats.ServerID != serverID {
 				continue
@@ -280,8 +274,10 @@ func listServerWithServices(c *gin.Context) ([]uint64, error) {
 			}
 		} else {
 			// 只包含指定的服务器
-			for serverID := range service.SkipServers {
-				serverIDSet[serverID] = true
+			for serverID, enabled := range service.SkipServers {
+				if enabled {
+					serverIDSet[serverID] = true
+				}
 			}
 		}
 	}

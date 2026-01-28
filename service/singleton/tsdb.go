@@ -48,6 +48,14 @@ func InitTSDB() error {
 
 	tsdb.SetInstance(TSDBShared)
 	log.Println("NEZHA>> TSDB initialized successfully")
+
+	if DB != nil && DB.Migrator().HasTable("service_histories") {
+		log.Println("NEZHA>> Dropping legacy service_histories table (TSDB is now enabled). Historical data will NOT be migrated.")
+		if err := DB.Migrator().DropTable("service_histories"); err != nil {
+			log.Printf("NEZHA>> Warning: failed to drop service_histories table: %v", err)
+		}
+	}
+
 	return nil
 }
 

@@ -41,6 +41,25 @@ builds:
       - amd64
     main: ./cmd/dashboard
     binary: dashboard-{{ .Os }}-{{ .Arch }}
+  - id: linux_s390x
+    env:
+      - CGO_ENABLED=1
+      - CC=s390x-linux-gnu-gcc
+    ldflags:
+      - -s -w
+      - -X github.com/nezhahq/nezha/service/singleton.Version={{.Version}}
+      - -extldflags "-static -fpic"
+    flags:
+      - -trimpath
+      - -buildvcs=false
+    tags:
+      - go_json
+    goos:
+      - linux
+    goarch:
+      - s390x
+    main: ./cmd/dashboard
+    binary: dashboard-{{ .Os }}-{{ .Arch }}
   - id: windows_amd64
     env:
       - CGO_ENABLED=1

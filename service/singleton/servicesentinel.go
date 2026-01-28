@@ -383,6 +383,7 @@ func (ss *ServiceSentinel) worker() {
 
 		mh := r.Data
 		if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
+			// TCP/ICMP Ping 使用平均值计算后再写入
 			serviceTcpMap, ok := ss.serviceResponsePing[mh.GetId()]
 			if !ok {
 				serviceTcpMap = make(map[uint64]*pingStore)
@@ -411,6 +412,19 @@ func (ss *ServiceSentinel) worker() {
 				ts.ping = mh.Delay
 			}
 			serviceTcpMap[r.Reporter] = ts
+		} else {
+			// HTTP 等其他类型直接写入 TSDB
+			if TSDBEnabled() {
+				if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
+					ServiceID:  mh.GetId(),
+					ServerID:   r.Reporter,
+					Timestamp:  time.Now(),
+					Delay:      mh.Delay,
+					Successful: mh.Successful,
+				}); err != nil {
+					log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
+				}
+			}
 		}
 
 		ss.serviceResponseDataStoreLock.Lock()
