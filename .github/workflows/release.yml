@@ -60,21 +60,25 @@ jobs:
       - name: Build zstd for s390x
         if: matrix.goarch == 's390x'
         run: |
-          # gozstd doesn't ship prebuilt libzstd for s390x, build it manually using vendor
+          # gozstd doesn't ship prebuilt libzstd for s390x, build it manually
           go mod vendor
           
-          # Build libzstd.a for s390x
-          cd vendor/github.com/valyala/gozstd/zstd/lib
+          # Clone zstd source and build for s390x
+          ZSTD_VERSION=v1.5.7
+          git clone --depth 1 --branch ${ZSTD_VERSION} https://github.com/facebook/zstd /tmp/zstd
+          cd /tmp/zstd/lib
           CC=s390x-linux-gnu-gcc \
             CXX=s390x-linux-gnu-g++ \
             AR=s390x-linux-gnu-ar \
             ZSTD_LEGACY_SUPPORT=0 \
             make clean libzstd.a
-          cd ../..
-          cp zstd/lib/libzstd.a libzstd_linux_s390x.a
+          
+          # Copy to vendor directory
+          GOZSTD_VENDOR=${GITHUB_WORKSPACE}/vendor/github.com/valyala/gozstd
+          cp libzstd.a ${GOZSTD_VENDOR}/libzstd_linux_s390x.a
           
           # Create the Go file to link the library
-          printf '//go:build linux && s390x\n\npackage gozstd\n\n/*\n#cgo LDFLAGS: ${SRCDIR}/libzstd_linux_s390x.a\n*/\nimport "C"\n' > libzstd_linux_s390x.go
+          printf '//go:build linux && s390x\n\npackage gozstd\n\n/*\n#cgo LDFLAGS: ${SRCDIR}/libzstd_linux_s390x.a\n*/\nimport "C"\n' > ${GOZSTD_VENDOR}/libzstd_linux_s390x.go
 
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
