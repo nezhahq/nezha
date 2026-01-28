@@ -113,3 +113,17 @@ func updateConfig(c *gin.Context) (any, error) {
 	singleton.OnUpdateLang(singleton.Conf.Language)
 	return nil, nil
 }
+
+// Perform maintenance
+// @Summary Perform maintenance
+// @Security BearerAuth
+// @Schemes
+// @Description Perform system maintenance (SQLite VACUUM and TSDB maintenance)
+// @Tags admin required
+// @Produce json
+// @Success 200 {object} model.CommonResponse[any]
+// @Router /maintenance [post]
+func runMaintenance(c *gin.Context) (any, error) {
+	singleton.PerformMaintenance()
+	return nil, nil
+}

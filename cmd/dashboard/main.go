@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -65,8 +66,8 @@ func initSystem(bus chan<- *model.Service) error {
 		return err
 	}
 
-	// 每天的3:30 对 监控记录 和 流量记录 进行清理
-	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanServiceHistory); err != nil {
+	// 每天的3:30 对流量记录进行清理
+	if _, err := singleton.CronShared.AddFunc("0 30 3 * * *", singleton.CleanMonitorHistory); err != nil {
 		return err
 	}
 
@@ -109,12 +110,19 @@ func main() {
 		os.Exit(0)
 	}
 
-	serviceSentinelDispatchBus := make(chan *model.Service) // 用于传递服务监控任务信息的channel
-	// 初始化 dao 包
+	serviceSentinelDispatchBus := make(chan *model.Service)
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
 		singleton.InitTimezoneAndCache,
+		func() error {
+			if singleton.Conf.Memory.GoMemLimitMB > 0 {
+				debug.SetMemoryLimit(singleton.Conf.Memory.GoMemLimitMB * 1024 * 1024)
+				log.Printf("NEZHA>> Go memory limit set to %d MB", singleton.Conf.Memory.GoMemLimitMB)
+			}
+			return nil
+		},
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
+		singleton.InitTSDB,
 		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
 		log.Fatal(err)
 	}
@@ -124,7 +132,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	singleton.CleanServiceHistory()
+	singleton.CleanMonitorHistory()
 	rpc.DispatchKeepalive()
 	go rpc.DispatchTask(serviceSentinelDispatchBus)
 	go singleton.AlertSentinelStart()
@@ -172,6 +180,7 @@ func main() {
 	}, func(c context.Context) error {
 		log.Println("NEZHA>> Graceful::START")
 		singleton.RecordTransferHourlyUsage()
+		singleton.CloseTSDB()
 		log.Println("NEZHA>> Graceful::END")
 		var err error
 		if muxServerHTTPS != nil {

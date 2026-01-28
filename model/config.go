@@ -70,6 +70,12 @@ type Config struct {
 	// HTTPS 配置
 	HTTPS HTTPSConf `koanf:"https" json:"https"`
 
+	// TSDB 配置
+	TSDB TSDBConf `koanf:"tsdb" json:"tsdb"`
+
+	// 内存配置
+	Memory MemoryConf `koanf:"memory" json:"memory"`
+
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
 }
@@ -79,6 +85,22 @@ type HTTPSConf struct {
 	ListenPort  uint16 `koanf:"listen_port" json:"listen_port,omitempty"`
 	TLSCertPath string `koanf:"tls_cert_path" json:"tls_cert_path,omitempty"`
 	TLSKeyPath  string `koanf:"tls_key_path" json:"tls_key_path,omitempty"`
+}
+
+// TSDBConf TSDB 配置
+type TSDBConf struct {
+	DataPath                 string  `koanf:"data_path" json:"data_path,omitempty"`
+	RetentionDays            uint16  `koanf:"retention_days" json:"retention_days,omitempty"`
+	MinFreeDiskSpaceGB       float64 `koanf:"min_free_disk_space_gb" json:"min_free_disk_space_gb,omitempty"`
+	MaxMemoryMB              int64   `koanf:"max_memory_mb" json:"max_memory_mb,omitempty"`
+	WriteBufferSize          int     `koanf:"write_buffer_size" json:"write_buffer_size,omitempty"`
+	WriteBufferFlushInterval int     `koanf:"write_buffer_flush_interval" json:"write_buffer_flush_interval,omitempty"`
+}
+
+// MemoryConf 内存配置
+type MemoryConf struct {
+	// GoMemLimitMB Go 运行时内存限制(MB)，0 表示不限制
+	GoMemLimitMB int64 `koanf:"go_mem_limit_mb" json:"go_mem_limit_mb,omitempty"`
 }
 
 // Read 读取配置文件并应用

@@ -12,6 +12,7 @@ import (
 	"github.com/jinzhu/copier"
 	geoipx "github.com/nezhahq/nezha/pkg/geoip"
 	"github.com/nezhahq/nezha/pkg/grpcx"
+	"github.com/nezhahq/nezha/pkg/tsdb"
 
 	"github.com/nezhahq/nezha/model"
 	pb "github.com/nezhahq/nezha/proto"
@@ -113,6 +114,44 @@ func (s *NezhaHandler) ReportSystemState(stream pb.NezhaService_ReportSystemStat
 
 		server.LastActive = time.Now()
 		server.State = &innerState
+
+		if singleton.TSDBEnabled() {
+			maxTemp := 0.0
+			for _, t := range innerState.Temperatures {
+				if t.Temperature > maxTemp {
+					maxTemp = t.Temperature
+				}
+			}
+			maxGPU := 0.0
+			for _, g := range innerState.GPU {
+				if g > maxGPU {
+					maxGPU = g
+				}
+			}
+			if err := singleton.TSDBShared.WriteServerMetrics(&tsdb.ServerMetrics{
+				ServerID:       clientID,
+				Timestamp:      time.Now(),
+				CPU:            innerState.CPU,
+				MemUsed:        innerState.MemUsed,
+				SwapUsed:       innerState.SwapUsed,
+				DiskUsed:       innerState.DiskUsed,
+				NetInSpeed:     innerState.NetInSpeed,
+				NetOutSpeed:    innerState.NetOutSpeed,
+				NetInTransfer:  innerState.NetInTransfer,
+				NetOutTransfer: innerState.NetOutTransfer,
+				Load1:          innerState.Load1,
+				Load5:          innerState.Load5,
+				Load15:         innerState.Load15,
+				TCPConnCount:   innerState.TcpConnCount,
+				UDPConnCount:   innerState.UdpConnCount,
+				ProcessCount:   innerState.ProcessCount,
+				Temperature:    maxTemp,
+				Uptime:         innerState.Uptime,
+				GPU:            maxGPU,
+			}); err != nil {
+				log.Printf("NEZHA>> Failed to write server metrics to TSDB: %v", err)
+			}
+		}
 
 		// 应对 dashboard / agent 重启的情况，如果从未记录过，先打点，等到小时时间点时入库
 		if server.PrevTransferInSnapshot == 0 || server.PrevTransferOutSnapshot == 0 {
