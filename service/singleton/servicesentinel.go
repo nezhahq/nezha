@@ -40,7 +40,7 @@ type ReportData struct {
 type _TodayStatsOfService struct {
 	Up    uint64  // 今日在线计数
 	Down  uint64  // 今日离线计数
-	Delay float32 // 今日平均延迟
+	Delay float64 // 今日平均延迟
 }
 
 type serviceResponseData = _TodayStatsOfService
@@ -53,7 +53,7 @@ type serviceTaskStatus struct {
 
 type pingStore struct {
 	count        int
-	ping         float32
+	ping         float64
 	successCount int
 }
 
@@ -208,9 +208,9 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		ss.monthlyStatus[service.ID] = &serviceResponseItem{
 			service: service,
 			ServiceResponseItem: model.ServiceResponseItem{
-				Delay: &[30]float32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-				Up:    &[30]uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-				Down:  &[30]uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Delay: &[30]float64{},
+				Up:    &[30]uint64{},
+				Down:  &[30]uint64{},
 			},
 		}
 	}
@@ -244,9 +244,9 @@ func (ss *ServiceSentinel) Update(m *model.Service) error {
 		ss.monthlyStatus[m.ID] = &serviceResponseItem{
 			service: m,
 			ServiceResponseItem: model.ServiceResponseItem{
-				Delay: &[30]float32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-				Up:    &[30]uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
-				Down:  &[30]uint64{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0},
+				Delay: &[30]float64{},
+				Up:    &[30]uint64{},
+				Down:  &[30]uint64{},
 			},
 		}
 		if ss.serviceCurrentStatusData[m.ID] == nil {
@@ -395,7 +395,7 @@ func (ss *ServiceSentinel) worker() {
 				ts = &pingStore{}
 			}
 			ts.count++
-			ts.ping = (ts.ping*float32(ts.count-1) + mh.Delay) / float32(ts.count)
+			ts.ping = (ts.ping*float64(ts.count-1) + float64(mh.Delay)) / float64(ts.count)
 			if mh.Successful {
 				ts.successCount++
 			}
@@ -412,7 +412,7 @@ func (ss *ServiceSentinel) worker() {
 					}
 				}
 				ts.count = 0
-				ts.ping = mh.Delay
+				ts.ping = 0
 				ts.successCount = 0
 			}
 			serviceTcpMap[r.Reporter] = ts
@@ -423,7 +423,7 @@ func (ss *ServiceSentinel) worker() {
 					ServiceID:  mh.GetId(),
 					ServerID:   r.Reporter,
 					Timestamp:  time.Now(),
-					Delay:      mh.Delay,
+					Delay:      float64(mh.Delay),
 					Successful: mh.Successful,
 				}); err != nil {
 					log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
@@ -435,8 +435,8 @@ func (ss *ServiceSentinel) worker() {
 		// 写入当天状态
 		if mh.Successful {
 			ss.serviceStatusToday[mh.GetId()].Delay = (ss.serviceStatusToday[mh.
-				GetId()].Delay*float32(ss.serviceStatusToday[mh.GetId()].Up) +
-				mh.Delay) / float32(ss.serviceStatusToday[mh.GetId()].Up+1)
+				GetId()].Delay*float64(ss.serviceStatusToday[mh.GetId()].Up) +
+				float64(mh.Delay)) / float64(ss.serviceStatusToday[mh.GetId()].Up+1)
 			ss.serviceStatusToday[mh.GetId()].Up++
 		} else {
 			ss.serviceStatusToday[mh.GetId()].Down++
@@ -462,7 +462,7 @@ func (ss *ServiceSentinel) worker() {
 				rd := ss.serviceResponseDataStore[mh.GetId()]
 				if cs.Successful {
 					rd.Up++
-					rd.Delay = (rd.Delay*float32(rd.Up-1) + cs.Delay) / float32(rd.Up)
+					rd.Delay = (rd.Delay*float64(rd.Up-1) + float64(cs.Delay)) / float64(rd.Up)
 				} else {
 					rd.Down++
 				}

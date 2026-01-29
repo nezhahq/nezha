@@ -285,7 +285,7 @@ func TestTSDB_QueryServiceHistory(t *testing.T) {
 			ServiceID:  serviceID,
 			ServerID:   serverID1,
 			Timestamp:  ts,
-			Delay:      float32(10 + i),
+			Delay:      float64(10 + i),
 			Successful: true,
 		})
 		require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestTSDB_QueryServiceHistory(t *testing.T) {
 			ServiceID:  serviceID,
 			ServerID:   serverID2,
 			Timestamp:  ts,
-			Delay:      float32(20 + i),
+			Delay:      float64(20 + i),
 			Successful: i%2 == 0, // 偶数成功，奇数失败
 		})
 		require.NoError(t, err)
@@ -423,11 +423,11 @@ func TestDownsample(t *testing.T) {
 	// 创建模拟数据点，时间戳使用毫秒
 	// 降采样按 interval 分桶，相同桶内的数据会被聚合
 	points := []rawDataPoint{
-		{timestamp: 0, delay: 10, status: 1},
-		{timestamp: 1000, delay: 20, status: 1},
-		{timestamp: 2000, delay: 30, status: 0},
-		{timestamp: 3000, delay: 40, status: 1},
-		{timestamp: 4000, delay: 50, status: 1},
+		{timestamp: 0, value: 10, status: 1},
+		{timestamp: 1000, value: 20, status: 1},
+		{timestamp: 2000, value: 30, status: 0},
+		{timestamp: 3000, value: 40, status: 1},
+		{timestamp: 4000, value: 50, status: 1},
 	}
 
 	// 使用2秒间隔进行降采样（2000ms）
@@ -447,10 +447,10 @@ func TestDownsample(t *testing.T) {
 
 func TestCalculateStats(t *testing.T) {
 	points := []rawDataPoint{
-		{timestamp: 1000, delay: 10, status: 1, hasStatus: true},
-		{timestamp: 2000, delay: 20, status: 1, hasStatus: true},
-		{timestamp: 3000, delay: 30, status: 0, hasStatus: true},
-		{timestamp: 4000, delay: 40, status: 1, hasStatus: true},
+		{timestamp: 1000, value: 10, status: 1, hasStatus: true},
+		{timestamp: 2000, value: 20, status: 1, hasStatus: true},
+		{timestamp: 3000, value: 30, status: 0, hasStatus: true},
+		{timestamp: 4000, value: 40, status: 1, hasStatus: true},
 	}
 
 	stats := calculateStats(points, 5*time.Minute)
@@ -459,7 +459,7 @@ func TestCalculateStats(t *testing.T) {
 	assert.Equal(t, uint64(3), stats.TotalUp)
 	assert.Equal(t, uint64(1), stats.TotalDown)
 	assert.Equal(t, float32(75), stats.UpPercent)
-	assert.Equal(t, float32(25), stats.AvgDelay) // (10+20+30+40)/4 = 25
+	assert.Equal(t, float64(25), stats.AvgDelay) // (10+20+30+40)/4 = 25
 }
 
 func TestCalculateStatsEmpty(t *testing.T) {
@@ -469,7 +469,7 @@ func TestCalculateStatsEmpty(t *testing.T) {
 	assert.Equal(t, uint64(0), stats.TotalUp)
 	assert.Equal(t, uint64(0), stats.TotalDown)
 	assert.Equal(t, float32(0), stats.UpPercent)
-	assert.Equal(t, float32(0), stats.AvgDelay)
+	assert.Equal(t, float64(0), stats.AvgDelay)
 	assert.Nil(t, stats.DataPoints)
 }
 
@@ -497,4 +497,149 @@ func TestInstance(t *testing.T) {
 
 	// 恢复原始状态
 	SetInstance(original)
+}
+
+func TestTSDB_QueryServerMetrics_Float64Precision(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "tsdb_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	config := &Config{
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
+	}
+
+	db, err := Open(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now()
+	serverID := uint64(1)
+	largeMemValue := uint64(17_179_869_184) // 16GB
+
+	err = db.WriteServerMetrics(&ServerMetrics{
+		ServerID:  serverID,
+		Timestamp: now,
+		MemUsed:   largeMemValue,
+	})
+	require.NoError(t, err)
+
+	db.Flush()
+
+	result, err := db.QueryServerMetrics(serverID, MetricServerMemory, Period1Day)
+	require.NoError(t, err)
+	require.NotEmpty(t, result)
+
+	// float64 可以精确表示该值，float32 会丢失精度
+	assert.Equal(t, float64(largeMemValue), result[0].Value)
+}
+
+func TestTSDB_QueryServiceHistoryByServerID(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "tsdb_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	config := &Config{
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
+	}
+
+	db, err := Open(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now()
+	serverID := uint64(1)
+	serviceID1 := uint64(100)
+	serviceID2 := uint64(200)
+
+	// 写入两个服务在同一服务器上的数据
+	for i := 0; i < 5; i++ {
+		ts := now.Add(-time.Duration(i) * time.Minute)
+
+		err := db.WriteServiceMetrics(&ServiceMetrics{
+			ServiceID:  serviceID1,
+			ServerID:   serverID,
+			Timestamp:  ts,
+			Delay:      float64(10 + i),
+			Successful: true,
+		})
+		require.NoError(t, err)
+
+		err = db.WriteServiceMetrics(&ServiceMetrics{
+			ServiceID:  serviceID2,
+			ServerID:   serverID,
+			Timestamp:  ts,
+			Delay:      float64(20 + i),
+			Successful: i%2 == 0,
+		})
+		require.NoError(t, err)
+	}
+
+	db.Flush()
+
+	results, err := db.QueryServiceHistoryByServerID(serverID, Period1Day)
+	require.NoError(t, err)
+	require.Len(t, results, 2, "expected 2 services")
+
+	// 验证 service1：全部成功
+	s1, ok := results[serviceID1]
+	require.True(t, ok)
+	assert.Equal(t, serviceID1, s1.ServiceID)
+	require.Len(t, s1.Servers, 1)
+	assert.Equal(t, serverID, s1.Servers[0].ServerID)
+	assert.Equal(t, uint64(5), s1.Servers[0].Stats.TotalUp)
+	assert.Equal(t, uint64(0), s1.Servers[0].Stats.TotalDown)
+
+	// 验证 service2：部分成功
+	s2, ok := results[serviceID2]
+	require.True(t, ok)
+	assert.Equal(t, serviceID2, s2.ServiceID)
+	assert.Equal(t, uint64(3), s2.Servers[0].Stats.TotalUp)
+	assert.Equal(t, uint64(2), s2.Servers[0].Stats.TotalDown)
+}
+
+func TestTSDB_QueryServiceHistoryByServerID_Empty(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "tsdb_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	config := &Config{
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
+	}
+
+	db, err := Open(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	results, err := db.QueryServiceHistoryByServerID(9999, Period1Day)
+	require.NoError(t, err)
+	assert.Empty(t, results)
+}
+
+func TestTSDB_QueryServiceHistoryByServerID_ClosedDB(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "tsdb_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	config := &Config{
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      1,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
+	}
+
+	db, err := Open(config)
+	require.NoError(t, err)
+	db.Close()
+
+	_, err = db.QueryServiceHistoryByServerID(1, Period1Day)
+	assert.Error(t, err)
 }

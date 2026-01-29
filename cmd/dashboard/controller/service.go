@@ -119,39 +119,14 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 
 	serverMap := singleton.ServerShared.GetList()
 
-	for _, serverStats := range result.Servers {
-		serverName := ""
-		if server, ok := serverMap[serverStats.ServerID]; ok {
-			serverName = server.Name
+	for i := range result.Servers {
+		if server, ok := serverMap[result.Servers[i].ServerID]; ok {
+			result.Servers[i].ServerName = server.Name
 		}
-
-		response.Servers = append(response.Servers, model.ServerServiceStats{
-			ServerID:   serverStats.ServerID,
-			ServerName: serverName,
-			Stats: model.ServiceHistorySummary{
-				AvgDelay:   serverStats.Stats.AvgDelay,
-				UpPercent:  serverStats.Stats.UpPercent,
-				TotalUp:    serverStats.Stats.TotalUp,
-				TotalDown:  serverStats.Stats.TotalDown,
-				DataPoints: convertDataPoints(serverStats.Stats.DataPoints),
-			},
-		})
 	}
+	response.Servers = result.Servers
 
 	return response, nil
-}
-
-// convertDataPoints 转换数据点格式
-func convertDataPoints(points []tsdb.DataPoint) []model.DataPoint {
-	result := make([]model.DataPoint, len(points))
-	for i, p := range points {
-		result[i] = model.DataPoint{
-			Timestamp: p.Timestamp,
-			Delay:     p.Delay,
-			Status:    p.Status,
-		}
-	}
-	return result
 }
 
 // List server services
@@ -234,7 +209,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 			ServiceName: service.Name,
 			ServerName:  server.Name,
 			CreatedAt:   make([]int64, len(serverStats.Stats.DataPoints)),
-			AvgDelay:    make([]float32, len(serverStats.Stats.DataPoints)),
+			AvgDelay:    make([]float64, len(serverStats.Stats.DataPoints)),
 		}
 
 		for i, dp := range serverStats.Stats.DataPoints {

@@ -26,7 +26,7 @@ type ServiceResponseItem struct {
 	CurrentDown uint64       `json:"current_down"`
 	TotalUp     uint64       `json:"total_up"`
 	TotalDown   uint64       `json:"total_down"`
-	Delay       *[30]float32 `json:"delay,omitempty"`
+	Delay       *[30]float64 `json:"delay,omitempty"`
 	Up          *[30]uint64  `json:"up,omitempty"`
 	Down        *[30]uint64  `json:"down,omitempty"`
 }

@@ -131,7 +131,7 @@ type ServiceMetrics struct {
 	ServiceID  uint64
 	ServerID   uint64
 	Timestamp  time.Time
-	Delay      float32
+	Delay      float64
 	Successful bool
 }
 
@@ -188,7 +188,7 @@ func (db *TSDB) WriteServiceMetrics(m *ServiceMetrics) error {
 	}
 
 	rows := []storage.MetricRow{
-		db.makeMetricRow(MetricServiceDelay, serviceIDStr, serverIDStr, ts, float64(m.Delay)),
+		db.makeMetricRow(MetricServiceDelay, serviceIDStr, serverIDStr, ts, m.Delay),
 		db.makeMetricRow(MetricServiceStatus, serviceIDStr, serverIDStr, ts, status),
 	}
 

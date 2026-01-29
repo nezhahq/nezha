@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/VictoriaMetrics/VictoriaMetrics/lib/storage"
+
+	"github.com/nezhahq/nezha/model"
 )
 
 // QueryPeriod 查询时间段
@@ -59,40 +61,19 @@ func (p QueryPeriod) DownsampleInterval() time.Duration {
 	}
 }
 
-// DataPoint 数据点
-type DataPoint struct {
-	Timestamp int64   `json:"ts"`
-	Delay     float32 `json:"delay"`
-	Status    uint8   `json:"status"` // 1=成功, 0=失败
-}
-
-// ServiceHistorySummary 服务历史统计摘要
-type ServiceHistorySummary struct {
-	AvgDelay   float32     `json:"avg_delay"`
-	UpPercent  float32     `json:"up_percent"`
-	TotalUp    uint64      `json:"total_up"`
-	TotalDown  uint64      `json:"total_down"`
-	DataPoints []DataPoint `json:"data_points,omitempty"`
-}
-
-// ServerServiceStats 某服务器对某服务的统计
-type ServerServiceStats struct {
-	ServerID   uint64                `json:"server_id"`
-	ServerName string                `json:"server_name,omitempty"`
-	Stats      ServiceHistorySummary `json:"stats"`
-}
-
-// ServiceHistoryResult 服务历史查询结果
-type ServiceHistoryResult struct {
-	ServiceID   uint64               `json:"service_id"`
-	ServiceName string               `json:"service_name,omitempty"`
-	Servers     []ServerServiceStats `json:"servers"`
-}
+// Type aliases for model types used in tsdb package
+type (
+	DataPoint             = model.DataPoint
+	ServiceHistorySummary = model.ServiceHistorySummary
+	ServerServiceStats    = model.ServerServiceStats
+	ServiceHistoryResult  = model.ServiceHistoryResponse
+	MetricDataPoint       = model.ServerMetricsDataPoint
+)
 
 // rawDataPoint 原始数据点（内部使用）
 type rawDataPoint struct {
 	timestamp int64
-	delay     float64
+	value     float64
 	status    float64
 	hasStatus bool
 }
@@ -138,7 +119,7 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 		for _, p := range points {
 			serverDataMap[serverID][p.timestamp] = &rawDataPoint{
 				timestamp: p.timestamp,
-				delay:     p.value,
+				value:     p.value,
 			}
 		}
 	}
@@ -268,8 +249,8 @@ func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) Ser
 	var totalUp, totalDown uint64
 
 	for _, p := range points {
-		if p.delay > 0 {
-			totalDelay += p.delay
+		if p.value > 0 {
+			totalDelay += p.value
 			delayCount++
 		}
 		if p.hasStatus {
@@ -287,7 +268,7 @@ func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) Ser
 	}
 
 	if delayCount > 0 {
-		summary.AvgDelay = float32(totalDelay / float64(delayCount))
+		summary.AvgDelay = totalDelay / float64(delayCount)
 	}
 
 	if totalUp+totalDown > 0 {
@@ -334,8 +315,8 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 		var statusCount int
 
 		for _, p := range bucket {
-			if p.delay > 0 {
-				totalDelay += p.delay
+			if p.value > 0 {
+				totalDelay += p.value
 				delayCount++
 			}
 			if p.hasStatus {
@@ -346,9 +327,9 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 			}
 		}
 
-		var avgDelay float32
+		var avgDelay float64
 		if delayCount > 0 {
-			avgDelay = float32(totalDelay / float64(delayCount))
+			avgDelay = totalDelay / float64(delayCount)
 		}
 
 		var status uint8
@@ -366,8 +347,69 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 	return result
 }
 
+// downsampleMetrics 纯数值降采样（不过滤零值，无状态计算）
+// useLastValue 为 true 时取 bucket 内最后一个值（适用于累积型指标），否则取平均值
+func downsampleMetrics(points []rawDataPoint, interval time.Duration, useLastValue bool) []MetricDataPoint {
+	if len(points) == 0 {
+		return nil
+	}
+
+	intervalMs := interval.Milliseconds()
+
+	buckets := make(map[int64][]rawDataPoint)
+	for _, p := range points {
+		bucketKey := (p.timestamp / intervalMs) * intervalMs
+		buckets[bucketKey] = append(buckets[bucketKey], p)
+	}
+
+	keys := make([]int64, 0, len(buckets))
+	for k := range buckets {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return keys[i] < keys[j]
+	})
+
+	result := make([]MetricDataPoint, 0, len(keys))
+	for _, ts := range keys {
+		bucket := buckets[ts]
+		var value float64
+		if useLastValue {
+			last := bucket[0]
+			for _, p := range bucket[1:] {
+				if p.timestamp >= last.timestamp {
+					last = p
+				}
+			}
+			value = last.value
+		} else {
+			var total float64
+			for _, p := range bucket {
+				total += p.value
+			}
+			value = total / float64(len(bucket))
+		}
+		result = append(result, MetricDataPoint{
+			Timestamp: ts,
+			Value:     value,
+		})
+	}
+
+	return result
+}
+
+// isCumulativeMetric 判断指标是否为累积型（单调递增）
+func isCumulativeMetric(metric MetricType) bool {
+	switch metric {
+	case MetricServerNetInTransfer, MetricServerNetOutTransfer, MetricServerUptime:
+		return true
+	default:
+		return false
+	}
+}
+
 // QueryServerMetrics 查询服务器指标历史
-func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period QueryPeriod) ([]DataPoint, error) {
+func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period QueryPeriod) ([]MetricDataPoint, error) {
 	if db.IsClosed() {
 		return nil, fmt.Errorf("TSDB is closed")
 	}
@@ -413,7 +455,7 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 		for i := range timestamps {
 			points = append(points, rawDataPoint{
 				timestamp: timestamps[i],
-				delay:     values[i],
+				value:     values[i],
 			})
 		}
 	}
@@ -422,9 +464,7 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 		return nil, err
 	}
 
-	// 降采样
-	downsampled := downsample(points, period.DownsampleInterval())
-	return downsampled, nil
+	return downsampleMetrics(points, period.DownsampleInterval(), isCumulativeMetric(metric)), nil
 }
 
 // QueryServiceHistoryByServerID 按服务器ID批量查询所有服务监控历史
@@ -460,7 +500,7 @@ func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPerio
 		for _, p := range points {
 			serviceDataMap[serviceID][p.timestamp] = &rawDataPoint{
 				timestamp: p.timestamp,
-				delay:     p.value,
+				value:     p.value,
 			}
 		}
 	}

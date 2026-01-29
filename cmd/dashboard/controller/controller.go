@@ -77,6 +77,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	optionalAuth.GET("/service/:id/history", commonHandler(getServiceHistory))
 	optionalAuth.GET("/service/:id", commonHandler(getServiceHistory))
 	optionalAuth.GET("/server/:id/service", commonHandler(listServerServices))
+	optionalAuth.GET("/server/:id/metrics", commonHandler(getServerMetrics))
 
 	auth := api.Group("", authMw)
 
