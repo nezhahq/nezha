@@ -53,6 +53,7 @@ type Service struct {
 	Target              string `json:"target"`
 	SkipServersRaw      string `json:"-"`
 	Duration            uint64 `json:"duration"`
+	DisplayIndex        int    `json:"display_index"` // 展示排序，越大越靠前
 	Notify              bool   `json:"notify,omitempty"`
 	NotificationGroupID uint64 `json:"notification_group_id"` // 当前服务监控所属的通知组 ID
 	Cover               uint8  `json:"cover"`

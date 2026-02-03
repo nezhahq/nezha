@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 	"strconv"
@@ -204,12 +205,13 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		serverStats := historyResult.Servers[0]
 
 		infos := &model.ServiceInfos{
-			ServiceID:   serviceID,
-			ServerID:    serverID,
-			ServiceName: service.Name,
-			ServerName:  server.Name,
-			CreatedAt:   make([]int64, len(serverStats.Stats.DataPoints)),
-			AvgDelay:    make([]float64, len(serverStats.Stats.DataPoints)),
+			ServiceID:    serviceID,
+			ServerID:     serverID,
+			ServiceName:  service.Name,
+			ServerName:   server.Name,
+			DisplayIndex: service.DisplayIndex,
+			CreatedAt:    make([]int64, len(serverStats.Stats.DataPoints)),
+			AvgDelay:     make([]float64, len(serverStats.Stats.DataPoints)),
 		}
 
 		for i, dp := range serverStats.Stats.DataPoints {
@@ -219,6 +221,13 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 
 		result = append(result, infos)
 	}
+
+	slices.SortFunc(result, func(a, b *model.ServiceInfos) int {
+		if a.DisplayIndex != b.DisplayIndex {
+			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
+		}
+		return cmp.Compare(a.ServiceID, b.ServiceID)
+	})
 
 	return result, nil
 }
@@ -300,6 +309,7 @@ func createService(c *gin.Context) (uint64, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
@@ -363,6 +373,7 @@ func updateService(c *gin.Context) (any, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
