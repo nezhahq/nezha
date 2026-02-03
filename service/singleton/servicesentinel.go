@@ -180,6 +180,9 @@ func (ss *ServiceSentinel) UpdateServiceList() {
 
 	ss.serviceList = utils.MapValuesToSlice(ss.services)
 	slices.SortFunc(ss.serviceList, func(a, b *model.Service) int {
+		if a.DisplayIndex != b.DisplayIndex {
+			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
+		}
 		return cmp.Compare(a.ID, b.ID)
 	})
 }
@@ -207,6 +210,12 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		ss.serviceStatusToday[service.ID] = &_TodayStatsOfService{}
 	}
 	ss.serviceList = services
+	slices.SortFunc(ss.serviceList, func(a, b *model.Service) int {
+		if a.DisplayIndex != b.DisplayIndex {
+			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)

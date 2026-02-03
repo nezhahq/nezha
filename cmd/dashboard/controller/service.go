@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"cmp"
 	"maps"
 	"slices"
 	"strconv"
@@ -114,6 +115,7 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 				ServerID:    history.ServerID,
 				ServiceName: service.Name,
 				ServerName:  m[history.ServerID].Name,
+				DisplayIndex: service.DisplayIndex,
 			}
 			resultMap[history.ServiceID] = infos
 			sortedServiceIDs = append(sortedServiceIDs, history.ServiceID)
@@ -126,6 +128,13 @@ func listServiceHistory(c *gin.Context) ([]*model.ServiceInfos, error) {
 	for _, id := range sortedServiceIDs {
 		ret = append(ret, resultMap[id])
 	}
+
+	slices.SortFunc(ret, func(a, b *model.ServiceInfos) int {
+		if a.DisplayIndex != b.DisplayIndex {
+			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
+		}
+		return cmp.Compare(a.ServiceID, b.ServiceID)
+	})
 
 	return ret, nil
 }
@@ -191,6 +200,7 @@ func createService(c *gin.Context) (uint64, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
@@ -269,6 +279,7 @@ func updateService(c *gin.Context) (any, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
