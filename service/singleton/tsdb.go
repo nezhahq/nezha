@@ -46,7 +46,6 @@ func InitTSDB() error {
 		return err
 	}
 
-	tsdb.SetInstance(TSDBShared)
 	log.Println("NEZHA>> TSDB initialized successfully")
 
 	if DB != nil && DB.Migrator().HasTable("service_histories") {

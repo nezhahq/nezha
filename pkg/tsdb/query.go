@@ -2,6 +2,7 @@ package tsdb
 
 import (
 	"fmt"
+	"log"
 	"sort"
 	"strconv"
 	"time"
@@ -70,17 +71,18 @@ type (
 	MetricDataPoint       = model.ServerMetricsDataPoint
 )
 
-// rawDataPoint 原始数据点（内部使用）
 type rawDataPoint struct {
 	timestamp int64
 	value     float64
 	status    float64
+	hasDelay  bool
 	hasStatus bool
 }
 
-// QueryServiceHistory 查询服务监控历史
 func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*ServiceHistoryResult, error) {
-	if db.IsClosed() {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed {
 		return nil, fmt.Errorf("TSDB is closed")
 	}
 
@@ -90,21 +92,18 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 		MaxTimestamp: now.UnixMilli(),
 	}
 
-	serviceIDStr := fmt.Sprintf("%d", serviceID)
+	serviceIDStr := strconv.FormatUint(serviceID, 10)
 
-	// 查询延迟数据
 	delayData, err := db.queryMetricByServiceID(MetricServiceDelay, serviceIDStr, tr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query delay data: %w", err)
 	}
 
-	// 查询状态数据
 	statusData, err := db.queryMetricByServiceID(MetricServiceStatus, serviceIDStr, tr)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query status data: %w", err)
 	}
 
-	// 合并数据并按服务器分组
 	result := &ServiceHistoryResult{
 		ServiceID: serviceID,
 		Servers:   make([]ServerServiceStats, 0),
@@ -120,6 +119,7 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 			serverDataMap[serverID][p.timestamp] = &rawDataPoint{
 				timestamp: p.timestamp,
 				value:     p.value,
+				hasDelay:  true,
 			}
 		}
 	}
@@ -154,7 +154,6 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 		})
 	}
 
-	// 按 server_id 排序
 	sort.Slice(result.Servers, func(i, j int) bool {
 		return result.Servers[i].ServerID < result.Servers[j].ServerID
 	})
@@ -162,16 +161,13 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 	return result, nil
 }
 
-// metricPoint 指标数据点（内部使用）
 type metricPoint struct {
 	timestamp int64
 	value     float64
 }
 
-// queryMetricByServiceID 按 service_id 查询指标数据
 func (db *TSDB) queryMetricByServiceID(metric MetricType, serviceID string, tr storage.TimeRange) (map[uint64][]metricPoint, error) {
 	tfs := storage.NewTagFilters()
-	// 注意：MetricGroup (__name__) 必须使用 nil 作为 key
 	if err := tfs.Add(nil, []byte(metric), false, false); err != nil {
 		return nil, err
 	}
@@ -186,15 +182,17 @@ func (db *TSDB) queryMetricByServiceID(metric MetricType, serviceID string, tr s
 	defer search.MustClose()
 
 	result := make(map[uint64][]metricPoint)
+	var timestamps []int64
+	var values []float64
 
 	for search.NextMetricBlock() {
 		mbr := search.MetricBlockRef
 		var block storage.Block
 		mbr.BlockRef.MustReadBlock(&block)
 
-		// 获取 server_id
 		mn := storage.GetMetricName()
 		if err := mn.Unmarshal(mbr.MetricName); err != nil {
+			log.Printf("NEZHA>> TSDB: failed to unmarshal metric name: %v", err)
 			storage.PutMetricName(mn)
 			continue
 		}
@@ -205,17 +203,21 @@ func (db *TSDB) queryMetricByServiceID(metric MetricType, serviceID string, tr s
 			continue
 		}
 
-		var serverID uint64
-		fmt.Sscanf(string(serverIDBytes), "%d", &serverID)
+		serverID, err := strconv.ParseUint(string(serverIDBytes), 10, 64)
+		if err != nil {
+			log.Printf("NEZHA>> TSDB: failed to parse server_id %q: %v", string(serverIDBytes), err)
+			storage.PutMetricName(mn)
+			continue
+		}
 		storage.PutMetricName(mn)
 
-		// 解码数据块
 		if err := block.UnmarshalData(); err != nil {
+			log.Printf("NEZHA>> TSDB: failed to unmarshal block data: %v", err)
 			continue
 		}
 
-		timestamps := make([]int64, 0)
-		values := make([]float64, 0)
+		timestamps = timestamps[:0]
+		values = values[:0]
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {
@@ -233,13 +235,11 @@ func (db *TSDB) queryMetricByServiceID(metric MetricType, serviceID string, tr s
 	return result, nil
 }
 
-// calculateStats 计算统计数据并进行降采样
 func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) ServiceHistorySummary {
 	if len(points) == 0 {
 		return ServiceHistorySummary{}
 	}
 
-	// 按时间戳排序
 	sort.Slice(points, func(i, j int) bool {
 		return points[i].timestamp < points[j].timestamp
 	})
@@ -249,7 +249,7 @@ func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) Ser
 	var totalUp, totalDown uint64
 
 	for _, p := range points {
-		if p.value > 0 {
+		if p.hasDelay {
 			totalDelay += p.value
 			delayCount++
 		}
@@ -275,13 +275,11 @@ func calculateStats(points []rawDataPoint, downsampleInterval time.Duration) Ser
 		summary.UpPercent = float32(totalUp) / float32(totalUp+totalDown) * 100
 	}
 
-	// 降采样生成数据点
 	summary.DataPoints = downsample(points, downsampleInterval)
 
 	return summary
 }
 
-// downsample 降采样数据点
 func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 	if len(points) == 0 {
 		return nil
@@ -290,110 +288,96 @@ func downsample(points []rawDataPoint, interval time.Duration) []DataPoint {
 	intervalMs := interval.Milliseconds()
 	result := make([]DataPoint, 0)
 
-	// 按时间窗口聚合
-	buckets := make(map[int64][]rawDataPoint)
-	for _, p := range points {
-		bucketKey := (p.timestamp / intervalMs) * intervalMs
-		buckets[bucketKey] = append(buckets[bucketKey], p)
-	}
+	// points 已排序，线性扫描分桶
+	bucketStart := (points[0].timestamp / intervalMs) * intervalMs
+	var totalDelay float64
+	var delayCount, upCount, statusCount int
 
-	// 获取排序的 bucket keys
-	keys := make([]int64, 0, len(buckets))
-	for k := range buckets {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
-	})
-
-	// 计算每个时间窗口的平均值
-	for _, ts := range keys {
-		bucket := buckets[ts]
-		var totalDelay float64
-		var delayCount int
-		var upCount int
-		var statusCount int
-
-		for _, p := range bucket {
-			if p.value > 0 {
-				totalDelay += p.value
-				delayCount++
-			}
-			if p.hasStatus {
-				statusCount++
-				if p.status >= 0.5 {
-					upCount++
-				}
-			}
-		}
-
+	flushBucket := func() {
 		var avgDelay float64
 		if delayCount > 0 {
 			avgDelay = totalDelay / float64(delayCount)
 		}
-
 		var status uint8
 		if statusCount > 0 && upCount > statusCount/2 {
 			status = 1
 		}
-
 		result = append(result, DataPoint{
-			Timestamp: ts,
+			Timestamp: bucketStart,
 			Delay:     avgDelay,
 			Status:    status,
 		})
 	}
 
+	for _, p := range points {
+		key := (p.timestamp / intervalMs) * intervalMs
+		if key != bucketStart {
+			flushBucket()
+			bucketStart = key
+			totalDelay = 0
+			delayCount = 0
+			upCount = 0
+			statusCount = 0
+		}
+		if p.hasDelay {
+			totalDelay += p.value
+			delayCount++
+		}
+		if p.hasStatus {
+			statusCount++
+			if p.status >= 0.5 {
+				upCount++
+			}
+		}
+	}
+	flushBucket()
+
 	return result
 }
 
-// downsampleMetrics 纯数值降采样（不过滤零值，无状态计算）
-// useLastValue 为 true 时取 bucket 内最后一个值（适用于累积型指标），否则取平均值
 func downsampleMetrics(points []rawDataPoint, interval time.Duration, useLastValue bool) []MetricDataPoint {
 	if len(points) == 0 {
 		return nil
 	}
 
-	intervalMs := interval.Milliseconds()
-
-	buckets := make(map[int64][]rawDataPoint)
-	for _, p := range points {
-		bucketKey := (p.timestamp / intervalMs) * intervalMs
-		buckets[bucketKey] = append(buckets[bucketKey], p)
-	}
-
-	keys := make([]int64, 0, len(buckets))
-	for k := range buckets {
-		keys = append(keys, k)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		return keys[i] < keys[j]
+	sort.Slice(points, func(i, j int) bool {
+		return points[i].timestamp < points[j].timestamp
 	})
 
-	result := make([]MetricDataPoint, 0, len(keys))
-	for _, ts := range keys {
-		bucket := buckets[ts]
+	intervalMs := interval.Milliseconds()
+	result := make([]MetricDataPoint, 0)
+
+	bucketStart := (points[0].timestamp / intervalMs) * intervalMs
+	var total float64
+	var count int
+	var last rawDataPoint
+
+	flushBucket := func() {
 		var value float64
 		if useLastValue {
-			last := bucket[0]
-			for _, p := range bucket[1:] {
-				if p.timestamp >= last.timestamp {
-					last = p
-				}
-			}
 			value = last.value
-		} else {
-			var total float64
-			for _, p := range bucket {
-				total += p.value
-			}
-			value = total / float64(len(bucket))
+		} else if count > 0 {
+			value = total / float64(count)
 		}
 		result = append(result, MetricDataPoint{
-			Timestamp: ts,
+			Timestamp: bucketStart,
 			Value:     value,
 		})
 	}
+
+	for _, p := range points {
+		key := (p.timestamp / intervalMs) * intervalMs
+		if key != bucketStart {
+			flushBucket()
+			bucketStart = key
+			total = 0
+			count = 0
+		}
+		total += p.value
+		count++
+		last = p
+	}
+	flushBucket()
 
 	return result
 }
@@ -408,9 +392,10 @@ func isCumulativeMetric(metric MetricType) bool {
 	}
 }
 
-// QueryServerMetrics 查询服务器指标历史
 func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period QueryPeriod) ([]MetricDataPoint, error) {
-	if db.IsClosed() {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed {
 		return nil, fmt.Errorf("TSDB is closed")
 	}
 
@@ -420,10 +405,9 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 		MaxTimestamp: now.UnixMilli(),
 	}
 
-	serverIDStr := fmt.Sprintf("%d", serverID)
+	serverIDStr := strconv.FormatUint(serverID, 10)
 
 	tfs := storage.NewTagFilters()
-	// 注意：MetricGroup (__name__) 必须使用 nil 作为 key
 	if err := tfs.Add(nil, []byte(metric), false, false); err != nil {
 		return nil, err
 	}
@@ -438,6 +422,8 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 	defer search.MustClose()
 
 	var points []rawDataPoint
+	var timestamps []int64
+	var values []float64
 
 	for search.NextMetricBlock() {
 		mbr := search.MetricBlockRef
@@ -445,11 +431,12 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 		mbr.BlockRef.MustReadBlock(&block)
 
 		if err := block.UnmarshalData(); err != nil {
+			log.Printf("NEZHA>> TSDB: failed to unmarshal block data: %v", err)
 			continue
 		}
 
-		timestamps := make([]int64, 0)
-		values := make([]float64, 0)
+		timestamps = timestamps[:0]
+		values = values[:0]
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {
@@ -467,9 +454,10 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 	return downsampleMetrics(points, period.DownsampleInterval(), isCumulativeMetric(metric)), nil
 }
 
-// QueryServiceHistoryByServerID 按服务器ID批量查询所有服务监控历史
 func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPeriod) (map[uint64]*ServiceHistoryResult, error) {
-	if db.IsClosed() {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed {
 		return nil, fmt.Errorf("TSDB is closed")
 	}
 
@@ -479,7 +467,7 @@ func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPerio
 		MaxTimestamp: now.UnixMilli(),
 	}
 
-	serverIDStr := fmt.Sprintf("%d", serverID)
+	serverIDStr := strconv.FormatUint(serverID, 10)
 
 	delayData, err := db.queryMetricByServerID(MetricServiceDelay, serverIDStr, tr)
 	if err != nil {
@@ -501,6 +489,7 @@ func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPerio
 			serviceDataMap[serviceID][p.timestamp] = &rawDataPoint{
 				timestamp: p.timestamp,
 				value:     p.value,
+				hasDelay:  true,
 			}
 		}
 	}
@@ -543,7 +532,6 @@ func (db *TSDB) QueryServiceHistoryByServerID(serverID uint64, period QueryPerio
 	return results, nil
 }
 
-// queryMetricByServerID 按 server_id 查询所有服务的指标数据
 func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr storage.TimeRange) (map[uint64][]metricPoint, error) {
 	tfs := storage.NewTagFilters()
 	if err := tfs.Add(nil, []byte(metric), false, false); err != nil {
@@ -560,6 +548,8 @@ func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr sto
 	defer search.MustClose()
 
 	result := make(map[uint64][]metricPoint)
+	var timestamps []int64
+	var values []float64
 
 	for search.NextMetricBlock() {
 		mbr := search.MetricBlockRef
@@ -568,6 +558,7 @@ func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr sto
 
 		mn := storage.GetMetricName()
 		if err := mn.Unmarshal(mbr.MetricName); err != nil {
+			log.Printf("NEZHA>> TSDB: failed to unmarshal metric name: %v", err)
 			storage.PutMetricName(mn)
 			continue
 		}
@@ -580,17 +571,19 @@ func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr sto
 
 		serviceID, err := strconv.ParseUint(string(serviceIDBytes), 10, 64)
 		if err != nil {
+			log.Printf("NEZHA>> TSDB: failed to parse service_id %q: %v", string(serviceIDBytes), err)
 			storage.PutMetricName(mn)
 			continue
 		}
 		storage.PutMetricName(mn)
 
 		if err := block.UnmarshalData(); err != nil {
+			log.Printf("NEZHA>> TSDB: failed to unmarshal block data: %v", err)
 			continue
 		}
 
-		timestamps := make([]int64, 0)
-		values := make([]float64, 0)
+		timestamps = timestamps[:0]
+		values = values[:0]
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {

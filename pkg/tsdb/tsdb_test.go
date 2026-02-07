@@ -420,26 +420,18 @@ func TestTSDB_QueryClosedDB(t *testing.T) {
 }
 
 func TestDownsample(t *testing.T) {
-	// 创建模拟数据点，时间戳使用毫秒
-	// 降采样按 interval 分桶，相同桶内的数据会被聚合
 	points := []rawDataPoint{
-		{timestamp: 0, value: 10, status: 1},
-		{timestamp: 1000, value: 20, status: 1},
-		{timestamp: 2000, value: 30, status: 0},
-		{timestamp: 3000, value: 40, status: 1},
-		{timestamp: 4000, value: 50, status: 1},
+		{timestamp: 0, value: 10, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 1000, value: 20, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 2000, value: 30, status: 0, hasDelay: true, hasStatus: true},
+		{timestamp: 3000, value: 40, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 4000, value: 50, status: 1, hasDelay: true, hasStatus: true},
 	}
 
-	// 使用2秒间隔进行降采样（2000ms）
-	// 桶0: 0ms, 1000ms -> 平均delay=15
-	// 桶2000: 2000ms, 3000ms -> 平均delay=35
-	// 桶4000: 4000ms -> delay=50
 	result := downsample(points, 2*time.Second)
 
-	// 应该有3个数据点（3个桶）
 	assert.Len(t, result, 3)
 
-	// 验证时间戳顺序
 	for i := 1; i < len(result); i++ {
 		assert.Greater(t, result[i].Timestamp, result[i-1].Timestamp)
 	}
@@ -447,19 +439,30 @@ func TestDownsample(t *testing.T) {
 
 func TestCalculateStats(t *testing.T) {
 	points := []rawDataPoint{
-		{timestamp: 1000, value: 10, status: 1, hasStatus: true},
-		{timestamp: 2000, value: 20, status: 1, hasStatus: true},
-		{timestamp: 3000, value: 30, status: 0, hasStatus: true},
-		{timestamp: 4000, value: 40, status: 1, hasStatus: true},
+		{timestamp: 1000, value: 10, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 2000, value: 20, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 3000, value: 30, status: 0, hasDelay: true, hasStatus: true},
+		{timestamp: 4000, value: 40, status: 1, hasDelay: true, hasStatus: true},
 	}
 
 	stats := calculateStats(points, 5*time.Minute)
 
-	// 验证统计数据
 	assert.Equal(t, uint64(3), stats.TotalUp)
 	assert.Equal(t, uint64(1), stats.TotalDown)
 	assert.Equal(t, float32(75), stats.UpPercent)
-	assert.Equal(t, float64(25), stats.AvgDelay) // (10+20+30+40)/4 = 25
+	assert.Equal(t, float64(25), stats.AvgDelay)
+}
+
+func TestCalculateStats_ZeroDelay(t *testing.T) {
+	points := []rawDataPoint{
+		{timestamp: 1000, value: 0, status: 1, hasDelay: true, hasStatus: true},
+		{timestamp: 2000, value: 10, status: 1, hasDelay: true, hasStatus: true},
+	}
+
+	stats := calculateStats(points, 5*time.Minute)
+
+	assert.Equal(t, float64(5), stats.AvgDelay)
+	assert.Equal(t, uint64(2), stats.TotalUp)
 }
 
 func TestCalculateStatsEmpty(t *testing.T) {
@@ -471,32 +474,6 @@ func TestCalculateStatsEmpty(t *testing.T) {
 	assert.Equal(t, float32(0), stats.UpPercent)
 	assert.Equal(t, float64(0), stats.AvgDelay)
 	assert.Nil(t, stats.DataPoints)
-}
-
-func TestInstance(t *testing.T) {
-	// 初始状态应该为 nil
-	original := GetInstance()
-
-	tempDir, err := os.MkdirTemp("", "tsdb_test")
-	require.NoError(t, err)
-	defer os.RemoveAll(tempDir)
-
-	config := &Config{
-		DataPath:           filepath.Join(tempDir, "tsdb"),
-		RetentionDays:      1,
-		MinFreeDiskSpaceGB: 1,
-		DedupInterval:      time.Second,
-	}
-
-	db, err := Open(config)
-	require.NoError(t, err)
-	defer db.Close()
-
-	SetInstance(db)
-	assert.Equal(t, db, GetInstance())
-
-	// 恢复原始状态
-	SetInstance(original)
 }
 
 func TestTSDB_QueryServerMetrics_Float64Precision(t *testing.T) {

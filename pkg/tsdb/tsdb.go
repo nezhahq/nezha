@@ -20,7 +20,19 @@ type TSDB struct {
 	writer *bufferedWriter
 }
 
-var instance *TSDB
+// InitGlobalSettings 初始化 VictoriaMetrics 包级别的全局设置。
+// 这些设置是进程级别的，应在 Open() 之前调用且只调用一次。
+func InitGlobalSettings(config *Config) {
+	memBytes := int(config.MaxMemoryMB * 1024 * 1024)
+	storage.SetTSIDCacheSize(memBytes * 35 / 100)
+	storage.SetMetricNameCacheSize(memBytes * 10 / 100)
+	storage.SetTagFiltersCacheSize(memBytes * 5 / 100)
+	storage.SetMetadataStorageSize(memBytes * 1 / 100)
+
+	storage.SetDedupInterval(config.DedupInterval)
+	storage.SetFreeDiskSpaceLimit(config.MinFreeDiskSpaceBytes())
+	storage.SetDataFlushInterval(5 * time.Second)
+}
 
 // Open 打开或创建 TSDB 存储
 func Open(config *Config) (*TSDB, error) {
@@ -39,15 +51,7 @@ func Open(config *Config) (*TSDB, error) {
 		dataPath = absPath
 	}
 
-	memBytes := int(config.MaxMemoryMB * 1024 * 1024)
-	storage.SetTSIDCacheSize(memBytes * 35 / 100)
-	storage.SetMetricNameCacheSize(memBytes * 10 / 100)
-	storage.SetTagFiltersCacheSize(memBytes * 5 / 100)
-	storage.SetMetadataStorageSize(memBytes * 1 / 100)
-
-	storage.SetDedupInterval(config.DedupInterval)
-	storage.SetFreeDiskSpaceLimit(config.MinFreeDiskSpaceBytes())
-	storage.SetDataFlushInterval(5 * time.Second)
+	InitGlobalSettings(config)
 
 	opts := storage.OpenOptions{
 		Retention: time.Duration(config.RetentionDays) * 24 * time.Hour,
@@ -66,16 +70,6 @@ func Open(config *Config) (*TSDB, error) {
 		dataPath, config.RetentionDays, config.MinFreeDiskSpaceGB, config.MaxMemoryMB)
 
 	return db, nil
-}
-
-// GetInstance 获取全局 TSDB 实例
-func GetInstance() *TSDB {
-	return instance
-}
-
-// SetInstance 设置全局 TSDB 实例
-func SetInstance(db *TSDB) {
-	instance = db
 }
 
 // Close 关闭 TSDB 存储
