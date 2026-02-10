@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"cmp"
 	"maps"
 	"slices"
 	"strconv"
@@ -173,7 +172,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
 	}
 
-	services := singleton.ServiceSentinelShared.GetList()
+	services := singleton.ServiceSentinelShared.GetSortedList()
 
 	var result []*model.ServiceInfos
 
@@ -186,7 +185,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, err
 	}
 
-	for serviceID, service := range services {
+	for _, service := range services {
 		if service.Cover == model.ServiceCoverAll {
 			if service.SkipServers[serverID] {
 				continue
@@ -197,7 +196,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 			}
 		}
 
-		historyResult, ok := historyResults[serviceID]
+		historyResult, ok := historyResults[service.ID]
 		if !ok || len(historyResult.Servers) == 0 {
 			continue
 		}
@@ -205,7 +204,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		serverStats := historyResult.Servers[0]
 
 		infos := &model.ServiceInfos{
-			ServiceID:    serviceID,
+			ServiceID:    service.ID,
 			ServerID:     serverID,
 			ServiceName:  service.Name,
 			ServerName:   server.Name,
@@ -221,13 +220,6 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 
 		result = append(result, infos)
 	}
-
-	slices.SortFunc(result, func(a, b *model.ServiceInfos) int {
-		if a.DisplayIndex != b.DisplayIndex {
-			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
-		}
-		return cmp.Compare(a.ServiceID, b.ServiceID)
-	})
 
 	return result, nil
 }
