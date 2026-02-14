@@ -172,7 +172,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
 	}
 
-	services := singleton.ServiceSentinelShared.GetList()
+	services := singleton.ServiceSentinelShared.GetSortedList()
 
 	var result []*model.ServiceInfos
 
@@ -185,7 +185,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		return nil, err
 	}
 
-	for serviceID, service := range services {
+	for _, service := range services {
 		if service.Cover == model.ServiceCoverAll {
 			if service.SkipServers[serverID] {
 				continue
@@ -196,7 +196,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 			}
 		}
 
-		historyResult, ok := historyResults[serviceID]
+		historyResult, ok := historyResults[service.ID]
 		if !ok || len(historyResult.Servers) == 0 {
 			continue
 		}
@@ -204,12 +204,13 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		serverStats := historyResult.Servers[0]
 
 		infos := &model.ServiceInfos{
-			ServiceID:   serviceID,
-			ServerID:    serverID,
-			ServiceName: service.Name,
-			ServerName:  server.Name,
-			CreatedAt:   make([]int64, len(serverStats.Stats.DataPoints)),
-			AvgDelay:    make([]float64, len(serverStats.Stats.DataPoints)),
+			ServiceID:    service.ID,
+			ServerID:     serverID,
+			ServiceName:  service.Name,
+			ServerName:   server.Name,
+			DisplayIndex: service.DisplayIndex,
+			CreatedAt:    make([]int64, len(serverStats.Stats.DataPoints)),
+			AvgDelay:     make([]float64, len(serverStats.Stats.DataPoints)),
 		}
 
 		for i, dp := range serverStats.Stats.DataPoints {
@@ -300,6 +301,7 @@ func createService(c *gin.Context) (uint64, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration
@@ -363,6 +365,7 @@ func updateService(c *gin.Context) (any, error) {
 	m.Type = mf.Type
 	m.SkipServers = mf.SkipServers
 	m.Cover = mf.Cover
+	m.DisplayIndex = mf.DisplayIndex
 	m.Notify = mf.Notify
 	m.NotificationGroupID = mf.NotificationGroupID
 	m.Duration = mf.Duration

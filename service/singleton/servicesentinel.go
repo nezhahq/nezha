@@ -163,6 +163,16 @@ func (ss *ServiceSentinel) Dispatch(r ReportData) {
 	ss.serviceReportChannel <- r
 }
 
+// sortServices 按 DisplayIndex 降序、ID 升序排列服务列表
+func sortServices(services []*model.Service) {
+	slices.SortFunc(services, func(a, b *model.Service) int {
+		if a.DisplayIndex != b.DisplayIndex {
+			return cmp.Compare(b.DisplayIndex, a.DisplayIndex)
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+}
+
 func (ss *ServiceSentinel) UpdateServiceList() {
 	ss.servicesLock.RLock()
 	defer ss.servicesLock.RUnlock()
@@ -171,9 +181,7 @@ func (ss *ServiceSentinel) UpdateServiceList() {
 	defer ss.serviceListLock.Unlock()
 
 	ss.serviceList = utils.MapValuesToSlice(ss.services)
-	slices.SortFunc(ss.serviceList, func(a, b *model.Service) int {
-		return cmp.Compare(a.ID, b.ID)
-	})
+	sortServices(ss.serviceList)
 }
 
 // loadServiceHistory 加载服务监控器的历史状态信息
@@ -199,6 +207,7 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		ss.serviceStatusToday[service.ID] = &_TodayStatsOfService{}
 	}
 	ss.serviceList = services
+	sortServices(ss.serviceList)
 
 	year, month, day := time.Now().Date()
 	today := time.Date(year, month, day, 0, 0, 0, 0, Loc)
