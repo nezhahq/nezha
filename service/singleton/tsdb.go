@@ -4,6 +4,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/tsdb"
 )
 
@@ -37,6 +38,9 @@ func InitTSDB() error {
 
 	if !config.Enabled() {
 		log.Println("NEZHA>> TSDB is disabled (tsdb.data_path not configured)")
+		if DB != nil {
+			return DB.AutoMigrate(model.ServiceHistory{})
+		}
 		return nil
 	}
 

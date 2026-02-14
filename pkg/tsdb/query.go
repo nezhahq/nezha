@@ -161,6 +161,68 @@ func (db *TSDB) QueryServiceHistory(serviceID uint64, period QueryPeriod) (*Serv
 	return result, nil
 }
 
+type DailyServiceStats struct {
+	Up    uint64
+	Down  uint64
+	Delay float64
+}
+
+func (db *TSDB) QueryServiceDailyStats(serviceID uint64, today time.Time, days int) ([]DailyServiceStats, error) {
+	db.mu.RLock()
+	defer db.mu.RUnlock()
+	if db.closed {
+		return nil, fmt.Errorf("TSDB is closed")
+	}
+
+	stats := make([]DailyServiceStats, days)
+	serviceIDStr := strconv.FormatUint(serviceID, 10)
+
+	start := today.AddDate(0, 0, -(days - 1))
+	tr := storage.TimeRange{
+		MinTimestamp: start.UnixMilli(),
+		MaxTimestamp: today.UnixMilli(),
+	}
+
+	statusData, err := db.queryMetricByServiceID(MetricServiceStatus, serviceIDStr, tr)
+	if err != nil {
+		return nil, err
+	}
+	delayData, err := db.queryMetricByServiceID(MetricServiceDelay, serviceIDStr, tr)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, points := range statusData {
+		for _, p := range points {
+			ts := time.UnixMilli(p.timestamp)
+			dayIndex := (days - 1) - int(today.Sub(ts).Hours())/24
+			if dayIndex < 0 || dayIndex >= days {
+				continue
+			}
+			if p.value >= 0.5 {
+				stats[dayIndex].Up++
+			} else {
+				stats[dayIndex].Down++
+			}
+		}
+	}
+
+	delayCount := make([]int, days)
+	for _, points := range delayData {
+		for _, p := range points {
+			ts := time.UnixMilli(p.timestamp)
+			dayIndex := (days - 1) - int(today.Sub(ts).Hours())/24
+			if dayIndex < 0 || dayIndex >= days {
+				continue
+			}
+			stats[dayIndex].Delay = (stats[dayIndex].Delay*float64(delayCount[dayIndex]) + p.value) / float64(delayCount[dayIndex]+1)
+			delayCount[dayIndex]++
+		}
+	}
+
+	return stats, nil
+}
+
 type metricPoint struct {
 	timestamp int64
 	value     float64

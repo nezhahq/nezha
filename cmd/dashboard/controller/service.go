@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
@@ -109,7 +110,7 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 	}
 
 	if !singleton.TSDBEnabled() {
-		return response, nil
+		return queryServiceHistoryFromDB(serviceID, period, response)
 	}
 
 	result, err := singleton.TSDBShared.QueryServiceHistory(serviceID, period)
@@ -125,6 +126,68 @@ func getServiceHistory(c *gin.Context) (*model.ServiceHistoryResponse, error) {
 		}
 	}
 	response.Servers = result.Servers
+
+	return response, nil
+}
+
+func queryServiceHistoryFromDB(serviceID uint64, period tsdb.QueryPeriod, response *model.ServiceHistoryResponse) (*model.ServiceHistoryResponse, error) {
+	since := time.Now().Add(-period.Duration())
+
+	var histories []model.ServiceHistory
+	if err := singleton.DB.Where("service_id = ? AND server_id != 0 AND created_at >= ?", serviceID, since).
+		Order("server_id, created_at").Find(&histories).Error; err != nil {
+		return nil, err
+	}
+
+	serverMap := singleton.ServerShared.GetList()
+	grouped := make(map[uint64][]model.ServiceHistory)
+	for _, h := range histories {
+		grouped[h.ServerID] = append(grouped[h.ServerID], h)
+	}
+
+	for serverID, records := range grouped {
+		stats := model.ServerServiceStats{
+			ServerID: serverID,
+		}
+		if server, ok := serverMap[serverID]; ok {
+			stats.ServerName = server.Name
+		}
+
+		var totalDelay float64
+		var totalUp, totalDown uint64
+		dps := make([]model.DataPoint, 0, len(records))
+		for _, r := range records {
+			status := uint8(1)
+			if r.Down > 0 && r.Up == 0 {
+				status = 0
+			}
+			dps = append(dps, model.DataPoint{
+				Timestamp: r.CreatedAt.Unix() * 1000,
+				Delay:     r.AvgDelay,
+				Status:    status,
+			})
+			totalDelay += r.AvgDelay
+			totalUp += r.Up
+			totalDown += r.Down
+		}
+
+		var avgDelay float64
+		if len(records) > 0 {
+			avgDelay = totalDelay / float64(len(records))
+		}
+		var upPercent float32
+		if totalUp+totalDown > 0 {
+			upPercent = float32(totalUp) / float32(totalUp+totalDown) * 100
+		}
+		stats.Stats = model.ServiceHistorySummary{
+			AvgDelay:   avgDelay,
+			UpPercent:  upPercent,
+			TotalUp:    totalUp,
+			TotalDown:  totalDown,
+			DataPoints: dps,
+		}
+		response.Servers = append(response.Servers, stats)
+	}
 
 	return response, nil
 }
@@ -177,7 +240,7 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 	var result []*model.ServiceInfos
 
 	if !singleton.TSDBEnabled() {
-		return result, nil
+		return queryServerServicesFromDB(serverID, server.Name, period, services)
 	}
 
 	historyResults, err := singleton.TSDBShared.QueryServiceHistoryByServerID(serverID, period)
@@ -216,6 +279,58 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 		for i, dp := range serverStats.Stats.DataPoints {
 			infos.CreatedAt[i] = dp.Timestamp
 			infos.AvgDelay[i] = dp.Delay
+		}
+
+		result = append(result, infos)
+	}
+
+	return result, nil
+}
+
+func queryServerServicesFromDB(serverID uint64, serverName string, period tsdb.QueryPeriod, services []*model.Service) ([]*model.ServiceInfos, error) {
+	since := time.Now().Add(-period.Duration())
+
+	var histories []model.ServiceHistory
+	if err := singleton.DB.Where("server_id = ? AND created_at >= ?", serverID, since).
+		Order("service_id, created_at").Find(&histories).Error; err != nil {
+		return nil, err
+	}
+
+	grouped := make(map[uint64][]model.ServiceHistory)
+	for _, h := range histories {
+		grouped[h.ServiceID] = append(grouped[h.ServiceID], h)
+	}
+
+	var result []*model.ServiceInfos
+	for _, service := range services {
+		if service.Cover == model.ServiceCoverAll {
+			if service.SkipServers[serverID] {
+				continue
+			}
+		} else {
+			if !service.SkipServers[serverID] {
+				continue
+			}
+		}
+
+		records, ok := grouped[service.ID]
+		if !ok {
+			continue
+		}
+
+		infos := &model.ServiceInfos{
+			ServiceID:    service.ID,
+			ServerID:     serverID,
+			ServiceName:  service.Name,
+			ServerName:   serverName,
+			DisplayIndex: service.DisplayIndex,
+			CreatedAt:    make([]int64, 0, len(records)),
+			AvgDelay:     make([]float64, 0, len(records)),
+		}
+
+		for _, r := range records {
+			infos.CreatedAt = append(infos.CreatedAt, r.CreatedAt.Truncate(time.Minute).Unix()*1000)
+			infos.AvgDelay = append(infos.AvgDelay, r.AvgDelay)
 		}
 
 		result = append(result, infos)
