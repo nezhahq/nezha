@@ -39,6 +39,7 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 		},
 		Version:           singleton.Version,
 		FrontendTemplates: singleton.FrontendTemplates,
+		TSDBEnabled:       singleton.TSDBEnabled(),
 	}
 
 	if !authorized || !isAdmin {
@@ -54,6 +55,7 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 				ConfigDashboard: configDashboard,
 				Oauth2Providers: config.Oauth2Providers,
 			},
+			TSDBEnabled: singleton.TSDBEnabled(),
 		}
 	}
 
