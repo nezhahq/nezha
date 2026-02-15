@@ -249,7 +249,7 @@ func TestQueryPeriod_Duration(t *testing.T) {
 }
 
 func TestQueryPeriod_DownsampleInterval(t *testing.T) {
-	assert.Equal(t, 5*time.Minute, Period1Day.DownsampleInterval())
+	assert.Equal(t, 30*time.Second, Period1Day.DownsampleInterval())
 	assert.Equal(t, 30*time.Minute, Period7Days.DownsampleInterval())
 	assert.Equal(t, 2*time.Hour, Period30Days.DownsampleInterval())
 }
