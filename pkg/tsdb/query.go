@@ -48,7 +48,7 @@ func (p QueryPeriod) Duration() time.Duration {
 }
 
 // DownsampleInterval 返回降采样间隔
-// 1d: 5分钟一个点 (288个点)
+// 1d: 30秒一个点 (2880个点)
 // 7d: 30分钟一个点 (336个点)
 // 30d: 2小时一个点 (360个点)
 func (p QueryPeriod) DownsampleInterval() time.Duration {
@@ -58,7 +58,7 @@ func (p QueryPeriod) DownsampleInterval() time.Duration {
 	case Period30Days:
 		return 2 * time.Hour
 	default:
-		return 5 * time.Minute
+		return 30 * time.Second
 	}
 }
 
