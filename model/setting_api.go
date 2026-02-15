@@ -10,8 +10,8 @@ type SettingForm struct {
 	InstallHost                 string `json:"install_host,omitempty" validate:"optional"`
 	CustomCode                  string `json:"custom_code,omitempty" validate:"optional"`
 	CustomCodeDashboard         string `json:"custom_code_dashboard,omitempty" validate:"optional"`
-	WebRealIPHeader                string `json:"web_real_ip_header,omitempty" validate:"optional"` // 前端真实IP
-	AgentRealIPHeader                string `json:"agent_real_ip_header,omitempty" validate:"optional"` // Agent真实IP
+	WebRealIPHeader             string `json:"web_real_ip_header,omitempty" validate:"optional"`   // 前端真实IP
+	AgentRealIPHeader           string `json:"agent_real_ip_header,omitempty" validate:"optional"` // Agent真实IP
 	UserTemplate                string `json:"user_template,omitempty" validate:"optional"`
 
 	AgentTLS                    bool `json:"tls,omitempty" validate:"optional"`
@@ -42,4 +42,5 @@ type SettingResponse struct {
 
 	Version           string             `json:"version,omitempty"`
 	FrontendTemplates []FrontendTemplate `json:"frontend_templates,omitempty"`
+	TSDBEnabled       bool               `json:"tsdb_enabled"`
 }

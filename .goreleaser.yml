@@ -52,6 +52,7 @@ builds:
     flags:
       - -trimpath
       - -buildvcs=false
+      - -mod=vendor
     tags:
       - go_json
     goos:

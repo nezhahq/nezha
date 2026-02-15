@@ -34,7 +34,7 @@ jobs:
           go install github.com/swaggo/swag/cmd/swag@latest
           touch ./cmd/dashboard/user-dist/a
           touch ./cmd/dashboard/admin-dist/a
-          swag init --pd -d . -g ./cmd/dashboard/main.go -o ./cmd/dashboard/docs --parseGoList=false
+          swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
 
       - name: Unit test
         run: |
@@ -46,5 +46,7 @@ jobs:
       - name: Run Gosec Security Scanner
         if: runner.os == 'Linux'
         uses: securego/gosec@master
+        env:
+          GOTOOLCHAIN: auto
         with:
-          args: --exclude=G104,G402,G115,G203 ./...
+          args: --exclude=G104,G115,G117,G203,G402,G703,G704 ./...

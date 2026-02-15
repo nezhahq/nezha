@@ -7,6 +7,7 @@ type ServiceForm struct {
 	Target              string          `json:"target,omitempty"`
 	Type                uint8           `json:"type,omitempty"`
 	Cover               uint8           `json:"cover,omitempty"`
+	DisplayIndex        int             `json:"display_index,omitempty" default:"0"` // 展示排序，越大越靠前
 	Notify              bool            `json:"notify,omitempty" validate:"optional"`
 	Duration            uint64          `json:"duration,omitempty"`
 	MinLatency          float32         `json:"min_latency,omitempty" default:"0.0"`
@@ -26,7 +27,7 @@ type ServiceResponseItem struct {
 	CurrentDown uint64       `json:"current_down"`
 	TotalUp     uint64       `json:"total_up"`
 	TotalDown   uint64       `json:"total_down"`
-	Delay       *[30]float32 `json:"delay,omitempty"`
+	Delay       *[30]float64 `json:"delay,omitempty"`
 	Up          *[30]uint64  `json:"up,omitempty"`
 	Down        *[30]uint64  `json:"down,omitempty"`
 }

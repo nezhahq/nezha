@@ -12,6 +12,7 @@ import (
 	"gorm.io/gorm"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/tsdb"
 	pb "github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
@@ -365,4 +366,90 @@ func batchMoveServer(c *gin.Context) (any, error) {
 	}
 
 	return nil, nil
+}
+
+var serverMetricMap = map[string]tsdb.MetricType{
+	"cpu":              tsdb.MetricServerCPU,
+	"memory":           tsdb.MetricServerMemory,
+	"swap":             tsdb.MetricServerSwap,
+	"disk":             tsdb.MetricServerDisk,
+	"net_in_speed":     tsdb.MetricServerNetInSpeed,
+	"net_out_speed":    tsdb.MetricServerNetOutSpeed,
+	"net_in_transfer":  tsdb.MetricServerNetInTransfer,
+	"net_out_transfer": tsdb.MetricServerNetOutTransfer,
+	"load1":            tsdb.MetricServerLoad1,
+	"load5":            tsdb.MetricServerLoad5,
+	"load15":           tsdb.MetricServerLoad15,
+	"tcp_conn":         tsdb.MetricServerTCPConn,
+	"udp_conn":         tsdb.MetricServerUDPConn,
+	"process_count":    tsdb.MetricServerProcessCount,
+	"temperature":      tsdb.MetricServerTemperature,
+	"uptime":           tsdb.MetricServerUptime,
+	"gpu":              tsdb.MetricServerGPU,
+}
+
+// Get server metrics history
+// @Summary Get server metrics history
+// @Security BearerAuth
+// @Schemes
+// @Description Get server metrics history for a specific server
+// @Tags common
+// @param id path uint true "Server ID"
+// @param metric query string true "Metric name: cpu, memory, swap, disk, net_in_speed, net_out_speed, net_in_transfer, net_out_transfer, load1, load5, load15, tcp_conn, udp_conn, process_count, temperature, uptime, gpu"
+// @param period query string false "Time period: 1d, 7d, 30d (default: 1d)"
+// @Produce json
+// @Success 200 {object} model.CommonResponse[model.ServerMetricsResponse]
+// @Router /server/{id}/metrics [get]
+func getServerMetrics(c *gin.Context) (*model.ServerMetricsResponse, error) {
+	idStr := c.Param("id")
+	serverID, err := strconv.ParseUint(idStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+
+	server, ok := singleton.ServerShared.Get(serverID)
+	if !ok {
+		return nil, singleton.Localizer.ErrorT("server not found")
+	}
+
+	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
+	if server.HideForGuest && !isMember {
+		return nil, singleton.Localizer.ErrorT("unauthorized")
+	}
+
+	metricName := c.Query("metric")
+	metricType, ok := serverMetricMap[metricName]
+	if !ok {
+		return nil, singleton.Localizer.ErrorT("invalid metric name")
+	}
+
+	periodStr := c.DefaultQuery("period", "1d")
+	period, err := tsdb.ParseQueryPeriod(periodStr)
+	if err != nil {
+		return nil, err
+	}
+
+	if !isMember && period != tsdb.Period1Day {
+		return nil, singleton.Localizer.ErrorT("unauthorized: only 1d data available for guests")
+	}
+
+	response := &model.ServerMetricsResponse{
+		ServerID:   serverID,
+		ServerName: server.Name,
+		Metric:     metricName,
+		DataPoints: make([]model.ServerMetricsDataPoint, 0),
+	}
+
+	if !singleton.TSDBEnabled() {
+		return response, nil
+	}
+
+	points, err := singleton.TSDBShared.QueryServerMetrics(serverID, metricType, period)
+	if err != nil {
+		return nil, err
+	}
+
+	response.DataPoints = points
+
+	return response, nil
 }
