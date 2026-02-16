@@ -170,6 +170,7 @@ jobs:
           GH_DEBUG: api
         run: |
           gh workflow run sync-release.yml
+          gh workflow run sync-release-atomgit.yml
 
   release-docker:
     runs-on: ubuntu-latest
