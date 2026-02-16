@@ -1,0 +1,17 @@
+name: Sync Release to AtomGit
+
+on:
+  workflow_dispatch:
+
+jobs:
+  sync-release-to-atomgit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ATOMGIT_PAT: ${{ secrets.ATOMGIT_PAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sync to AtomGit
+        run: |
+          pip3 install PyGitHub
+          python3 .github/sync_atomgit.py

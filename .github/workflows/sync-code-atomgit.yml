@@ -1,0 +1,16 @@
+name: Sync Code to AtomGit
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  sync-code-to-atomgit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: adambirds/sync-github-to-gitlab-action@v1.1.0
+        with:
+          destination_repository: git@atomgit.com:naiba/nezha-dashboard.git
+          destination_branch_name: master
+          destination_ssh_key: ${{ secrets.ATOMGIT_SSH_KEY }}
