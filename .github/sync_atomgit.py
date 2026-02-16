@@ -39,8 +39,8 @@ def sync_to_atomgit(tag, body, files):
     access_token = os.environ["ATOMGIT_PAT"]
     release_api_uri = f"{ATOMGIT_API}/repos/{ATOMGIT_OWNER}/{ATOMGIT_REPO}/releases"
 
+    auth_headers = {"Authorization": f"Bearer {access_token}"}
     release_data = {
-        "access_token": access_token,
         "tag_name": tag,
         "name": tag,
         "body": body,
@@ -51,7 +51,9 @@ def sync_to_atomgit(tag, body, files):
     release_resp = None
     for attempt in range(3):
         try:
-            release_resp = requests.post(release_api_uri, json=release_data, timeout=30)
+            release_resp = requests.post(
+                release_api_uri, json=release_data, headers=auth_headers, timeout=30
+            )
             release_resp.raise_for_status()
             break
         except requests.exceptions.Timeout:
