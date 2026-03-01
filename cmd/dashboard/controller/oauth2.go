@@ -65,8 +65,7 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 		RedirectURL: redirectURL,
 	}, cache.DefaultExpiration)
 
-	url := o2conf.AuthCodeURL(state, oauth2.AccessTypeOnline)
-	c.SetCookie("nz-o2s", stateKey, 60*5, "", "", false, false)
+	c.SetCookie("nz-o2s", stateKey, 60*5, "", "", c.Request.URL.Scheme == "https" || c.Request.TLS != nil, false)
 
 	return &model.Oauth2LoginResponse{Redirect: url}, nil
 }
