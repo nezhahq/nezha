@@ -43,7 +43,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 
 ## Contributors
 
-<!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="奶爸"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="奶爸"/></a>
+<!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>
 <a href="https://github.com/uubulb" title="UUBulb"><img src="https://avatars.githubusercontent.com/u/35923940?v=4" width="50;" alt="UUBulb"/></a>
 <a href="https://github.com/AkkiaS7" title="Akkia"><img src="https://avatars.githubusercontent.com/u/68485070?v=4" width="50;" alt="Akkia"/></a>
 <a href="https://github.com/matchch" title="卖女孩的小火柴"><img src="https://avatars.githubusercontent.com/u/44471469?v=4" width="50;" alt="卖女孩的小火柴"/></a>
