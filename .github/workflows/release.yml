@@ -23,7 +23,7 @@ jobs:
     name: Build artifacts
     runs-on: ubuntu-latest
     container:
-      image: goreleaser/goreleaser-cross:v1.25
+      image: goreleaser/goreleaser-cross:v1.26
     steps:
       - name: Install dependencies
         run: |
@@ -49,7 +49,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: "1.25.x"
+          go-version: "1.26.x"
 
       - name: generate swagger docs
         run: |
