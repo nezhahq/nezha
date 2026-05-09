@@ -101,7 +101,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 				return err
 			}
 
-			if err := tx.Where("id IN (?)", id).Delete(&model.User{}).Error; err != nil {
+			if err := tx.Where("id = ?", uid).Delete(&model.User{}).Error; err != nil {
 				return err
 			}
 			return nil
