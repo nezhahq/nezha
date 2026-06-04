@@ -25,6 +25,14 @@ func authCheckWithSecret(secret, uuid string) (uint64, error) {
 	return (&authHandler{}).Check(ctx)
 }
 
+func authCheckWithHyphenatedSecret(secret, uuid string) (uint64, error) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		"client-secret", secret,
+		"client-uuid", uuid,
+	))
+	return (&authHandler{}).Check(ctx)
+}
+
 // authHandshakeUUID is RFC4122-shaped so it survives the uuid.ParseUUID gate
 // at the top of check(); setupAuthAgentFixture's "uuid-alice" / "uuid-bob"
 // only work for callers that bypass check() and exercise the inner helpers.
@@ -85,6 +93,18 @@ func setupAuthHandshakeFixture(t *testing.T) func() {
 		singleton.UserInfoMap = originalUserInfoMap
 		singleton.AgentSecretToUserId = originalAgentSecretToUserId
 		singleton.UserLock.Unlock()
+	}
+}
+
+func TestAuthCheckAcceptsHyphenatedMetadata(t *testing.T) {
+	defer setupAuthHandshakeFixture(t)()
+
+	cid, err := authCheckWithHyphenatedSecret("alice-global", authHandshakeUUID)
+	if err != nil {
+		t.Fatalf("hyphenated metadata must authenticate: %v", err)
+	}
+	if cid != 11 {
+		t.Fatalf("expected server ID 11, got %d", cid)
 	}
 }
 
