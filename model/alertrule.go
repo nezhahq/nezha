@@ -166,6 +166,13 @@ func (r *AlertRule) Check(points [][]bool) (int, bool) {
 			continue
 		} else {
 			// 常规报警
+			// duration<=0 是无意义的规则（持续 0 秒）：直接跳过该规则，
+			// 既不污染 hasPassedRule（否则会连带跳过同一 alert 里其它有效
+			// 规则），也避免下方 fail*100/total 在 total=0 时整数除零 panic
+			// —— checkStatus 无 recover，一次 panic 会拖垮整个告警 goroutine。
+			if duration <= 0 {
+				continue
+			}
 			if hasPassedRule = boundCheck(len(points), duration, hasPassedRule); hasPassedRule {
 				continue
 			}

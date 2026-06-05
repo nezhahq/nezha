@@ -184,10 +184,15 @@ func checkStatus() {
 				}
 				alertsPrevState[alert.ID][server.ID] = _RuleCheckPass
 			}
-			// 清理旧数据
-			if max > 0 && max < len(alertsStore[alert.ID][server.ID]) {
-				index := len(alertsStore[alert.ID][server.ID]) - max
-				alertsStore[alert.ID][server.ID] = alertsStore[alert.ID][server.ID][index:]
+			// 清理旧数据：只需保留最近 max 个采样点（各规则 Duration 的最大值）。
+			// max==0 表示该 alert 没有任何有效规则会回看历史（例如全部
+			// Duration<=0 被跳过），此时历史采样无用，必须清空——否则每个
+			// tick 都 append 而永不裁剪，切片会无限增长成内存泄漏。
+			samples := alertsStore[alert.ID][server.ID]
+			if max <= 0 {
+				alertsStore[alert.ID][server.ID] = samples[:0]
+			} else if max < len(samples) {
+				alertsStore[alert.ID][server.ID] = samples[len(samples)-max:]
 			}
 		}
 	}

@@ -315,3 +315,48 @@ func assertEq(t *testing.T, msg string, exp, act any) {
 		t.Fatalf("failed to test for %s. exp=[%v] but act=[%v]", msg, exp, act)
 	}
 }
+
+// TestAlertRule_ZeroDurationGeneralRule guards against a config-reachable DoS:
+// a general rule with Duration:0 (the API validates Duration as "optional" with
+// no minimum) previously hit fail*100/total with total==0, panicking with an
+// integer divide-by-zero inside checkStatus — which has no recover and would
+// take down the whole alert goroutine. boundCheck now treats duration<=0 as a
+// passed (no-op) rule, so Check must return without panicking.
+func TestAlertRule_ZeroDurationGeneralRule(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Check panicked on a Duration:0 general rule (config-reachable DoS): %v", r)
+		}
+	}()
+
+	rule := &AlertRule{
+		Rules: []*Rule{{Type: "cpu", Duration: 0}},
+	}
+	// The only contract here is "do not panic". A zero-duration rule is skipped,
+	// so it contributes nothing to the verdict and max stays 0.
+	maxD, _ := rule.Check([][]bool{{true}, {false}})
+	if maxD != 0 {
+		t.Fatalf("a skipped Duration:0 rule must not contribute to max, got %d", maxD)
+	}
+}
+
+// Mixing a valid rule with a zero-duration rule must also be safe: the zero
+// rule is skipped, the real rule still drives the verdict.
+func TestAlertRule_ZeroDurationMixedWithValidRule(t *testing.T) {
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Check panicked on a mixed zero/valid rule set: %v", r)
+		}
+	}()
+
+	rule := &AlertRule{
+		Rules: []*Rule{
+			{Type: "cpu", Duration: 0},
+			{Type: "cpu", Duration: 3},
+		},
+	}
+	maxD, _ := rule.Check([][]bool{{true, false}, {true, false}, {true, false}})
+	if maxD != 3 {
+		t.Fatalf("the valid Duration:3 rule must still set max=3, got %d", maxD)
+	}
+}
