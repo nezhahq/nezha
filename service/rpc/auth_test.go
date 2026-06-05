@@ -33,6 +33,20 @@ func authCheckWithHyphenatedSecret(secret, uuid string) (uint64, error) {
 	return (&authHandler{}).Check(ctx)
 }
 
+// authCheckWithBothKeyStyles reproduces the real post-upgrade wire state: a
+// new agent (PR #244) emits BOTH hyphenated and underscore metadata, so a new
+// dashboard receives both at once. hyphenSecret/underscoreSecret may differ so
+// a test can assert which key wins.
+func authCheckWithBothKeyStyles(hyphenSecret, underscoreSecret, uuid string) (uint64, error) {
+	ctx := metadata.NewIncomingContext(context.Background(), metadata.Pairs(
+		"client-secret", hyphenSecret,
+		"client_secret", underscoreSecret,
+		"client-uuid", uuid,
+		"client_uuid", uuid,
+	))
+	return (&authHandler{}).Check(ctx)
+}
+
 // authHandshakeUUID is RFC4122-shaped so it survives the uuid.ParseUUID gate
 // at the top of check(); setupAuthAgentFixture's "uuid-alice" / "uuid-bob"
 // only work for callers that bypass check() and exercise the inner helpers.
@@ -105,6 +119,35 @@ func TestAuthCheckAcceptsHyphenatedMetadata(t *testing.T) {
 	}
 	if cid != 11 {
 		t.Fatalf("expected server ID 11, got %d", cid)
+	}
+}
+
+// The everyday post-upgrade case (new agent + new dashboard): both key styles
+// arrive together carrying the same secret and must authenticate normally.
+func TestAuthCheckAcceptsBothKeyStylesPresent(t *testing.T) {
+	defer setupAuthHandshakeFixture(t)()
+
+	cid, err := authCheckWithBothKeyStyles("alice-global", "alice-global", authHandshakeUUID)
+	if err != nil {
+		t.Fatalf("an agent emitting both key styles must authenticate: %v", err)
+	}
+	if cid != 11 {
+		t.Fatalf("expected server ID 11, got %d", cid)
+	}
+}
+
+// When both styles are present the hyphenated key wins (firstMetadataValue
+// lists it first). This pins the precedence so a future reorder can't silently
+// start trusting the underscore alias that Caddy strips.
+func TestAuthCheckHyphenatedKeyTakesPrecedence(t *testing.T) {
+	defer setupAuthHandshakeFixture(t)()
+
+	cid, err := authCheckWithBothKeyStyles("alice-global", "garbage-underscore", authHandshakeUUID)
+	if err != nil {
+		t.Fatalf("hyphenated secret must be the one used, so auth must succeed: %v", err)
+	}
+	if cid != 11 {
+		t.Fatalf("expected server ID 11 from the hyphenated secret, got %d", cid)
 	}
 }
 
