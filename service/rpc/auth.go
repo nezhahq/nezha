@@ -39,10 +39,7 @@ func (a *authHandler) check(ctx context.Context) (uint64, error) {
 		return 0, status.Errorf(codes.Unauthenticated, "获取 metaData 失败")
 	}
 
-	var clientSecret string
-	if value, ok := md["client_secret"]; ok {
-		clientSecret = strings.TrimSpace(value[0])
-	}
+	clientSecret := firstMetadataValue(md, "client-secret", "client_secret")
 
 	if clientSecret == "" {
 		return 0, status.Error(codes.Unauthenticated, "客户端认证失败")
@@ -50,10 +47,7 @@ func (a *authHandler) check(ctx context.Context) (uint64, error) {
 
 	ip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
 
-	var clientUUID string
-	if value, ok := md["client_uuid"]; ok {
-		clientUUID = value[0]
-	}
+	clientUUID := firstMetadataValue(md, "client-uuid", "client_uuid")
 
 	if _, err := uuid.ParseUUID(clientUUID); err != nil {
 		// Keep this counter on the same trigger surface as the
@@ -181,6 +175,15 @@ func (a *authHandler) check(ctx context.Context) (uint64, error) {
 	}
 
 	return clientID, nil
+}
+
+func firstMetadataValue(md metadata.MD, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := md[key]; ok && len(value) > 0 {
+			return strings.TrimSpace(value[0])
+		}
+	}
+	return ""
 }
 
 // authorizeAgentForUUID resolves a client UUID to the dashboard's internal
