@@ -112,6 +112,76 @@ func TestOAuth2_VerifyState_HappyPath(t *testing.T) {
 	require.Equal(t, model.RTypeBind, st.Action)
 }
 
+// GHSA-9rc6-8cjv-rcvx: getRedirectURL must not echo an attacker-controlled
+// Host header into the OAuth2 callback URL. It may only trust a Host that the
+// operator declared (InstallHost / ListenHost / ReservedHosts); any other Host
+// must fall back to the configured InstallHost so a forged value cannot divert
+// the victim's authorization code.
+
+func setRedirectHostConf(t *testing.T, installHost, reservedHosts string) {
+	t.Helper()
+	prev := singleton.Conf
+	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{
+		ConfigDashboard: model.ConfigDashboard{
+			InstallHost:   installHost,
+			ReservedHosts: reservedHosts,
+		},
+	}}
+	t.Cleanup(func() { singleton.Conf = prev })
+}
+
+func TestGetRedirectURL_RejectsForgedHostFallsBackToInstallHost(t *testing.T) {
+	setRedirectHostConf(t, "panel.example.com", "")
+	c, _ := newOAuth2Ctx(t)
+	c.Request.Host = "evil.attacker.test"
+
+	got := getRedirectURL(c)
+	require.Equal(t, "http://panel.example.com/api/v1/oauth2/callback", got,
+		"a forged Host must be ignored in favour of the configured InstallHost")
+}
+
+func TestGetRedirectURL_TrustsInstallHost(t *testing.T) {
+	setRedirectHostConf(t, "panel.example.com", "")
+	c, _ := newOAuth2Ctx(t)
+	c.Request.Host = "panel.example.com"
+
+	got := getRedirectURL(c)
+	require.Equal(t, "http://panel.example.com/api/v1/oauth2/callback", got,
+		"the declared InstallHost must be trusted verbatim")
+}
+
+func TestGetRedirectURL_TrustsReservedHostForMultiDomain(t *testing.T) {
+	setRedirectHostConf(t, "panel.example.com", "alt.example.com,panel2.example.com")
+	c, _ := newOAuth2Ctx(t)
+	c.Request.Host = "panel2.example.com"
+
+	got := getRedirectURL(c)
+	require.Equal(t, "http://panel2.example.com/api/v1/oauth2/callback", got,
+		"a Host listed in ReservedHosts must be trusted so multi-domain deployments keep working")
+}
+
+func TestGetRedirectURL_HonoursForwardedProtoOnTrustedHost(t *testing.T) {
+	setRedirectHostConf(t, "panel.example.com", "")
+	c, _ := newOAuth2Ctx(t)
+	c.Request.Host = "panel.example.com"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+
+	got := getRedirectURL(c)
+	require.Equal(t, "https://panel.example.com/api/v1/oauth2/callback", got,
+		"https scheme must still be derived for reverse-proxy TLS termination")
+}
+
+func TestGetRedirectURL_ForgedHostCannotForceHTTPSOrigin(t *testing.T) {
+	setRedirectHostConf(t, "panel.example.com", "")
+	c, _ := newOAuth2Ctx(t)
+	c.Request.Host = "evil.attacker.test"
+	c.Request.Header.Set("X-Forwarded-Proto", "https")
+
+	got := getRedirectURL(c)
+	require.Equal(t, "https://panel.example.com/api/v1/oauth2/callback", got,
+		"even with an https hint the host must collapse to InstallHost, never the forged origin")
+}
+
 func TestOAuth2_Unbind_UnknownProviderRejected(t *testing.T) {
 	defer setupOAuth2Test(t)()
 
