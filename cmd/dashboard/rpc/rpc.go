@@ -217,7 +217,11 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	// IS required though — the receiving agent must prove it is the server the
 	// NAT config addressed, otherwise any agent that snoops the streamId can
 	// answer NAT traffic on behalf of an unrelated host.
-	rpcService.NezhaHandlerSingleton.CreateStream(streamId, 0, server.ID)
+	if err := rpcService.NezhaHandlerSingleton.CreateStream(streamId, 0, server.ID); err != nil {
+		w.WriteHeader(http.StatusTooManyRequests)
+		w.Write(fmt.Appendf(nil, "stream limit: %v", err))
+		return
+	}
 	defer rpcService.NezhaHandlerSingleton.CloseStream(streamId)
 
 	taskData, err := json.Marshal(model.TaskNAT{

@@ -48,13 +48,43 @@ var bufPool = sync.Pool{
 	},
 }
 
-func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64, targetServerID uint64) {
-	s.CreateStreamWithPurpose(streamId, creatorUserID, targetServerID, PurposeLegacy)
+const (
+	maxStreamsPerUser   = 20
+	maxStreamsPerServer = 40
+)
+
+var (
+	ErrTooManyStreamsForUser   = errors.New("too many concurrent streams for this user")
+	ErrTooManyStreamsForServer = errors.New("too many concurrent streams for this server")
+)
+
+func (s *NezhaHandler) CreateStream(streamId string, creatorUserID uint64, targetServerID uint64) error {
+	return s.CreateStreamWithPurpose(streamId, creatorUserID, targetServerID, PurposeLegacy)
 }
 
-func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID uint64, targetServerID uint64, purpose StreamPurpose) {
+func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID uint64, targetServerID uint64, purpose StreamPurpose) error {
 	s.ioStreamMutex.Lock()
 	defer s.ioStreamMutex.Unlock()
+
+	var perUser, perServer int
+	for _, ctx := range s.ioStreams {
+		if creatorUserID != 0 && ctx.creatorUserID == creatorUserID {
+			perUser++
+		}
+		if ctx.targetServerID == targetServerID {
+			perServer++
+		}
+	}
+	// creatorUserID==0 is a dashboard-internal stream (NAT, server transfer,
+	// MCP transfer); only end-user-initiated streams are capped per user, but
+	// every stream counts toward the per-server cap so one server cannot be
+	// flooded regardless of who opened the streams.
+	if creatorUserID != 0 && perUser >= maxStreamsPerUser {
+		return ErrTooManyStreamsForUser
+	}
+	if perServer >= maxStreamsPerServer {
+		return ErrTooManyStreamsForServer
+	}
 
 	s.ioStreams[streamId] = &ioStreamContext{
 		creatorUserID:    creatorUserID,
@@ -64,6 +94,7 @@ func (s *NezhaHandler) CreateStreamWithPurpose(streamId string, creatorUserID ui
 		agentIoConnectCh: make(chan struct{}),
 		revokedCh:        make(chan struct{}),
 	}
+	return nil
 }
 
 // IsStreamAuthorizedForAgent reports whether the connecting agent is the
@@ -269,8 +300,6 @@ func (s *NezhaHandler) CloseStream(streamId string) error {
 
 	return nil
 }
-
-
 
 // UserConnected publishes the user-side IO under ioStreamMutex so concurrent
 // Revoke* / WaitForAgent / StartStream see a consistent stream view.

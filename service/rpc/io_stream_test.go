@@ -1,6 +1,8 @@
 package rpc
 
 import (
+	"errors"
+	"fmt"
 	"io"
 	"reflect"
 	"testing"
@@ -96,6 +98,130 @@ func TestIOStream(t *testing.T) {
 			t.Fatalf("expected %v, but got %v", data[len(data)/2:], b2)
 		}
 	})
+}
+
+// The WebSocket stream endpoints (terminal / fm) were unbounded: an
+// authenticated member could open thousands of streams, each spawning
+// goroutines, a 1 MiB buffer, and an agent-side PTY, exhausting dashboard and
+// agent resources (GHSA-jg62-j5h6-8mpq). CreateStream now caps concurrent
+// streams per user and per server. These tests pin the caps and the
+// dashboard-internal (uid==0) exemption.
+
+// Baseline: a normal operator opening a terminal and a file-manager session
+// against one server (the everyday case) must always succeed — the cap exists
+// to stop floods, not to interfere with ordinary use.
+func TestCreateStreamNormalUserEverydayUseSucceeds(t *testing.T) {
+	h := NewNezhaHandler()
+	const uid, serverID = uint64(7), uint64(1)
+
+	if err := h.CreateStream("term", uid, serverID); err != nil {
+		t.Fatalf("opening a terminal must succeed for a normal user, got %v", err)
+	}
+	if err := h.CreateStream("fm", uid, serverID); err != nil {
+		t.Fatalf("opening a file manager alongside a terminal must succeed, got %v", err)
+	}
+}
+
+// Several normal users working at the same time must not interfere: one user's
+// streams do not consume another user's per-user budget.
+func TestCreateStreamNormalUsersAreIndependent(t *testing.T) {
+	h := NewNezhaHandler()
+
+	for u := uint64(1); u <= 5; u++ {
+		for i := 0; i < maxStreamsPerUser; i++ {
+			id := fmt.Sprintf("u%d-s%d", u, i)
+			if err := h.CreateStream(id, u, 100+u); err != nil {
+				t.Fatalf("user %d stream %d must succeed; per-user budgets must be independent, got %v", u, i, err)
+			}
+		}
+	}
+}
+
+func TestCreateStreamEnforcesPerUserCap(t *testing.T) {
+	h := NewNezhaHandler()
+	const uid = uint64(42)
+
+	for i := 0; i < maxStreamsPerUser; i++ {
+		if err := h.CreateStream(fmt.Sprintf("u-%d", i), uid, uint64(i)); err != nil {
+			t.Fatalf("stream %d within the per-user cap must succeed, got %v", i, err)
+		}
+	}
+
+	err := h.CreateStream("u-over", uid, 9999)
+	if !errors.Is(err, ErrTooManyStreamsForUser) {
+		t.Fatalf("the (maxStreamsPerUser+1)-th stream must be rejected with ErrTooManyStreamsForUser, got %v", err)
+	}
+}
+
+func TestCreateStreamEnforcesPerServerCap(t *testing.T) {
+	h := NewNezhaHandler()
+	const serverID = uint64(7)
+
+	for i := 0; i < maxStreamsPerServer; i++ {
+		if err := h.CreateStream(fmt.Sprintf("s-%d", i), uint64(i+1), serverID); err != nil {
+			t.Fatalf("stream %d within the per-server cap must succeed, got %v", i, err)
+		}
+	}
+
+	err := h.CreateStream("s-over", 99999, serverID)
+	if !errors.Is(err, ErrTooManyStreamsForServer) {
+		t.Fatalf("the (maxStreamsPerServer+1)-th stream to one server must be rejected with ErrTooManyStreamsForServer, got %v", err)
+	}
+}
+
+// Dashboard-internal streams (NAT, server transfer, MCP transfer) pass
+// creatorUserID==0. They must NOT be capped per user, or those features would
+// throttle themselves; but they must still count toward the per-server cap so
+// no single server can be flooded regardless of the originating path.
+func TestCreateStreamExemptsInternalStreamsFromPerUserCap(t *testing.T) {
+	h := NewNezhaHandler()
+
+	for i := 0; i < maxStreamsPerUser*3; i++ {
+		if err := h.CreateStream(fmt.Sprintf("internal-%d", i), 0, uint64(i)); err != nil {
+			t.Fatalf("internal stream %d (uid==0) must never hit the per-user cap, got %v", i, err)
+		}
+	}
+}
+
+func TestCreateStreamInternalStreamsStillCountTowardPerServerCap(t *testing.T) {
+	h := NewNezhaHandler()
+	const serverID = uint64(3)
+
+	for i := 0; i < maxStreamsPerServer; i++ {
+		if err := h.CreateStream(fmt.Sprintf("internal-s-%d", i), 0, serverID); err != nil {
+			t.Fatalf("internal stream %d within the per-server cap must succeed, got %v", i, err)
+		}
+	}
+
+	err := h.CreateStream("internal-s-over", 0, serverID)
+	if !errors.Is(err, ErrTooManyStreamsForServer) {
+		t.Fatalf("internal streams must still be subject to the per-server cap, got %v", err)
+	}
+}
+
+// Closing a stream must free its slot so a user who hit the cap can open new
+// streams after old ones end — otherwise normal churn would permanently lock
+// a user out.
+func TestCreateStreamFreesSlotAfterClose(t *testing.T) {
+	h := NewNezhaHandler()
+	const uid = uint64(55)
+
+	for i := 0; i < maxStreamsPerUser; i++ {
+		if err := h.CreateStream(fmt.Sprintf("c-%d", i), uid, 1); err != nil {
+			t.Fatalf("setup stream %d must succeed, got %v", i, err)
+		}
+	}
+	if err := h.CreateStream("c-over", uid, 1); !errors.Is(err, ErrTooManyStreamsForUser) {
+		t.Fatalf("expected per-user cap to be hit, got %v", err)
+	}
+
+	if err := h.CloseStream("c-0"); err != nil {
+		t.Fatalf("CloseStream failed: %v", err)
+	}
+
+	if err := h.CreateStream("c-after-close", uid, 1); err != nil {
+		t.Fatalf("after closing one stream the user must be able to open another, got %v", err)
+	}
 }
 
 func newPipeReadWriter() io.ReadWriteCloser {

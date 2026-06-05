@@ -49,7 +49,9 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 		return nil, err
 	}
 
-	rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c), server.ID)
+	if err := rpc.NezhaHandlerSingleton.CreateStream(streamId, getUid(c), server.ID); err != nil {
+		return nil, err
+	}
 
 	fmData, _ := json.Marshal(&model.TaskFM{
 		StreamID: streamId,

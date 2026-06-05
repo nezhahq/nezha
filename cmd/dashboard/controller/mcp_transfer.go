@@ -962,7 +962,9 @@ func openFsTransferStream(ctx context.Context, serverID uint64, req *model.FsTra
 	}
 	req.StreamID = streamId
 
-	rpc.NezhaHandlerSingleton.CreateStreamWithPurpose(streamId, 0, serverID, rpc.PurposeMCPTransfer)
+	if err := rpc.NezhaHandlerSingleton.CreateStreamWithPurpose(streamId, 0, serverID, rpc.PurposeMCPTransfer); err != nil {
+		return nil, func() {}, err
+	}
 	cleanup := func() { _ = rpc.NezhaHandlerSingleton.CloseStream(streamId) }
 
 	body, err := json.Marshal(req)
