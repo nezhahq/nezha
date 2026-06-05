@@ -33,7 +33,7 @@ jobs:
 
       - run: git config --global --add safe.directory /__w/nezha/nezha
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Prepare frontends' dists
         run: |
@@ -47,7 +47,7 @@ jobs:
           wget -qO pkg/geoip/geoip.db https://ipinfo.io/data/free/country.mmdb?token=${IPINFO_TOKEN}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version: "1.26.x"
 
@@ -60,7 +60,7 @@ jobs:
       - name: Cache zstd for s390x
         if: matrix.goarch == 's390x'
         id: cache-zstd
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: /tmp/zstd-s390x
           key: zstd-s390x-v1.5.7
@@ -96,7 +96,7 @@ jobs:
 
       - name: Build with tag
         if: contains(github.ref, 'refs/tags/')
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -108,7 +108,7 @@ jobs:
 
       - name: Build snapshot
         if: contains(github.ref, 'refs/tags/') == false
-        uses: goreleaser/goreleaser-action@v6
+        uses: goreleaser/goreleaser-action@v7
         env:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
@@ -119,7 +119,7 @@ jobs:
           args: build --single-target --clean --skip=validate --snapshot
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dashboard-${{ matrix.goos }}-${{ matrix.goarch }}
           path: |
@@ -132,7 +132,7 @@ jobs:
     name: Release
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./assets
 
@@ -146,7 +146,7 @@ jobs:
           done
 
       - name: Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: "assets/*/*/*.zip"
           generate_release_notes: true
@@ -178,10 +178,10 @@ jobs:
     needs: build
     name: Release Docker images
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: ./assets
 
@@ -217,10 +217,10 @@ jobs:
           password: ${{ secrets.ALI_PAT }}
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
 
       - name: Set up image name
         run: |
@@ -235,7 +235,7 @@ jobs:
 
       - name: Build dasbboard image And Push with tag
         if: contains(github.ref, 'refs/tags/')
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
@@ -249,7 +249,7 @@ jobs:
 
       - name: Build dasbboard image And Push snapshot
         if: contains(github.ref, 'refs/tags/') == false
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
