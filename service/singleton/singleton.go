@@ -34,6 +34,7 @@ var (
 	NotificationShared    *NotificationClass
 	NATShared             *NATClass
 	CronShared            *CronClass
+	LLMShared             *LLMClass
 	// ServerTransferShared is initialized in LoadSingleton AFTER ServerShared
 	// (so the in-memory pending index can write back into ServerShared.UserID
 	// on transitions) and AFTER initUser (so PushIfOnline can read secrets
@@ -66,6 +67,15 @@ func LoadSingleton(bus chan<- *model.Service) (err error) {
 	ServerTransferShared = NewServerTransferClass()
 	// 最后初始化 ServiceSentinel
 	ServiceSentinelShared, err = NewServiceSentinel(bus)
+	if err != nil {
+		return err
+	}
+	// 初始化内置 LLM Chat 单例：按当前 Conf 构造 ChatModel；
+	// 未配置时 IsConfigured 返回 false，调用方应给前端一个友好提示。
+	LLMShared = NewLLMClass()
+	if reloadErr := LLMShared.Reload(); reloadErr != nil {
+		log.Printf("NEZHA>> LLM Shared initial Reload failed: %v", reloadErr)
+	}
 	return
 }
 
