@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -34,6 +35,7 @@ func ServeWeb(port uint) *http.Server {
 		pprof.Register(r)
 	}
 	r.Use(natGateway)
+	r.Use(rejectUnsafePath)
 	tmpl := template.New("").Funcs(funcMap)
 	var err error
 	tmpl, err = tmpl.ParseFS(resource.TemplateFS, "template/**/*.html")
@@ -147,6 +149,14 @@ func loadTemplates(tmpl *template.Template, themeDir string) *template.Template 
 	}
 
 	return t
+}
+
+func rejectUnsafePath(c *gin.Context) {
+	requestPath, err := url.PathUnescape(c.Request.URL.EscapedPath())
+	if err != nil || strings.Contains(requestPath, "..") {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
 }
 
 var funcMap = template.FuncMap{

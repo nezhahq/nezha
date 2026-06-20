@@ -24,6 +24,10 @@ func NewHybridFS(embed embed.FS, subDir string, localDir string) (*HybridFS, err
 }
 
 func (hfs *HybridFS) Open(name string) (fs.File, error) {
+	if !fs.ValidPath(name) {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: fs.ErrInvalid}
+	}
+
 	// Ensure embed files are not replaced
 	if file, err := hfs.embedFS.Open(name); err == nil {
 		return file, nil
