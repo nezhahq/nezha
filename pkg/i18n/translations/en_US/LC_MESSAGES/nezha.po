@@ -315,3 +315,38 @@ msgstr "Down"
 #: service/singleton/user.go:60
 msgid "user id not specified"
 msgstr "user id not specified"
+
+#: cmd/dashboard/controller/llm_chat.go:88
+msgid "invalid chat request"
+msgstr "invalid chat request"
+
+#: cmd/dashboard/controller/llm_chat.go:94
+msgid "messages is empty"
+msgstr "messages is empty"
+
+#: cmd/dashboard/controller/llm_chat.go:99
+msgid "message is nil"
+msgstr "message is nil"
+
+#: cmd/dashboard/controller/llm_chat.go:103
+msgid "message content is empty"
+msgstr "message content is empty"
+
+#: cmd/dashboard/controller/llm_chat.go:109
+#: cmd/dashboard/controller/llm_chat.go:120
+msgid "LLM provider not configured"
+msgstr "LLM provider not configured"
+
+#: cmd/dashboard/controller/llm_chat.go:124
+#, c-format
+msgid "LLM stream error: %v"
+msgstr "LLM stream error: %v"
+
+#: cmd/dashboard/controller/llm_chat.go:213
+msgid "LLM provider not configured"
+msgstr "LLM provider not configured"
+
+#: cmd/dashboard/controller/llm_chat.go:230
+#, c-format
+msgid "LLM connection failed: %v"
+msgstr "LLM connection failed: %v"
