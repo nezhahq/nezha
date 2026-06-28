@@ -727,7 +727,7 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) 
 			c.String(http.StatusBadGateway, "stream relay failed: zero-length data frame while payload incomplete")
 			return errMCPMidstreamAbort
 		}
-		if int64(chunkLen) > remaining {
+		if chunkLen > uint64(remaining) {
 			c.String(http.StatusBadGateway, "agent oversent: more data bytes than declared size")
 			return errMCPMidstreamAbort
 		}

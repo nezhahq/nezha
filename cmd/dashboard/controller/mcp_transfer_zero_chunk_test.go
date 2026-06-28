@@ -2,7 +2,10 @@ package controller
 
 import (
 	"bytes"
+	"encoding/binary"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -75,4 +78,28 @@ func TestRelayDownloadFrames_SingleZeroLengthFrameRejected(t *testing.T) {
 		t.Fatalf("relayDownloadFrames must reject a zero-length data frame while remaining>0")
 	}
 	_ = model.MCPFsXferMagicChunk
+}
+
+func TestRelayDownloadFrames_RejectsChunkLengthThatOverflowsInt64(t *testing.T) {
+	var src bytes.Buffer
+	src.Write(model.MCPFsXferMagicChunk)
+	var length [8]byte
+	binary.BigEndian.PutUint64(length[:], uint64(1)<<63)
+	src.Write(length[:])
+
+	stream := &fixedSizeFrameStream{buf: src}
+	w := httptest.NewRecorder()
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(w)
+
+	err := relayDownloadFrames(c, stream, 1)
+	if err == nil {
+		t.Fatalf("relayDownloadFrames accepted an NZTC chunk length that cannot be represented as int64")
+	}
+	if w.Code == http.StatusOK {
+		t.Fatalf("a rejected huge chunk length must set a non-200 status")
+	}
+	if body := w.Body.String(); !strings.Contains(body, "agent oversent") {
+		t.Fatalf("huge chunk length must be rejected before int64 conversion/copy; body=%q", body)
+	}
 }
