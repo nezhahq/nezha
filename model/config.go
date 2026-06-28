@@ -110,6 +110,23 @@ type Config struct {
 	// 内存配置
 	Memory MemoryConf `koanf:"memory" json:"memory"`
 
+	// 内置 LLM Chat 配置；放在 Config 顶层，不嵌入 ConfigDashboard，
+	// 因此 listConfig 的游客 / 普通用户分支自然不会回显这些字段。
+	// LLMAPIKey 用 json:"-" + yaml:"-"（参考 JWTSecretKey 模式），
+	// 不参与 JSON / YAML 序列化；listConfig 时通过 LLMAPIKeySet 这个
+	// 计算字段告诉前端"是否已配置"。
+	EnableLLM       bool    `koanf:"enable_llm"        json:"enable_llm,omitempty"`
+	LLMBaseURL      string  `koanf:"llm_base_url"      json:"llm_base_url,omitempty"`
+	LLMModel        string  `koanf:"llm_model"         json:"llm_model,omitempty"`
+	LLMAPIKey       string  `koanf:"llm_api_key"       json:"-"              yaml:"-"`
+	LLMSystemPrompt string  `koanf:"llm_system_prompt" json:"llm_system_prompt,omitempty"`
+	LLMMaxTokens    int     `koanf:"llm_max_tokens"    json:"llm_max_tokens,omitempty"`
+	LLMTemperature  float32 `koanf:"llm_temperature"   json:"llm_temperature,omitempty"`
+
+	// llmAPIKeySet：LLMAPIKey 是否非空的并发安全镜像，遵循 MCP 镜像字段的模式，
+	// 避免 SettingResponse 整体值拷贝 Config 时读到撕裂的 LLMAPIKey。
+	llmAPIKeySet atomic.Bool `koanf:"-" json:"-" yaml:"-"`
+
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
 }
@@ -231,6 +248,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	c.mcpEnabled.Store(c.EnableMCP)
+	c.llmAPIKeySet.Store(c.LLMAPIKey != "")
 
 	return nil
 }
@@ -245,6 +263,18 @@ func (c *Config) MCPEnabled() bool {
 // 数据竞争。持久化由 save() 在 marshal 前从 atomic 同步明文字段完成。
 func (c *Config) SetMCPEnabled(v bool) {
 	c.mcpEnabled.Store(v)
+}
+
+// LLMAPIKeySet 并发安全地读取 LLM API key 是否已配置。
+func (c *Config) LLMAPIKeySet() bool {
+	return c.llmAPIKeySet.Load()
+}
+
+// SetLLMAPIKey 并发安全地更新 LLM API key；保持 llmAPIKeySet 镜像同步。
+// 调用方在写入失败时应回滚到 prev，避免明文与磁盘状态不一致。
+func (c *Config) SetLLMAPIKey(key string) {
+	c.LLMAPIKey = key
+	c.llmAPIKeySet.Store(key != "")
 }
 
 // Save 保存配置文件
@@ -289,6 +319,13 @@ func (c *Config) RotateJWTSecretKeyIfNeeded(currentVersion string) (bool, error)
 }
 
 func (c *Config) patchYAMLField(key string, value any) error {
+	return c.PatchYAMLField(key, value)
+}
+
+// PatchYAMLField 是 patchYAMLField 的导出版本，供 settings 控制器等需要
+// 增量更新单个 YAML 键的代码使用；与 save() 的全量 marshal 不同，它只改一个
+// 键，保留文件里其它未映射到 struct 的字段。
+func (c *Config) PatchYAMLField(key string, value any) error {
 	dir := filepath.Dir(c.filePath)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return err
@@ -315,6 +352,8 @@ func (c *Config) patchYAMLField(key string, value any) error {
 
 func (c *Config) save() error {
 	c.EnableMCP = c.mcpEnabled.Load()
+	// LLMAPIKey 不进入 YAML（json:"-" yaml:"-"），无需同步明文字段；
+	// llmAPIKeySet 镜像同步在调用 SetLLMAPIKey 时已完成。
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
