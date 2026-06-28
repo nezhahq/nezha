@@ -160,8 +160,8 @@ github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd/go.mod h1:6dJ
 github.com/modern-go/reflect2 v1.0.2/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee h1:W5t00kpgFdJifH4BDsTlE89Zl93FEloxaWZfGcifgq8=
 github.com/modern-go/reflect2 v1.0.3-0.20250322232337-35a7c28c31ee/go.mod h1:yWuevngMOJpCy52FWWMvUC8ws7m/LJsjYzDa0/r8luk=
-github.com/nezhahq/libdns-tencentcloud v0.0.0-20250501081622-bd293105845a h1:wCB9wDZi2JlTfMtE09s5VjSaQpk4EXegvja4wEzx2vk=
-github.com/nezhahq/libdns-tencentcloud v0.0.0-20250501081622-bd293105845a/go.mod h1:CUbNGv2k24auuhwa7MMVXl45fniBMm2eVi57FlWLcIs=
+github.com/nezhahq/libdns-tencentcloud v0.0.0-20260628095405-2ab294ec675b h1:gn59L2ZaVX1meXwTXUJANwCU++3Lu5LTTowRZFYJWoo=
+github.com/nezhahq/libdns-tencentcloud v0.0.0-20260628095405-2ab294ec675b/go.mod h1:CUbNGv2k24auuhwa7MMVXl45fniBMm2eVi57FlWLcIs=
 github.com/ory/graceful v0.2.0 h1:5wqyCvKZG2+sorOA9rmQJm9aZP+RJdTrVHVDcvMOSuQ=
 github.com/ory/graceful v0.2.0/go.mod h1:hg2iCy+LCWOXahBZ+NQa4dk8J2govyQD79rrqrgMyY8=
 github.com/oschwald/maxminddb-golang v1.13.1 h1:G3wwjdN9JmIK2o/ermkHM+98oX5fS+k5MbwsmL4MRQE=

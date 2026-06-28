@@ -23,7 +23,7 @@ require (
 	github.com/libdns/libdns v1.1.1
 	github.com/miekg/dns v1.1.72
 	github.com/modelcontextprotocol/go-sdk v1.6.1
-	github.com/nezhahq/libdns-tencentcloud v0.0.0-20250501081622-bd293105845a
+	github.com/nezhahq/libdns-tencentcloud v0.0.0-20260628095405-2ab294ec675b
 	github.com/ory/graceful v0.2.0
 	github.com/oschwald/maxminddb-golang v1.13.1
 	github.com/patrickmn/go-cache v2.1.0+incompatible
