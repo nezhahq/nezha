@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -178,21 +179,20 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 			}
 			user := u.(*model.User)
 
-			result := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).Limit(1).Find(&bind)
-			if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-				return nil, newGormError("%v", result.Error)
-			}
-			bind.UserID = user.ID
-			bind.Provider = state.Provider
-			bind.OpenID = openId
-
-			if result.Error == gorm.ErrRecordNotFound {
-				result = singleton.DB.Create(&bind)
-			} else {
-				result = singleton.DB.Save(&bind)
-			}
-			if result.Error != nil {
-				return nil, newGormError("%v", result.Error)
+			err := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).First(&bind).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				bind = model.Oauth2Bind{
+					UserID:   user.ID,
+					Provider: state.Provider,
+					OpenID:   openId,
+				}
+				if err := singleton.DB.Create(&bind).Error; err != nil {
+					return nil, newGormError("%v", err)
+				}
+			} else if err != nil {
+				return nil, newGormError("%v", err)
+			} else if bind.UserID != user.ID {
+				return nil, errors.New("oauth2 identity is already bound to another user")
 			}
 		default:
 			if err := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).First(&bind).Error; err != nil {

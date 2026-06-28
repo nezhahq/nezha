@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
 	"github.com/patrickmn/go-cache"
 	"github.com/stretchr/testify/require"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/i18n"
+	"github.com/nezhahq/nezha/pkg/idcodec"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -34,9 +36,12 @@ func setupOAuth2Test(t *testing.T) func() {
 	}
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Oauth2Bind{}, &model.WAF{}))
+	require.NoError(t, idcodec.Init([]byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Oauth2Bind{}, &model.JWTSession{}, &model.WAF{}))
 	singleton.DB = db
 	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{
+		JWTTimeout:   1,
+		JWTSecretKey: "test-jwt-secret",
 		Oauth2: map[string]*model.Oauth2Config{
 			"github": {ClientID: "x", ClientSecret: "y"},
 		},
@@ -110,6 +115,64 @@ func TestOAuth2_VerifyState_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "github", st.Provider)
 	require.Equal(t, model.RTypeBind, st.Action)
+}
+
+func TestOAuth2_CallbackBindRejectsOpenIDAlreadyBoundToAnotherUser(t *testing.T) {
+	defer setupOAuth2Test(t)()
+
+	idp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"token","token_type":"Bearer"}`))
+		case "/userinfo":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"id":"shared-openid"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer idp.Close()
+
+	singleton.Conf.Oauth2["github"] = &model.Oauth2Config{
+		ClientID:     "client",
+		ClientSecret: "secret",
+		Endpoint: model.Oauth2Endpoint{
+			AuthURL:  idp.URL + "/auth",
+			TokenURL: idp.URL + "/token",
+		},
+		UserInfoURL: idp.URL + "/userinfo",
+		UserIDPath:  "id",
+	}
+
+	require.NoError(t, singleton.DB.Create(&model.User{Common: model.Common{ID: 1}, Username: "owner"}).Error)
+	require.NoError(t, singleton.DB.Create(&model.User{Common: model.Common{ID: 2}, Username: "attacker"}).Error)
+	require.NoError(t, singleton.DB.Create(&model.Oauth2Bind{UserID: 1, Provider: "github", OpenID: "shared-openid"}).Error)
+
+	stateKey := "bind-state-key"
+	stateValue := "bind-state"
+	singleton.Cache.Set(
+		fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey),
+		&model.Oauth2State{State: stateValue, Provider: "github", Action: model.RTypeBind, RedirectURL: "http://panel.example.com/api/v1/oauth2/callback"},
+		cache.DefaultExpiration,
+	)
+
+	jwtConfig, err := jwt.New(initParams())
+	require.NoError(t, err)
+	require.NoError(t, jwtConfig.MiddlewareInit())
+
+	c, _ := newOAuth2Ctx(t)
+	c.Request = httptest.NewRequest(http.MethodGet, "/oauth2/callback?state="+stateValue+"&code=valid-code", nil)
+	c.Request.AddCookie(&http.Cookie{Name: "nz-o2s", Value: stateKey})
+	c.Set(model.CtxKeyRealIPStr, "1.2.3.4")
+	c.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: 2}, Username: "attacker"})
+
+	_, err = oauth2callback(jwtConfig)(c)
+	require.Error(t, err, "binding an OpenID already owned by another user must be rejected")
+
+	var bind model.Oauth2Bind
+	require.NoError(t, singleton.DB.Where("provider = ? AND open_id = ?", "github", "shared-openid").First(&bind).Error)
+	require.Equal(t, uint64(1), bind.UserID, "a bind callback must not reassign another user's OAuth2 identity")
 }
 
 // GHSA-9rc6-8cjv-rcvx: getRedirectURL must not echo an attacker-controlled
