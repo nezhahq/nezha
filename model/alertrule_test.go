@@ -3,6 +3,7 @@ package model
 import (
 	"slices"
 	"testing"
+	"time"
 )
 
 type arSt struct {
@@ -488,5 +489,30 @@ func TestAlertRule_CombinedRuleAccumulatesSamples(t *testing.T) {
 		if firstFire != c.fireAt {
 			t.Fatalf("%s: alert first fired at tick %d, want %d (never-firing = -1)", c.msg, firstFire, c.fireAt)
 		}
+	}
+}
+
+func TestRuleMonthlyTransferDurationKeepsAnchorDayAcrossShortFebruary(t *testing.T) {
+	loc := time.UTC
+	start := time.Date(2026, time.January, 29, 0, 0, 0, 0, loc)
+	now := time.Date(2026, time.March, 15, 12, 0, 0, 0, loc)
+	oldNow := ruleNow
+	ruleNow = func() time.Time { return now }
+	t.Cleanup(func() { ruleNow = oldNow })
+
+	rule := &Rule{
+		Type:          "transfer_all_cycle",
+		CycleStart:    &start,
+		CycleInterval: 1,
+		CycleUnit:     "month",
+	}
+
+	wantStart := time.Date(2026, time.February, 28, 0, 0, 0, 0, loc)
+	wantEnd := time.Date(2026, time.March, 29, 0, 0, 0, 0, loc)
+	if got := rule.GetTransferDurationStart(); !got.Equal(wantStart) {
+		t.Fatalf("monthly transfer cycle start=%s want %s", got, wantStart)
+	}
+	if got := rule.GetTransferDurationEnd(); !got.Equal(wantEnd) {
+		t.Fatalf("monthly transfer cycle end=%s want %s", got, wantEnd)
 	}
 }
