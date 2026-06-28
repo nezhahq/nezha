@@ -20,7 +20,7 @@
   name: "Aobobo"
   repository: "https://github.com/hi2shark/aobobo"
   author: "hi2shark"
-  version: "v1.4.3"
+  version: "v1.4.4"
 - path: "nezha-ascii-dist"
   name: "Nezha-ASCII"
   repository: "https://github.com/hamster1963/nezha-ascii"
