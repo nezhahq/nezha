@@ -191,6 +191,12 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/setting", restScopeMiddleware(model.ScopeAdminAll), adminHandler(updateConfig))
 	auth.POST("/maintenance", restScopeMiddleware(model.ScopeAdminAll), adminHandler(runMaintenance))
 
+	// 内置 LLM Chat：admin-only。llmChat 是流式 SSE 端点，写过 SSE 头后
+	// 不能 c.JSON，故不走 adminHandler 包装，handler 内部自行做 Role 校验。
+	// llmTest 是同步连通性测试，正常 JSON 响应，可用 adminHandler。
+	auth.POST("/llm/chat", restScopeMiddleware(model.ScopeAdminAll), llmChat)
+	auth.POST("/llm/test", restScopeMiddleware(model.ScopeAdminAll), adminHandler(llmTest))
+
 	r.NoRoute(fallbackToFrontend(frontendDist))
 }
 

@@ -313,3 +313,38 @@ msgstr "故障"
 #: service/singleton/user.go:60
 msgid "user id not specified"
 msgstr "用户 ID 未指定"
+
+#: cmd/dashboard/controller/llm_chat.go:88
+msgid "invalid chat request"
+msgstr "无效的 chat 请求"
+
+#: cmd/dashboard/controller/llm_chat.go:94
+msgid "messages is empty"
+msgstr "消息列表为空"
+
+#: cmd/dashboard/controller/llm_chat.go:99
+msgid "message is nil"
+msgstr "消息为空"
+
+#: cmd/dashboard/controller/llm_chat.go:103
+msgid "message content is empty"
+msgstr "消息内容为空"
+
+#: cmd/dashboard/controller/llm_chat.go:109
+#: cmd/dashboard/controller/llm_chat.go:120
+msgid "LLM provider not configured"
+msgstr "LLM 提供商未配置"
+
+#: cmd/dashboard/controller/llm_chat.go:124
+#, c-format
+msgid "LLM stream error: %v"
+msgstr "LLM 流错误：%v"
+
+#: cmd/dashboard/controller/llm_chat.go:213
+msgid "LLM provider not configured"
+msgstr "LLM 提供商未配置"
+
+#: cmd/dashboard/controller/llm_chat.go:230
+#, c-format
+msgid "LLM connection failed: %v"
+msgstr "LLM 连接失败：%v"
