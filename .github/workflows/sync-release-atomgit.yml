@@ -10,7 +10,7 @@ jobs:
     env:
       ATOMGIT_PAT: ${{ secrets.ATOMGIT_PAT }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7.0.1
       - name: Sync to AtomGit
         run: |
           pip3 install PyGitHub
