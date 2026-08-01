@@ -195,8 +195,8 @@ func approvedAction(action string) (string, string, bool) {
 		return repository, "", false
 	}
 	approvedRefs := map[string]string{
-		"actions/checkout":        "9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0",
-		"actions/setup-go":        "924ae3a1cded613372ab5595356fb5720e22ba16",
+		"actions/checkout":        "3d3c42e5aac5ba805825da76410c181273ba90b1",
+		"actions/setup-go":        "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
 		"actions/upload-artifact": "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
 	}
 	approvedRef, approved := approvedRefs[repository]
