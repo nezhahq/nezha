@@ -10,7 +10,6 @@ import (
 )
 
 var (
-	fullCommitPattern        = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 	dockerCommandPattern     = regexp.MustCompile(`(?mi)(?:^|[;&|]\s*|\s)(?:(?:sudo|env)\s+)?(?:/[^\s]+/)?(?:docker|podman|nerdctl|containerd|buildah|runc|crictl)(?:\s|$)`)
 	gitHubEnvironmentPattern = regexp.MustCompile(`(?is)GIT_[A-Za-z0-9_]*.*GITHUB_ENV|GITHUB_ENV.*GIT_[A-Za-z0-9_]*`)
 	swallowedFailurePattern  = regexp.MustCompile(`(?mi)(?:\|\|\s*(?:true|:|echo\b|printf\b|exit\s+0\b))|(?:^|[;&]\s*)set\s+\+(?:e|o\s+errexit)(?:\s|;|$)|(?:^|[;&]\s*)if\s+|(?:\b(?:bash|sh)\s+-c\b)|(?:^|[;&]\s*)trap\b[^\n]*\bexit\s+0\b|(?:[;&]\s*)(?:true|:)\s*(?:;|$)`)
@@ -56,7 +55,6 @@ func (c *checker) checkJob(name string, job *yaml.Node) {
 
 func (c *checker) checkSteps(jobPath string, steps *yaml.Node) {
 	redactionReady := false
-	validatedResolvers := make(map[string]Repository)
 	for index, step := range steps.Content {
 		path := jobPath + ".steps[" + strconv.Itoa(index) + "]"
 		if step.Kind != yaml.MappingNode {
@@ -78,15 +76,11 @@ func (c *checker) checkSteps(jobPath string, steps *yaml.Node) {
 			c.reject(RuleWorkflowStructure, at(path+".run", run), "step run must be a scalar shell command")
 		}
 		c.checkContinueOnError(step, path)
-		resolver, validResolver := validatedRefResolver(step)
 		if hasRun {
-			c.checkRun(path+".run", run, validResolver)
-		}
-		if validResolver {
-			validatedResolvers[resolver.id] = resolver.repository
+			c.checkRun(path+".run", run)
 		}
 		if hasUses {
-			c.checkUses(path, step, stepCheckState{redactionComplete: redactionReady, validatedResolvers: validatedResolvers})
+			c.checkUses(path, step, stepCheckState{redactionComplete: redactionReady})
 			redactionReady = false
 			continue
 		}
@@ -101,7 +95,7 @@ func (c *checker) checkContinueOnError(mapping *yaml.Node, path string) {
 	}
 }
 
-func (c *checker) checkRun(path string, run *yaml.Node, validatedResolver bool) {
+func (c *checker) checkRun(path string, run *yaml.Node) {
 	command, exists := scalarString(run)
 	if !exists {
 		return
@@ -121,20 +115,19 @@ func (c *checker) checkRun(path string, run *yaml.Node, validatedResolver bool) 
 	if gitConfigurationPattern.MatchString(command) {
 		c.reject(RuleRepositoryNotLiteral, at(path, run), "Git configuration mutation is forbidden")
 	}
-	if gitRepositoryCommand.MatchString(command) && !validatedResolver {
+	if gitRepositoryCommand.MatchString(command) {
 		rule := RuleRepositoryNotLiteral
-		detail := fmt.Sprintf("git repository operation %q is allowed only in the validated resolver", strings.TrimSpace(command))
+		detail := fmt.Sprintf("git repository operation %q is forbidden", strings.TrimSpace(command))
 		if !strings.Contains(command, "$") {
 			rule = RuleRepositoryNotAllowed
-			detail = fmt.Sprintf("repository operation %q is forbidden outside the validated resolver", strings.TrimSpace(command))
+			detail = fmt.Sprintf("repository operation %q is forbidden", strings.TrimSpace(command))
 		}
 		c.reject(rule, at(path, run), detail)
 	}
 }
 
 type stepCheckState struct {
-	redactionComplete  bool
-	validatedResolvers map[string]Repository
+	redactionComplete bool
 }
 
 func (c *checker) checkUses(path string, step *yaml.Node, state stepCheckState) {
@@ -159,28 +152,23 @@ func (c *checker) checkUses(path string, step *yaml.Node, state stepCheckState) 
 		c.reject(RuleReusableExecutable, at(path+".uses", uses), "local action reuse from the workspace is forbidden")
 		return
 	}
-	actionRepository, _, found := strings.Cut(lowerAction, "@")
+	actionRepository, valid := actionRepository(lowerAction)
+	if !valid {
+		c.reject(RuleWorkflowStructure, at(path+".uses", uses), "action reference must use owner/repository@ref syntax")
+		return
+	}
 	switch actionRepository {
 	case "actions/cache", "actions/cache/restore", "actions/cache/save", "actions/download-artifact":
 		c.reject(RuleReusableExecutable, at(path+".uses", uses), fmt.Sprintf("cache or artifact reuse action %q is forbidden", actionRepository))
 		return
 	}
-	if !found {
-		c.reject(RuleOtherRepositoryRef, at(path+".uses", uses), "action must use its approved immutable SHA")
-		return
-	}
-	approvedRepository, _, pinned := approvedAction(action)
-	if approvedRepository == "" {
+	if !approvedAction(actionRepository) {
 		c.reject(RuleRepositoryNotAllowed, at(path+".uses", uses), "action repository is not approved")
 		return
 	}
-	if !pinned {
-		c.reject(RuleOtherRepositoryRef, at(path+".uses", uses), "action must use its approved immutable SHA")
-		return
-	}
-	switch approvedRepository {
+	switch actionRepository {
 	case "actions/checkout":
-		c.checkCheckout(path, step, state.validatedResolvers)
+		c.checkCheckout(path, step)
 	case "actions/setup-go":
 		c.checkRequiredCacheDisabled(path, step)
 	case "actions/upload-artifact":
@@ -189,19 +177,23 @@ func (c *checker) checkUses(path string, step *yaml.Node, state stepCheckState) 
 	c.checkCacheInputs(path, step)
 }
 
-func approvedAction(action string) (string, string, bool) {
-	repository, ref, found := strings.Cut(strings.ToLower(action), "@")
-	if !found {
-		return repository, "", false
+func actionRepository(action string) (string, bool) {
+	repository, ref, found := strings.Cut(action, "@")
+	if !found || repository == "" || ref == "" || strings.Contains(ref, "@") || strings.ContainsAny(action, " \t\r\n") {
+		return "", false
 	}
-	approvedRefs := map[string]string{
-		"actions/checkout":        "3d3c42e5aac5ba805825da76410c181273ba90b1",
-		"actions/setup-go":        "b7ad1dad31e06c5925ef5d2fc7ad053ef454303e",
-		"actions/upload-artifact": "b7c566a772e6b6bfb58ed0dc250532a479d7789f",
+	owner, name, found := strings.Cut(repository, "/")
+	if !found || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", false
 	}
-	approvedRef, approved := approvedRefs[repository]
-	if !approved {
-		return "", ref, false
+	return repository, true
+}
+
+func approvedAction(repository string) bool {
+	switch repository {
+	case "actions/checkout", "actions/setup-go", "actions/upload-artifact":
+		return true
+	default:
+		return false
 	}
-	return repository, ref, ref == approvedRef
 }

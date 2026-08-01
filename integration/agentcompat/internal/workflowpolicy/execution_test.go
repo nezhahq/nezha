@@ -73,8 +73,31 @@ func TestPolicy_RejectsUnapprovedAction(t *testing.T) {
 	assertFixtureRejected(t, rejected("unapproved-action.yml", workflowpolicy.RuleRepositoryNotAllowed, "action"))
 }
 
-func TestPolicy_RejectsMutableActionRef(t *testing.T) {
-	assertFixtureRejected(t, rejected("mutable-action-ref.yml", workflowpolicy.RuleOtherRepositoryRef, "approved immutable SHA"))
+func TestPolicy_RejectsActionReferenceWithoutRef(t *testing.T) {
+	assertFixtureRejected(t, rejected("action-reference-missing-ref.yml", workflowpolicy.RuleWorkflowStructure, "owner/repository@ref"))
+}
+
+func TestPolicy_RejectsMalformedActionReferences(t *testing.T) {
+	tests := []struct {
+		name       string
+		uses       string
+		rule       workflowpolicy.Rule
+		diagnostic string
+	}{
+		{name: "empty ref", uses: "actions/checkout@", rule: workflowpolicy.RuleWorkflowStructure, diagnostic: "owner/repository@ref"},
+		{name: "duplicate separator", uses: "actions/checkout@v7@unexpected", rule: workflowpolicy.RuleWorkflowStructure, diagnostic: "owner/repository@ref"},
+		{name: "extra action path", uses: "actions/checkout/extra@v7", rule: workflowpolicy.RuleWorkflowStructure, diagnostic: "owner/repository@ref"},
+		{name: "whitespace", uses: "actions/checkout @v7", rule: workflowpolicy.RuleWorkflowStructure, diagnostic: "owner/repository@ref"},
+		{name: "dynamic ref", uses: "actions/checkout@${{ inputs.ref }}", rule: workflowpolicy.RuleRepositoryNotLiteral, diagnostic: "action reference must be literal"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := "on:\n  pull_request:\nconcurrency: policy\npermissions:\n  contents: read\njobs:\n  verify:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - uses: \"" + test.uses + "\"\n        with:\n          persist-credentials: false\n"
+			err := workflowpolicy.Verify([]byte(workflow), workflowpolicy.RepositoryNezha)
+			requireTypedPolicyError(t, err, test.rule)
+			require.ErrorContains(t, err, test.diagnostic)
+		})
+	}
 }
 
 func TestPolicy_RejectsReusableWorkflowJob(t *testing.T) {
