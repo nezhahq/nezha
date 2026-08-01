@@ -545,238 +545,252 @@ func (ss *ServiceSentinel) Close() {
 func (ss *ServiceSentinel) worker() {
 	// 从服务状态汇报管道获取汇报的服务数据
 	for r := range ss.serviceReportChannel {
-		cs, _ := ss.Get(r.Data.GetId())
-		reporter, _ := ServerShared.Get(r.Reporter)
-		// 入站结果必须匹配出站任务派发边界，避免 agent 伪造其他服务 ID 写入监控状态。
-		if !canReportServiceResult(cs, reporter, r.Data.GetType()) {
-			log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
-			continue
-		}
-		if ss.serviceReportValidatedHook != nil {
-			ss.serviceReportValidatedHook(r.Data.GetId())
-		}
-
-		mh := r.Data
-		// Serialize Delete and Update before this accepted report causes any side effect.
-		ss.serviceResponseDataStoreLock.Lock()
-		serviceStatusToday := ss.serviceStatusToday[mh.GetId()]
-		serviceCurrentStatusData := ss.serviceCurrentStatusData[mh.GetId()]
-		currentService, serviceExists := ss.Get(mh.GetId())
-		if serviceStatusToday == nil || serviceCurrentStatusData == nil || !serviceExists ||
-			!canReportServiceResult(currentService, reporter, mh.GetType()) {
-			ss.serviceResponseDataStoreLock.Unlock()
-			continue
-		}
-		cs = currentService
-
-		if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
-			// TCP/ICMP Ping 使用平均值计算后再写入
-			serviceTcpMap, ok := ss.serviceResponsePing[mh.GetId()]
-			if !ok {
-				serviceTcpMap = make(map[uint64]*pingStore)
-				ss.serviceResponsePing[mh.GetId()] = serviceTcpMap
-			}
-			ts, ok := serviceTcpMap[r.Reporter]
-			if !ok {
-				ts = &pingStore{}
-			}
-			ts.count++
-			ts.ping = (ts.ping*float64(ts.count-1) + float64(mh.Delay)) / float64(ts.count)
-			if mh.Successful {
-				ts.successCount++
-			}
-			if ts.count == Conf.AvgPingCount {
-				if TSDBEnabled() {
-					if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
-						ServiceID:  mh.GetId(),
-						ServerID:   r.Reporter,
-						Timestamp:  time.Now(),
-						Delay:      ts.ping,
-						Successful: ts.successCount*2 >= ts.count,
-					}); err != nil {
-						log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
-					}
-				} else {
-					if err := DB.Create(&model.ServiceHistory{
-						ServiceID: mh.GetId(),
-						AvgDelay:  ts.ping,
-						Data:      mh.Data,
-						ServerID:  r.Reporter,
-					}).Error; err != nil {
-						log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
-					}
+		serverShared := ServerShared
+		func() {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					log.Printf("NEZHA>> Service monitor report processing panicked: %v", recovered)
 				}
-				ts.count = 0
-				ts.ping = 0
-				ts.successCount = 0
-			}
-			serviceTcpMap[r.Reporter] = ts
-		} else {
+			}()
+			ss.processReport(r, serverShared)
+		}()
+	}
+}
+
+func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass) {
+	serverShared.lockLifecycleRead()
+	defer serverShared.unlockLifecycleRead()
+
+	cs, _ := ss.Get(r.Data.GetId())
+	reporter, _ := serverShared.Get(r.Reporter)
+	// 入站结果必须匹配出站任务派发边界，避免 agent 伪造其他服务 ID 写入监控状态。
+	if !canReportServiceResult(cs, reporter, r.Data.GetType()) {
+		log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
+		return
+	}
+	if ss.serviceReportValidatedHook != nil {
+		ss.serviceReportValidatedHook(r.Data.GetId())
+	}
+
+	mh := r.Data
+	m := serverShared.GetList()
+	// Serialize Delete and Update before this accepted report causes any side effect.
+	ss.serviceResponseDataStoreLock.Lock()
+	defer ss.serviceResponseDataStoreLock.Unlock()
+	serviceStatusToday := ss.serviceStatusToday[mh.GetId()]
+	serviceCurrentStatusData := ss.serviceCurrentStatusData[mh.GetId()]
+	currentService, serviceExists := ss.Get(mh.GetId())
+	if serviceStatusToday == nil || serviceCurrentStatusData == nil || !serviceExists ||
+		!canReportServiceResult(currentService, reporter, mh.GetType()) {
+		return
+	}
+	cs = currentService
+
+	if mh.Type == model.TaskTypeTCPPing || mh.Type == model.TaskTypeICMPPing {
+		// TCP/ICMP Ping 使用平均值计算后再写入
+		serviceTcpMap, ok := ss.serviceResponsePing[mh.GetId()]
+		if !ok {
+			serviceTcpMap = make(map[uint64]*pingStore)
+			ss.serviceResponsePing[mh.GetId()] = serviceTcpMap
+		}
+		ts, ok := serviceTcpMap[r.Reporter]
+		if !ok {
+			ts = &pingStore{}
+		}
+		ts.count++
+		ts.ping = (ts.ping*float64(ts.count-1) + float64(mh.Delay)) / float64(ts.count)
+		if mh.Successful {
+			ts.successCount++
+		}
+		if ts.count == Conf.AvgPingCount {
 			if TSDBEnabled() {
 				if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
 					ServiceID:  mh.GetId(),
 					ServerID:   r.Reporter,
 					Timestamp:  time.Now(),
-					Delay:      float64(mh.Delay),
-					Successful: mh.Successful,
+					Delay:      ts.ping,
+					Successful: ts.successCount*2 >= ts.count,
 				}); err != nil {
 					log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
 				}
-			}
-		}
-
-		// 写入当天状态
-		if mh.Successful {
-			serviceStatusToday.Delay = (serviceStatusToday.Delay*float64(serviceStatusToday.Up) +
-				float64(mh.Delay)) / float64(serviceStatusToday.Up+1)
-			serviceStatusToday.Up++
-		} else {
-			serviceStatusToday.Down++
-		}
-
-		currentTime := time.Now()
-		if serviceCurrentStatusData.t.IsZero() {
-			serviceCurrentStatusData.t = currentTime
-		}
-
-		// 写入当前数据
-		if serviceCurrentStatusData.t.Before(currentTime) {
-			serviceCurrentStatusData.t = currentTime.Add(30 * time.Second)
-			serviceCurrentStatusData.result = append(serviceCurrentStatusData.result, mh)
-		}
-
-		// 更新当前状态
-		ss.serviceResponseDataStore[mh.GetId()] = serviceResponseData{}
-
-		// 永远是最新的 30 个数据的状态 [01:00, 02:00, 03:00] -> [04:00, 02:00, 03: 00]
-		for _, cs := range serviceCurrentStatusData.result {
-			if cs.GetId() > 0 {
-				rd := ss.serviceResponseDataStore[mh.GetId()]
-				if cs.Successful {
-					rd.Up++
-					rd.Delay = (rd.Delay*float64(rd.Up-1) + float64(cs.Delay)) / float64(rd.Up)
-				} else {
-					rd.Down++
-				}
-				ss.serviceResponseDataStore[mh.GetId()] = rd
-			}
-		}
-
-		// 计算在线率，
-		var stateCode uint8
-		{
-			upPercent := uint64(0)
-			rd := ss.serviceResponseDataStore[mh.GetId()]
-			if rd.Down+rd.Up > 0 {
-				upPercent = rd.Up * 100 / (rd.Down + rd.Up)
-			}
-			stateCode = GetStatusCode(upPercent)
-		}
-
-		if len(serviceCurrentStatusData.result) == _CurrentStatusSize {
-			serviceCurrentStatusData.t = currentTime
-			if !TSDBEnabled() {
-				rd := ss.serviceResponseDataStore[mh.GetId()]
+			} else {
 				if err := DB.Create(&model.ServiceHistory{
 					ServiceID: mh.GetId(),
-					AvgDelay:  rd.Delay,
+					AvgDelay:  ts.ping,
 					Data:      mh.Data,
-					Up:        rd.Up,
-					Down:      rd.Down,
+					ServerID:  r.Reporter,
 				}).Error; err != nil {
 					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
 				}
 			}
-			serviceCurrentStatusData.result = serviceCurrentStatusData.result[:0]
+			ts.count = 0
+			ts.ping = 0
+			ts.successCount = 0
 		}
-
-		m := ServerShared.GetList()
-		// 延迟报警
-		if mh.Delay > 0 {
-			delayCheck(&r, m, cs, mh)
-		}
-
-		// 状态变更报警+触发任务执行
-		if stateCode == StatusDown || stateCode != serviceCurrentStatusData.lastStatus {
-			lastStatus := serviceCurrentStatusData.lastStatus
-			// 存储新的状态值
-			serviceCurrentStatusData.lastStatus = stateCode
-
-			notifyCheck(&r, m, cs, mh, lastStatus, stateCode)
-		}
-
-		// TLS 证书报警
-		if ss.serviceReportBeforeTLSSideEffectsHook != nil {
-			ss.serviceReportBeforeTLSSideEffectsHook(mh.GetId())
-		}
-		var errMsg string
-		if strings.HasPrefix(mh.Data, "SSL证书错误：") {
-			// i/o timeout、connection timeout、EOF 错误
-			if !strings.HasSuffix(mh.Data, "timeout") &&
-				!strings.HasSuffix(mh.Data, "EOF") &&
-				!strings.HasSuffix(mh.Data, "timed out") {
-				errMsg = mh.Data
-				if cs.Notify {
-					muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), "network")
-					go NotificationShared.SendNotification(cs.NotificationGroupID, Localizer.Tf("[TLS] Fetch cert info failed, Reporter: %s, Error: %s", cs.Name, errMsg), muteLabel)
-				}
-			}
-		} else {
-			// 清除网络错误静音缓存
-			NotificationShared.UnMuteNotification(cs.NotificationGroupID, NotificationMuteLabel.ServiceTLS(mh.GetId(), "network"))
-
-			var newCert = strings.Split(mh.Data, "|")
-			if len(newCert) > 1 {
-				enableNotify := cs.Notify
-
-				// 首次获取证书信息时，缓存证书信息
-				if ss.tlsCertCache[mh.GetId()] == "" {
-					ss.tlsCertCache[mh.GetId()] = mh.Data
-				}
-
-				oldCert := strings.Split(ss.tlsCertCache[mh.GetId()], "|")
-				isCertChanged := false
-				expiresOld, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", oldCert[1])
-				expiresNew, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", newCert[1])
-
-				// 证书变更时，更新缓存
-				if oldCert[0] != newCert[0] && !expiresNew.Equal(expiresOld) {
-					isCertChanged = true
-					ss.tlsCertCache[mh.GetId()] = mh.Data
-				}
-
-				notificationGroupID := cs.NotificationGroupID
-				serviceName := cs.Name
-
-				// 需要发送提醒
-				if enableNotify {
-					// 证书过期提醒
-					if expiresNew.Before(time.Now().AddDate(0, 0, 7)) {
-						expiresTimeStr := expiresNew.Format("2006-01-02 15:04:05")
-						errMsg = Localizer.Tf(
-							"The TLS certificate will expire within seven days. Expiration time: %s",
-							expiresTimeStr,
-						)
-
-						// 静音规则： 服务id+证书过期时间
-						// 用于避免多个监测点对相同证书同时报警
-						muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), fmt.Sprintf("expire_%s", expiresTimeStr))
-						go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), muteLabel)
-					}
-
-					// 证书变更提醒
-					if isCertChanged {
-						errMsg = Localizer.Tf(
-							"TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, expires at %s",
-							oldCert[0], expiresOld.Format("2006-01-02 15:04:05"), newCert[0], expiresNew.Format("2006-01-02 15:04:05"))
-
-						// 证书变更后会自动更新缓存，所以不需要静音
-						go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), "")
-					}
-				}
+		serviceTcpMap[r.Reporter] = ts
+	} else {
+		if TSDBEnabled() {
+			if err := TSDBShared.WriteServiceMetrics(&tsdb.ServiceMetrics{
+				ServiceID:  mh.GetId(),
+				ServerID:   r.Reporter,
+				Timestamp:  time.Now(),
+				Delay:      float64(mh.Delay),
+				Successful: mh.Successful,
+			}); err != nil {
+				log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
 			}
 		}
-		ss.serviceResponseDataStoreLock.Unlock()
+	}
+
+	// 写入当天状态
+	if mh.Successful {
+		serviceStatusToday.Delay = (serviceStatusToday.Delay*float64(serviceStatusToday.Up) +
+			float64(mh.Delay)) / float64(serviceStatusToday.Up+1)
+		serviceStatusToday.Up++
+	} else {
+		serviceStatusToday.Down++
+	}
+
+	currentTime := time.Now()
+	if serviceCurrentStatusData.t.IsZero() {
+		serviceCurrentStatusData.t = currentTime
+	}
+
+	// 写入当前数据
+	if serviceCurrentStatusData.t.Before(currentTime) {
+		serviceCurrentStatusData.t = currentTime.Add(30 * time.Second)
+		serviceCurrentStatusData.result = append(serviceCurrentStatusData.result, mh)
+	}
+
+	// 更新当前状态
+	ss.serviceResponseDataStore[mh.GetId()] = serviceResponseData{}
+
+	// 永远是最新的 30 个数据的状态 [01:00, 02:00, 03:00] -> [04:00, 02:00, 03: 00]
+	for _, cs := range serviceCurrentStatusData.result {
+		if cs.GetId() > 0 {
+			rd := ss.serviceResponseDataStore[mh.GetId()]
+			if cs.Successful {
+				rd.Up++
+				rd.Delay = (rd.Delay*float64(rd.Up-1) + float64(cs.Delay)) / float64(rd.Up)
+			} else {
+				rd.Down++
+			}
+			ss.serviceResponseDataStore[mh.GetId()] = rd
+		}
+	}
+
+	// 计算在线率，
+	var stateCode uint8
+	{
+		upPercent := uint64(0)
+		rd := ss.serviceResponseDataStore[mh.GetId()]
+		if rd.Down+rd.Up > 0 {
+			upPercent = rd.Up * 100 / (rd.Down + rd.Up)
+		}
+		stateCode = GetStatusCode(upPercent)
+	}
+
+	if len(serviceCurrentStatusData.result) == _CurrentStatusSize {
+		serviceCurrentStatusData.t = currentTime
+		if !TSDBEnabled() {
+			rd := ss.serviceResponseDataStore[mh.GetId()]
+			if err := DB.Create(&model.ServiceHistory{
+				ServiceID: mh.GetId(),
+				AvgDelay:  rd.Delay,
+				Data:      mh.Data,
+				Up:        rd.Up,
+				Down:      rd.Down,
+			}).Error; err != nil {
+				log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+			}
+		}
+		serviceCurrentStatusData.result = serviceCurrentStatusData.result[:0]
+	}
+
+	// 延迟报警
+	if mh.Delay > 0 {
+		delayCheck(&r, m, cs, mh)
+	}
+
+	// 状态变更报警+触发任务执行
+	if stateCode == StatusDown || stateCode != serviceCurrentStatusData.lastStatus {
+		lastStatus := serviceCurrentStatusData.lastStatus
+		// 存储新的状态值
+		serviceCurrentStatusData.lastStatus = stateCode
+
+		notifyCheck(&r, m, cs, mh, lastStatus, stateCode)
+	}
+
+	// TLS 证书报警
+	if ss.serviceReportBeforeTLSSideEffectsHook != nil {
+		ss.serviceReportBeforeTLSSideEffectsHook(mh.GetId())
+	}
+	var errMsg string
+	if strings.HasPrefix(mh.Data, "SSL证书错误：") {
+		// i/o timeout、connection timeout、EOF 错误
+		if !strings.HasSuffix(mh.Data, "timeout") &&
+			!strings.HasSuffix(mh.Data, "EOF") &&
+			!strings.HasSuffix(mh.Data, "timed out") {
+			errMsg = mh.Data
+			if cs.Notify {
+				muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), "network")
+				go NotificationShared.SendNotification(cs.NotificationGroupID, Localizer.Tf("[TLS] Fetch cert info failed, Reporter: %s, Error: %s", cs.Name, errMsg), muteLabel)
+			}
+		}
+	} else {
+		// 清除网络错误静音缓存
+		NotificationShared.UnMuteNotification(cs.NotificationGroupID, NotificationMuteLabel.ServiceTLS(mh.GetId(), "network"))
+
+		var newCert = strings.Split(mh.Data, "|")
+		if len(newCert) > 1 {
+			enableNotify := cs.Notify
+
+			// 首次获取证书信息时，缓存证书信息
+			if ss.tlsCertCache[mh.GetId()] == "" {
+				ss.tlsCertCache[mh.GetId()] = mh.Data
+			}
+
+			oldCert := strings.Split(ss.tlsCertCache[mh.GetId()], "|")
+			isCertChanged := false
+			expiresOld, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", oldCert[1])
+			expiresNew, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", newCert[1])
+
+			// 证书变更时，更新缓存
+			if oldCert[0] != newCert[0] && !expiresNew.Equal(expiresOld) {
+				isCertChanged = true
+				ss.tlsCertCache[mh.GetId()] = mh.Data
+			}
+
+			notificationGroupID := cs.NotificationGroupID
+			serviceName := cs.Name
+
+			// 需要发送提醒
+			if enableNotify {
+				// 证书过期提醒
+				if expiresNew.Before(time.Now().AddDate(0, 0, 7)) {
+					expiresTimeStr := expiresNew.Format("2006-01-02 15:04:05")
+					errMsg = Localizer.Tf(
+						"The TLS certificate will expire within seven days. Expiration time: %s",
+						expiresTimeStr,
+					)
+
+					// 静音规则： 服务id+证书过期时间
+					// 用于避免多个监测点对相同证书同时报警
+					muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), fmt.Sprintf("expire_%s", expiresTimeStr))
+					go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), muteLabel)
+				}
+
+				// 证书变更提醒
+				if isCertChanged {
+					errMsg = Localizer.Tf(
+						"TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, expires at %s",
+						oldCert[0], expiresOld.Format("2006-01-02 15:04:05"), newCert[0], expiresNew.Format("2006-01-02 15:04:05"))
+
+					// 证书变更后会自动更新缓存，所以不需要静音
+					go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), "")
+				}
+			}
+		}
 	}
 }
 

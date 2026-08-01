@@ -22,6 +22,174 @@ const (
 
 const serviceSentinelLifecycleSuccessMarker = "service-sentinel-stale-report-lifecycle-success"
 
+func TestServiceSentinelReporterDeleteWaitsForSynchronousReportProcessing(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "reporter"},
+	)
+	service := &model.Service{
+		Common:      model.Common{ID: 10, UserID: 1},
+		Name:        "lifecycle-service",
+		Type:        model.TaskTypeTCPPing,
+		Target:      "lifecycle.example.invalid:443",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	addServiceMonitorSecurityService(t, ss, service)
+
+	reportValidated := make(chan struct{})
+	releaseReport := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseReport) }) }
+	ss.serviceReportValidatedHook = func(serviceID uint64) {
+		if serviceID == service.ID {
+			close(reportValidated)
+			<-releaseReport
+		}
+	}
+	t.Cleanup(func() {
+		release()
+		ss.Close()
+	})
+
+	ss.Dispatch(serviceMonitorResult(1, service.ID, model.TaskTypeTCPPing, true))
+	select {
+	case <-reportValidated:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	deleteDone := make(chan struct{})
+	go func() {
+		ServerShared.Delete([]uint64{1})
+		close(deleteDone)
+	}()
+	select {
+	case <-deleteDone:
+		t.Fatal("server deletion returned before the accepted report completed")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	release()
+	select {
+	case <-deleteDone:
+	case <-ctx.Done():
+		t.Fatal(ctx.Err())
+	}
+
+	var historyCount int64
+	if err := DB.Model(&model.ServiceHistory{}).
+		Where("service_id = ? AND server_id = ?", service.ID, 1).
+		Count(&historyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if historyCount != 1 {
+		t.Fatalf("expected report side effects before deletion returned, got %d history rows", historyCount)
+	}
+	if _, ok := ServerShared.Get(1); ok {
+		t.Fatal("expected reporter to be deleted after the report completed")
+	}
+}
+
+func TestServiceSentinelWorkerRejectsReportAfterReporterDeletion(t *testing.T) {
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "reporter"},
+	)
+	service := &model.Service{
+		Common:      model.Common{ID: 10, UserID: 1},
+		Name:        "deleted-reporter-service",
+		Type:        model.TaskTypeTCPPing,
+		Target:      "deleted-reporter.example.invalid:443",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	addServiceMonitorSecurityService(t, ss, service)
+
+	ServerShared.Delete([]uint64{1})
+	ss.Dispatch(serviceMonitorResult(1, service.ID, model.TaskTypeTCPPing, true))
+	ss.Close()
+
+	var historyCount int64
+	if err := DB.Model(&model.ServiceHistory{}).
+		Where("service_id = ? AND server_id = ?", service.ID, 1).
+		Count(&historyCount).Error; err != nil {
+		t.Fatal(err)
+	}
+	if historyCount != 0 {
+		t.Fatalf("expected no history after reporter deletion, got %d rows", historyCount)
+	}
+	ss.serviceResponseDataStoreLock.RLock()
+	_, pingCached := ss.serviceResponsePing[service.ID]
+	_, responseCached := ss.serviceResponseDataStore[service.ID]
+	stats := ss.serviceStatusToday[service.ID]
+	ss.serviceResponseDataStoreLock.RUnlock()
+	if pingCached {
+		t.Fatal("expected no ping cache side effect after reporter deletion")
+	}
+	if responseCached {
+		t.Fatal("expected no response cache side effect after reporter deletion")
+	}
+	if stats == nil || stats.Up != 0 || stats.Down != 0 {
+		t.Fatalf("expected no stats side effect after reporter deletion, got %+v", stats)
+	}
+}
+
+func TestServiceSentinelWorkerRecoversPerReportPanic(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "reporter"},
+	)
+	panicService := &model.Service{
+		Common:      model.Common{ID: 10, UserID: 1},
+		Name:        "panic-service",
+		Type:        model.TaskTypeHTTPGet,
+		Target:      "https://panic.example.invalid",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	validService := &model.Service{
+		Common:      model.Common{ID: 20, UserID: 1},
+		Name:        "valid-service",
+		Type:        model.TaskTypeTCPPing,
+		Target:      "valid.example.invalid:443",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	addServiceMonitorSecurityService(t, ss, panicService)
+	addServiceMonitorSecurityService(t, ss, validService)
+	ss.serviceReportBeforeTLSSideEffectsHook = func(serviceID uint64) {
+		if serviceID == panicService.ID {
+			panic("test service report panic")
+		}
+	}
+
+	ss.Dispatch(serviceMonitorResult(1, panicService.ID, model.TaskTypeHTTPGet, true))
+	ss.Dispatch(serviceMonitorResult(1, validService.ID, model.TaskTypeTCPPing, true))
+	waitForServiceHistory(t, validService.ID, 1)
+	ss.Close()
+	if !ss.serviceResponseDataStoreLock.TryLock() {
+		t.Fatal("panic leaked the service response lock")
+	}
+	ss.serviceResponseDataStoreLock.Unlock()
+
+	deleteDone := make(chan struct{})
+	go func() {
+		ServerShared.Delete([]uint64{1})
+		close(deleteDone)
+	}()
+	select {
+	case <-deleteDone:
+	case <-ctx.Done():
+		t.Fatal("panic leaked a lifecycle lock: " + ctx.Err().Error())
+	}
+}
+
 func TestServiceSentinelWorkerIgnoresStaleReportAfterDeletion(t *testing.T) {
 	if os.Getenv("NEZHA_SERVICE_SENTINEL_LIFECYCLE_CHILD") == "1" {
 		testServiceSentinelWorkerIgnoresStaleReportAfterDeletionChild(t)
@@ -373,17 +541,13 @@ func testServiceSentinelWorkerSurvivesConcurrentReporterServerDeleteChild(t *tes
 	var releaseOnce sync.Once
 	releaseWorkerFn := func() { releaseOnce.Do(func() { close(releaseWorker) }) }
 
-	// serviceReportValidatedHook fires after the first canReportServiceResult
-	// check passes (outside serviceResponseDataStoreLock) — exactly the TOCTOU
-	// window identified by GHSA-jx78-55p5-rwv5.  We delete the reporter server
-	// here so that the subsequent m := ServerShared.GetList() snapshot is stale.
+	// serviceReportValidatedHook runs while the report holds the lifecycle read
+	// lock. Deletion must therefore run in another goroutine and wait until this
+	// hook releases; attempting Delete here would try to upgrade the RWMutex.
 	ss.serviceReportValidatedHook = func(serviceID uint64) {
 		if serviceID == service.ID {
 			close(reportProcessing)
 			<-releaseWorker
-			// Delete the reporter from ServerShared while the worker is
-			// proceeding toward delayCheck / notifyCheck.
-			ServerShared.Delete([]uint64{1})
 		}
 	}
 	t.Cleanup(func() {
@@ -398,7 +562,17 @@ func testServiceSentinelWorkerSurvivesConcurrentReporterServerDeleteChild(t *tes
 	case <-t.Context().Done():
 		t.Fatal(t.Context().Err())
 	}
+	deleteDone := make(chan struct{})
+	go func() {
+		ServerShared.Delete([]uint64{1})
+		close(deleteDone)
+	}()
 	releaseWorkerFn()
+	select {
+	case <-deleteDone:
+	case <-t.Context().Done():
+		t.Fatal(t.Context().Err())
+	}
 	ss.Close()
 
 	// Then: no crash; the worker handled the nil reporter gracefully.
