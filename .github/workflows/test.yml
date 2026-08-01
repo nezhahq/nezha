@@ -98,11 +98,10 @@ jobs:
         with:
           path: nezha
           persist-credentials: false
-      - name: Checkout pinned Agent revision
+      - name: Checkout Agent repository
         uses: actions/checkout@v7.0.1
         with:
           repository: nezhahq/agent
-          ref: 667e1dd5e166ffef808ec26dc20de85bc33a0a0f
           path: agent
           persist-credentials: false
       - name: Set up Go
