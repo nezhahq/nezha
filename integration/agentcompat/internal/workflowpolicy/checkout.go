@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-func (c *checker) checkCheckout(path string, step *yaml.Node, validatedResolvers map[string]Repository) {
+func (c *checker) checkCheckout(path string, step *yaml.Node) {
 	with, exists := mappingValue(step, "with")
 	if !exists || with.Kind != yaml.MappingNode {
 		c.reject(RulePersistCredentials, at(path+".with.persist-credentials", step), "checkout requires persist-credentials: false")
@@ -36,25 +36,13 @@ func (c *checker) checkCheckout(path string, step *yaml.Node, validatedResolvers
 		return
 	}
 	ref, exists := mappingValue(with, "ref")
+	if !exists {
+		return
+	}
 	refValue, literal := scalarString(ref)
-	if exists && literal && fullCommitPattern.MatchString(refValue) {
-		return
+	if !literal || strings.TrimSpace(refValue) == "" || strings.Contains(refValue, "${{") {
+		c.reject(RuleRepositoryNotLiteral, at(path+".with.ref", ref), "checkout ref must be a nonempty literal")
 	}
-	if repository == string(c.repository) && !exists {
-		return
-	}
-	if exists && literal {
-		match := resolvedRefPattern.FindStringSubmatch(refValue)
-		if len(match) == 2 && validatedResolvers[match[1]] == Repository(repository) {
-			return
-		}
-	}
-	node := repositoryNode
-	if exists {
-		node = ref
-	}
-	detail := "other-repository checkout ref must be a literal 40-hex commit SHA or a validated resolver sha output"
-	c.reject(RuleOtherRepositoryRef, at(path+".with.ref", node), detail)
 }
 
 func (c *checker) checkCacheInputs(path string, step *yaml.Node) {

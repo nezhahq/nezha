@@ -33,15 +33,42 @@ func TestPolicy_AcceptsSecureAgentWorkflow(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestPolicy_AcceptsValidatedResolvedOtherRepositoryRef(t *testing.T) {
-	// Given
-	path := fixturePath(t, "secure-resolved-ref.yml")
+func TestPolicy_AcceptsCrossRepositoryCheckoutRefs(t *testing.T) {
+	tests := []struct {
+		name       string
+		fixture    string
+		repository workflowpolicy.Repository
+	}{
+		{name: "default branch", fixture: "cross-repository-default-ref.yml", repository: workflowpolicy.RepositoryNezha},
+		{name: "branch", fixture: "secure-agent.yml", repository: workflowpolicy.RepositoryAgent},
+		{name: "version tag", fixture: "secure-nezha.yml", repository: workflowpolicy.RepositoryNezha},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := workflowpolicy.VerifyFile(fixturePath(t, test.fixture), test.repository)
+			require.NoError(t, err)
+		})
+	}
+}
 
-	// When
-	err := workflowpolicy.VerifyFile(path, workflowpolicy.RepositoryNezha)
-
-	// Then
-	require.NoError(t, err)
+func TestPolicy_RejectsInvalidCrossRepositoryCheckoutRefs(t *testing.T) {
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{name: "dynamic", ref: "${{ inputs.ref }}"},
+		{name: "non-string", ref: "false"},
+		{name: "empty", ref: "\"\""},
+		{name: "whitespace only", ref: "\"  \""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			workflow := "on:\n  pull_request:\nconcurrency: policy\npermissions:\n  contents: read\njobs:\n  verify:\n    runs-on: ubuntu-24.04\n    timeout-minutes: 10\n    steps:\n      - uses: actions/checkout@v7.0.1\n        with:\n          repository: nezhahq/agent\n          ref: " + test.ref + "\n          persist-credentials: false\n"
+			err := workflowpolicy.Verify([]byte(workflow), workflowpolicy.RepositoryNezha)
+			requireTypedPolicyError(t, err, workflowpolicy.RuleRepositoryNotLiteral)
+			require.ErrorContains(t, err, "checkout ref must be a nonempty literal")
+		})
+	}
 }
 
 func TestPolicy_RejectsPullRequestTarget(t *testing.T) {
@@ -102,18 +129,6 @@ func TestPolicy_RejectsMutableRepositoryInput(t *testing.T) {
 
 func TestPolicy_RejectsNonliteralRepository(t *testing.T) {
 	assertFixtureRejected(t, rejected("nonliteral-repository.yml", workflowpolicy.RuleRepositoryNotLiteral, "literal"))
-}
-
-func TestPolicy_RejectsMutableOtherRepositoryRef(t *testing.T) {
-	assertFixtureRejected(t, rejected("mutable-other-repository-ref.yml", workflowpolicy.RuleOtherRepositoryRef, "40"))
-}
-
-func TestPolicy_RejectsUnvalidatedResolvedOtherRepositoryRef(t *testing.T) {
-	assertFixtureRejected(t, rejectionExpectation{fixture: "unvalidated-resolved-ref.yml", repository: workflowpolicy.RepositoryNezha, rule: workflowpolicy.RuleOtherRepositoryRef, diagnostic: "validated resolver"})
-}
-
-func TestPolicy_RejectsResolverVariableOverride(t *testing.T) {
-	assertFixtureRejected(t, rejectionExpectation{fixture: "resolver-variable-override.yml", repository: workflowpolicy.RepositoryNezha, rule: workflowpolicy.RuleOtherRepositoryRef, diagnostic: "validated resolver"})
 }
 
 func TestPolicy_RejectsMissingPersistCredentialsFalse(t *testing.T) {
