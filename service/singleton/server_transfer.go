@@ -663,11 +663,9 @@ func (c *ServerTransferClass) Initiate(tx *gorm.DB, serverID, fromUserID, toUser
 // and admits the old AgentSecret on the happy "owner match" path —
 // bypassing the bounded pending-tolerance contract.
 func (c *ServerTransferClass) Register(t *model.ServerTransfer) {
-	if s, ok := ServerShared.Get(t.ServerID); ok && s != nil {
-		// SetUserID over atomic write — auth.go hot path concurrently
-		// reads this field; a plain assignment would be a data race.
-		s.SetUserID(t.ToUserID)
-	}
+	// SetUserID uses an atomic write because auth.go reads this hot-path field
+	// concurrently; ServerClass also serializes it with service reports.
+	ServerShared.setUserID(t.ServerID, t.ToUserID)
 
 	c.mu.Lock()
 	c.pending[t.ServerID] = t
@@ -1163,9 +1161,7 @@ func (c *ServerTransferClass) revertTransition(transferID uint64, newStatus mode
 	// no longer admits the destination user's global AgentSecret via
 	// ServerShared.GetUserID() == userId on the happy "owner match" path.
 	if transitionedByThisCall {
-		if s, ok := ServerShared.Get(t.ServerID); ok && s != nil {
-			s.SetUserID(t.FromUserID)
-		}
+		ServerShared.setUserID(t.ServerID, t.FromUserID)
 	}
 
 	// Self-heal: any non-Pending DB status invalidates the in-memory entry —

@@ -20,6 +20,9 @@ func NewEmptyServerClassForTest() *ServerClass {
 // InsertForTest 把一个 server 直接塞进内存表与排序快照，跳过 DB & InitServer 逻辑。
 // 调用方需保证 server.ID 已经设置。
 func (c *ServerClass) InsertForTest(s *model.Server) {
+	c.lockLifecycleWrite()
+	defer c.unlockLifecycleWrite()
+
 	c.listMu.Lock()
 	c.list[s.ID] = s
 	if s.UUID != "" {

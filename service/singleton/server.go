@@ -6,6 +6,7 @@ import (
 	"log"
 	"slices"
 	"strings"
+	"sync"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/ddns"
@@ -14,6 +15,10 @@ import (
 
 type ServerClass struct {
 	class[uint64, *model.Server]
+
+	// lifecycleMu serializes changes to the authoritative server entries with
+	// synchronous ServiceSentinel report processing.
+	lifecycleMu sync.RWMutex
 
 	uuidToID map[string]uint64
 
@@ -71,7 +76,26 @@ func ownerIsAdmin(ownerUID uint64) bool {
 	return userIsAdmin(ownerUID)
 }
 
+func (c *ServerClass) lockLifecycleRead() {
+	c.lifecycleMu.RLock()
+}
+
+func (c *ServerClass) unlockLifecycleRead() {
+	c.lifecycleMu.RUnlock()
+}
+
+func (c *ServerClass) lockLifecycleWrite() {
+	c.lifecycleMu.Lock()
+}
+
+func (c *ServerClass) unlockLifecycleWrite() {
+	c.lifecycleMu.Unlock()
+}
+
 func (c *ServerClass) Update(s *model.Server, uuid string) {
+	c.lockLifecycleWrite()
+	defer c.unlockLifecycleWrite()
+
 	c.listMu.Lock()
 
 	c.list[s.ID] = s
@@ -91,6 +115,9 @@ func (c *ServerClass) Update(s *model.Server, uuid string) {
 }
 
 func (c *ServerClass) Delete(idList []uint64) {
+	c.lockLifecycleWrite()
+	defer c.unlockLifecycleWrite()
+
 	c.listMu.Lock()
 
 	for _, id := range idList {
@@ -105,6 +132,17 @@ func (c *ServerClass) Delete(idList []uint64) {
 	c.listMu.Unlock()
 
 	c.sortList()
+}
+
+// setUserID updates in-memory ownership under the server lifecycle lock so a
+// transfer cannot change authorization during synchronous report processing.
+func (c *ServerClass) setUserID(id, userID uint64) {
+	c.lockLifecycleWrite()
+	defer c.unlockLifecycleWrite()
+
+	if s, ok := c.Get(id); ok && s != nil {
+		s.SetUserID(userID)
+	}
 }
 
 func (c *ServerClass) GetSortedListForGuest() []*model.Server {
