@@ -17,11 +17,12 @@ import (
 )
 
 type requestTaskSecurityStream struct {
-	ctx     context.Context
-	results []*pb.TaskResult
-	onRecv  func()
-	onSend  func(*pb.Task)
-	sendErr error
+	ctx      context.Context
+	results  []*pb.TaskResult
+	onRecv   func()
+	onResult func()
+	onSend   func(*pb.Task)
+	sendErr  error
 }
 
 func (s *requestTaskSecurityStream) Send(task *pb.Task) error {
@@ -40,6 +41,11 @@ func (s *requestTaskSecurityStream) Recv() (*pb.TaskResult, error) {
 	}
 	result := s.results[0]
 	s.results = s.results[1:]
+	if s.onResult != nil {
+		onResult := s.onResult
+		s.onResult = nil
+		onResult()
+	}
 	return result, nil
 }
 

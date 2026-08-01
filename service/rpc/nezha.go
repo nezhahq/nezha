@@ -20,6 +20,10 @@ var _ pb.NezhaServiceServer = (*NezhaHandler)(nil)
 
 var NezhaHandlerSingleton *NezhaHandler
 
+// ErrRequestTaskStreamSuperseded is returned when a RequestTask result arrives
+// after its stream is no longer the live stream for the authenticated server.
+var ErrRequestTaskStreamSuperseded = errors.New("request task stream superseded")
+
 type NezhaHandler struct {
 	Auth                   *authHandler
 	ioStreams              map[string]*ioStreamContext
@@ -79,6 +83,18 @@ func clearRequestTaskStream(clientID uint64, captured *model.Server, stream pb.N
 	captured.ClearTaskStreamIfCurrent(stream)
 }
 
+// currentRequestTaskServer authorizes a received result against the live
+// ServerShared entry. Server pointer replacement is valid when it inherited
+// the same task stream holder; only a missing entry or different stream makes
+// a received result stale.
+func currentRequestTaskServer(clientID uint64, stream pb.NezhaService_RequestTaskServer) (*model.Server, error) {
+	current, ok := singleton.ServerShared.Get(clientID)
+	if !ok || current == nil || current.GetTaskStream() != stream {
+		return nil, ErrRequestTaskStreamSuperseded
+	}
+	return current, nil
+}
+
 func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) error {
 	var clientID uint64
 	var err error
@@ -104,6 +120,10 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		result, err = stream.Recv()
 		if err != nil {
 			log.Printf("NEZHA>> RequestTask error: %v, clientID: %d\n", err, clientID)
+			return err
+		}
+		server, err = currentRequestTaskServer(clientID, stream)
+		if err != nil {
 			return err
 		}
 		switch result.GetType() {
