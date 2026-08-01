@@ -394,7 +394,16 @@ func (ss *ServiceSentinel) Delete(ids []uint64) {
 		delete(ss.serviceStatusToday, id)
 
 		// 停掉定时任务
-		CronShared.Remove(ss.services[id].CronJobID)
+		// GHSA-jx78-55p5-rwv5 (Finding 2): guard against a caller supplying an id
+		// that does not exist in the in-memory registry.  CheckPermission returns
+		// vacuously true for unknown ids, so the controller layer cannot prevent
+		// this.  Without the guard, ss.services[id] is nil and the .CronJobID
+		// field access panics, aborting the Delete loop before the remaining valid
+		// ids are cleaned from memory — their service records were already deleted
+		// from the database, producing zombie services.
+		if svc := ss.services[id]; svc != nil {
+			CronShared.Remove(svc.CronJobID)
+		}
 		delete(ss.services, id)
 
 		delete(ss.monthlyStatus, id)
@@ -776,17 +785,25 @@ func delayCheck(r *ReportData, m map[uint64]*model.Server, ss *model.Service, mh
 		return
 	}
 
+	// GHSA-jx78-55p5-rwv5 (incomplete fix of GHSA-qjpp-gffx-2wm9): the server
+	// map snapshot m is taken outside serviceResponseDataStoreLock and
+	// ServerShared has its own independent lock, so a concurrent batch-delete of
+	// the reporter's server can remove the entry between the pre-lock validation
+	// and this point.  Guard against the nil pointer before using the server.
+	reporterServer := m[r.Reporter]
+	if reporterServer == nil {
+		return
+	}
+
 	notificationGroupID := ss.NotificationGroupID
 	minMuteLabel := NotificationMuteLabel.ServiceLatencyMin(mh.GetId())
 	maxMuteLabel := NotificationMuteLabel.ServiceLatencyMax(mh.GetId())
 	if mh.Delay > ss.MaxLatency {
 		// 延迟超过最大值
-		reporterServer := m[r.Reporter]
 		msg := Localizer.Tf("[Latency] %s %2f > %2f, Reporter: %s", ss.Name, mh.Delay, ss.MaxLatency, reporterServer.Name)
 		go NotificationShared.SendNotification(notificationGroupID, msg, minMuteLabel)
 	} else if mh.Delay < ss.MinLatency {
 		// 延迟低于最小值
-		reporterServer := m[r.Reporter]
 		msg := Localizer.Tf("[Latency] %s %2f < %2f, Reporter: %s", ss.Name, mh.Delay, ss.MinLatency, reporterServer.Name)
 		go NotificationShared.SendNotification(notificationGroupID, msg, maxMuteLabel)
 	} else {
@@ -798,10 +815,16 @@ func delayCheck(r *ReportData, m map[uint64]*model.Server, ss *model.Service, mh
 
 func notifyCheck(r *ReportData, m map[uint64]*model.Server,
 	ss *model.Service, mh *pb.TaskResult, lastStatus, stateCode uint8) {
+	// GHSA-jx78-55p5-rwv5: guard against concurrent server deletion (same TOCTOU
+	// class as the 2026-07-21 fix, a few dozen lines lower in the same worker).
+	// ServerShared has its own lock; m is a snapshot taken outside
+	// serviceResponseDataStoreLock, so the server may have been removed between
+	// the pre-lock validation and here.
+	reporterServer := m[r.Reporter]
+
 	// 判断是否需要发送通知
 	isNeedSendNotification := ss.Notify && (lastStatus != 0 || stateCode == StatusDown)
-	if isNeedSendNotification {
-		reporterServer := m[r.Reporter]
+	if isNeedSendNotification && reporterServer != nil {
 		notificationGroupID := ss.NotificationGroupID
 		notificationMsg := Localizer.Tf("[%s] %s Reporter: %s, Error: %s", StatusCodeToString(stateCode), ss.Name, reporterServer.Name, mh.Data)
 		muteLabel := NotificationMuteLabel.ServiceStateChanged(mh.GetId())
@@ -816,8 +839,7 @@ func notifyCheck(r *ReportData, m map[uint64]*model.Server,
 
 	// 判断是否需要触发任务
 	isNeedTriggerTask := ss.EnableTriggerTask && lastStatus != 0
-	if isNeedTriggerTask {
-		reporterServer := m[r.Reporter]
+	if isNeedTriggerTask && reporterServer != nil {
 		if stateCode == StatusGood && lastStatus != stateCode {
 			// 当前状态正常 前序状态非正常时 触发恢复任务
 			go CronShared.SendTriggerTasks(ss.RecoverTriggerTasks, reporterServer.ID, ss.UserID)
