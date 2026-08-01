@@ -15,14 +15,14 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout Nezha
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           persist-credentials: false
       - name: Checkout Agent
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        uses: actions/checkout@v7.0.1
         with:
           repository: nezhahq/agent
-          ref: 0123456789abcdef0123456789abcdef01234567
+          ref: v1.2.3
           path: agent
           persist-credentials: false
       - name: Test
@@ -34,7 +34,7 @@ jobs:
         if: always()
         run: go run ./integration/agentcompat/cmd/redact --output "$RUNNER_TEMP/nezha-agentcompat-redacted"
       - name: Upload redacted evidence
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        uses: actions/upload-artifact@v6
         if: always()
         with:
           path: ${{ runner.temp }}/nezha-agentcompat-redacted
