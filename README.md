@@ -117,4 +117,4 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=nezhahq/nezha&type=Timeline)](https://star-history.com/#nezhahq/nezha&Timeline)
+[![Star History Chart](https://star-history.dera.page/svg?repos=nezhahq/nezha&type=Timeline)](https://star-history.dera.page/#nezhahq/nezha&Timeline)
