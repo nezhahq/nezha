@@ -160,7 +160,10 @@ func CleanMonitorHistory() {
 	specialServerKeep := make(map[uint64]time.Time)
 	var specialServerIDs []uint64
 	var alerts []model.AlertRule
-	DB.Find(&alerts)
+	if err := DB.Find(&alerts).Error; err != nil {
+		log.Printf("NEZHA>> Failed to load alert rules while cleaning transfer history: %v", err)
+		return
+	}
 	for _, alert := range alerts {
 		for _, rule := range alert.Rules {
 			// 是不是流量记录规则
@@ -190,7 +193,7 @@ func CleanMonitorHistory() {
 	}
 	if len(specialServerIDs) == 0 {
 		if allServerKeep.IsZero() {
-			DB.Unscoped().Where("1 = 1").Delete(&model.Transfer{})
+			DB.Unscoped().Session(&gorm.Session{AllowGlobalUpdate: true}).Delete(&model.Transfer{})
 		} else {
 			DB.Unscoped().Delete(&model.Transfer{}, "datetime(`created_at`) < datetime(?)", allServerKeep)
 		}
