@@ -14,11 +14,18 @@ func setupCleanMonitorHistoryTestDB(t *testing.T) {
 	t.Helper()
 
 	previousDB := DB
-	t.Cleanup(func() { DB = previousDB })
-
 	var err error
 	DB, err = gorm.Open(openSQLiteDialector(filepath.Join(t.TempDir(), "dashboard.sqlite")), &gorm.Config{})
 	require.NoError(t, err)
+	sqlDB, err := DB.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		DB = previousDB
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("close transfer cleanup test database: %v", err)
+		}
+	})
+
 	require.NoError(t, DB.AutoMigrate(&model.Server{}, &model.Transfer{}, &model.AlertRule{}))
 	require.NoError(t, DB.Exec("INSERT INTO servers (id, name, uuid) VALUES (1, 'server', 'clean-monitor-history-test')").Error)
 }
