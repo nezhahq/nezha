@@ -1,0 +1,17 @@
+{
+  "schema": 1,
+  "updated_at": "2026-08-09T13:15:53.760Z",
+  "themes": [
+    {
+      "name": "Komari Glassmorphism",
+      "short": "Glassmorphism",
+      "description": "A Glassmorphism theme for Komari",
+      "version": "3.3.3",
+      "author": "sanrokamlan",
+      "url": "https://github.com/sanrokamlan-prog/komari-theme-Glassmorphism",
+      "preview": "https://raw.githubusercontent.com/sanrokamlan-prog/komari-theme-Glassmorphism/refs/heads/main/docs/preview.png",
+      "download": "https://github.com/sanrokamlan-prog/komari-theme-Glassmorphism/releases/download/v3.3.3/komari-theme-Glassmorphism-build-63a1d01.zip",
+      "sha256": "01a1d0111b0405f0ffaa280070d77e0dfe46bdd728edf0dbe7396a93be3ff249"
+    }
+  ]
+}

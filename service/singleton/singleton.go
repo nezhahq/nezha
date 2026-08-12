@@ -70,10 +70,12 @@ func LoadSingleton(bus chan<- *model.Service) (err error) {
 
 // InitFrontendTemplates 从内置文件中加载FrontendTemplates
 func InitFrontendTemplates() error {
-	err := yaml.Unmarshal(frontendTemplatesYAML, &FrontendTemplates)
-	if err != nil {
+	var builtins []model.FrontendTemplate
+	if err := yaml.Unmarshal(frontendTemplatesYAML, &builtins); err != nil {
 		return err
 	}
+	FrontendTemplates = appendKomariThemeMarketTemplates(builtins)
+	go syncKomariThemes()
 	return nil
 }
 

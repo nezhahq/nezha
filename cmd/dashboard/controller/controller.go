@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"strings"
@@ -356,8 +357,22 @@ func getUid(c *gin.Context) uint64 {
 	return user.ID
 }
 
+func resolveUserFrontendTemplate(selected string) (templateRoot, wallpaper string) {
+	if root, marketWallpaper, ok := singleton.ResolveKomariFrontendTemplate(selected); ok {
+		return root, marketWallpaper
+	}
+	return selected, ""
+}
+
+func prepareFrontendIndex(document []byte, wallpaper, selectedTemplate string) []byte {
+	if wallpaper == "" {
+		return document
+	}
+	return singleton.InjectKomariCompatibility(document, selectedTemplate, wallpaper)
+}
+
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
-	serveFile := func(c *gin.Context, name string, file fs.File, customStatusCode int) bool {
+	serveFile := func(c *gin.Context, name string, file fs.File, customStatusCode int, wallpaper, selectedTemplate string) bool {
 		defer file.Close()
 		fileStat, err := file.Stat()
 		if err != nil {
@@ -370,18 +385,70 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if !ok {
 			return false
 		}
+		if name == "index.html" && wallpaper != "" {
+			document, readErr := io.ReadAll(io.LimitReader(readSeeker, 2<<20))
+			if readErr != nil {
+				return false
+			}
+			document = prepareFrontendIndex(document, wallpaper, selectedTemplate)
+			c.Data(customStatusCode, "text/html; charset=utf-8", document)
+			return true
+		}
 		http.ServeContent(utils.NewGinCustomWriter(c, customStatusCode), c.Request, name, fileStat.ModTime(), readSeeker)
 		return true
 	}
 
-	checkLocalFileOrFs := func(c *gin.Context, frontendFS fs.FS, templateRoot, filePath string, customStatusCode int) bool {
+	checkLocalFileOrFs := func(c *gin.Context, frontendFS fs.FS, templateRoot, filePath string, customStatusCode int, wallpaper, selectedTemplate string) bool {
 		if filePath != "" {
 			localRoot, err := os.OpenRoot(templateRoot)
 			if err == nil {
 				defer localRoot.Close()
 				// URL paths must stay inside the selected template root; never join them against the process cwd.
-				if file, err := localRoot.Open(filePath); err == nil && serveFile(c, filePath, file, customStatusCode) {
+				if file, err := localRoot.Open(filePath); err == nil && serveFile(c, filePath, file, customStatusCode, wallpaper, selectedTemplate) {
 					return true
+				}
+				// Some Komari themes emit lower-case asset URLs while their ZIP stores
+				// upper-case country codes. Resolve each segment case-insensitively,
+				// without modifying the third-party package or escaping its root.
+				parts := strings.Split(filePath, "/")
+				resolved := make([]string, 0, len(parts))
+				current := "."
+				valid := true
+				for _, part := range parts {
+					if part == "" || part == "." || part == ".." {
+						valid = false
+						break
+					}
+					dir, openDirErr := localRoot.Open(current)
+					if openDirErr != nil {
+						valid = false
+						break
+					}
+					entries, readErr := dir.ReadDir(-1)
+					dir.Close()
+					if readErr != nil {
+						valid = false
+						break
+					}
+					match := ""
+					for _, entry := range entries {
+						if strings.EqualFold(entry.Name(), part) {
+							match = entry.Name()
+							break
+						}
+					}
+					if match == "" {
+						valid = false
+						break
+					}
+					resolved = append(resolved, match)
+					current = strings.Join(resolved, "/")
+				}
+				if valid {
+					resolvedPath := strings.Join(resolved, "/")
+					if file, openErr := localRoot.Open(resolvedPath); openErr == nil && serveFile(c, resolvedPath, file, customStatusCode, wallpaper, selectedTemplate) {
+						return true
+					}
 				}
 			}
 		}
@@ -397,7 +464,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if err != nil {
 			return false
 		}
-		if serveFile(c, filePath, file, customStatusCode) {
+		if serveFile(c, filePath, file, customStatusCode, wallpaper, selectedTemplate) {
 			return true
 		}
 		return false
@@ -441,9 +508,40 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 	}
 
 	return func(c *gin.Context) {
+		// Komari themes use /admin or /login for their own control panel. This
+		// deployment keeps Nezha's original admin/login frontend authoritative.
+		if strings.HasPrefix(singleton.Conf.UserTemplate, "komari-market-") {
+			switch strings.TrimRight(c.Request.URL.Path, "/") {
+			case "/admin", "/admin/login", "/login":
+				c.Redirect(http.StatusTemporaryRedirect, "/dashboard")
+				return
+			}
+		}
 		if strings.HasPrefix(c.Request.URL.Path, "/api") {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			return
+		}
+
+		// Komari mounts theme metadata/assets below /themes/{short}/. Keep a
+		// compatibility alias to the verified local package, without editing it.
+		if strings.HasPrefix(singleton.Conf.UserTemplate, "komari-market-") {
+			short := strings.TrimPrefix(singleton.Conf.UserTemplate, "komari-market-")
+			prefix := "/themes/" + short + "/"
+			if strings.HasPrefix(c.Request.URL.Path, prefix) {
+				templateRoot, wallpaper := resolveUserFrontendTemplate(singleton.Conf.UserTemplate)
+				rel := strings.TrimPrefix(c.Request.URL.Path, prefix)
+				if rel == "komari-theme.json" {
+					if checkLocalFileOrFs(c, frontendDist, filepath.Dir(templateRoot), rel, http.StatusOK, "", singleton.Conf.UserTemplate) {
+						return
+					}
+				}
+				if strings.HasPrefix(rel, "dist/") {
+					rel = strings.TrimPrefix(rel, "dist/")
+					if checkLocalFileOrFs(c, frontendDist, templateRoot, rel, http.StatusOK, wallpaper, singleton.Conf.UserTemplate) {
+						return
+					}
+				}
+			}
 		}
 
 		// redirect for /dashboard to /dashboard/
@@ -456,19 +554,40 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		// Only /dashboard/ belongs to the admin frontend; /dashboard.. must not be trimmed into ../.
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard/") {
 			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard/")
-			if checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, stripPath, http.StatusOK) {
+			if checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, stripPath, http.StatusOK, "", singleton.Conf.AdminTemplate) {
 				return
 			}
-			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, "index.html", fallbackStatusCode) {
+			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, "index.html", fallbackStatusCode, "", singleton.Conf.AdminTemplate) {
 				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
 		}
 		stripPath := strings.TrimPrefix(c.Request.URL.Path, "/")
-		if checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, stripPath, http.StatusOK) {
+		templateRoot, wallpaper := resolveUserFrontendTemplate(singleton.Conf.UserTemplate)
+		if checkLocalFileOrFs(c, frontendDist, templateRoot, stripPath, http.StatusOK, wallpaper, singleton.Conf.UserTemplate) {
 			return
 		}
-		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, "index.html", fallbackStatusCode) {
+		// Some theme ZIPs reference Komari backend-owned shared flags/OS logos
+		// that are bundled only by another verified theme package.
+		if strings.HasPrefix(singleton.Conf.UserTemplate, "komari-market-") &&
+			(strings.HasPrefix(stripPath, "assets/flags/") || strings.HasPrefix(stripPath, "assets/logo/") ||
+				strings.HasPrefix(stripPath, "images/flags/") || strings.HasPrefix(stripPath, "images/logo/")) {
+			assetTail := strings.TrimPrefix(strings.TrimPrefix(stripPath, "assets/"), "images/")
+			if entries, readErr := os.ReadDir(singleton.KomariThemeInstallDir()); readErr == nil {
+				for _, entry := range entries {
+					if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "komari-market-") {
+						continue
+					}
+					for _, prefix := range []string{"assets", "images"} {
+						candidateRoot := filepath.Join(singleton.KomariThemeInstallDir(), entry.Name(), "dist", prefix)
+						if checkLocalFileOrFs(c, frontendDist, candidateRoot, assetTail, http.StatusOK, "", singleton.Conf.UserTemplate) {
+							return
+						}
+					}
+				}
+			}
+		}
+		if !checkLocalFileOrFs(c, frontendDist, templateRoot, "index.html", fallbackStatusCode, wallpaper, singleton.Conf.UserTemplate) {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}
