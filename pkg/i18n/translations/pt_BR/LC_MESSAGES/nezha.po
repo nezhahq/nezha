@@ -8,19 +8,21 @@ msgstr ""
 "Project-Id-Version: PACKAGE VERSION\n"
 "Report-Msgid-Bugs-To: \n"
 "POT-Creation-Date: 2025-01-30 21:58+0800\n"
-"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
-"Last-Translator: Automatically generated\n"
-"Language-Team: none\n"
+"PO-Revision-Date: 2026-08-12 05:39+0000\n"
+"Last-Translator: ace-consultoria <erec.novais@aceconsultoria.org>\n"
+"Language-Team: Portuguese (Brazil) <https://hosted.weblate.org/projects/"
+"nezha/nezha-dashboard/pt_BR/>\n"
 "Language: pt_BR\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=n > 1;\n"
+"X-Generator: Weblate 2026.9.dev0\n"
 
 #: cmd/dashboard/controller/alertrule.go:104
 #, c-format
 msgid "alert id %d does not exist"
-msgstr ""
+msgstr "alerta id %d não existe"
 
 #: cmd/dashboard/controller/alertrule.go:108
 #: cmd/dashboard/controller/alertrule.go:156
@@ -49,27 +51,27 @@ msgstr ""
 #: cmd/dashboard/controller/service.go:369
 #: cmd/dashboard/controller/terminal.go:41
 msgid "permission denied"
-msgstr ""
+msgstr "permissão negada"
 
 #: cmd/dashboard/controller/alertrule.go:184
 msgid "duration need to be at least 3"
-msgstr ""
+msgstr "duração precisa ser pelo menos 3"
 
 #: cmd/dashboard/controller/alertrule.go:188
 msgid "cycle_interval need to be at least 1"
-msgstr ""
+msgstr "cycle_interval precisa ser pelo menos 1"
 
 #: cmd/dashboard/controller/alertrule.go:191
 msgid "cycle_start is not set"
-msgstr ""
+msgstr "cycle_start não está definido"
 
 #: cmd/dashboard/controller/alertrule.go:194
 msgid "cycle_start is a future value"
-msgstr ""
+msgstr "cycle_start é um valor futuro"
 
 #: cmd/dashboard/controller/alertrule.go:199
 msgid "need to configure at least a single rule"
-msgstr ""
+msgstr "necessário configurar pelo menos uma única regra"
 
 #: cmd/dashboard/controller/controller.go:220
 #: cmd/dashboard/controller/oauth2.go:153
@@ -77,212 +79,219 @@ msgstr ""
 #: cmd/dashboard/controller/service.go:97 cmd/dashboard/controller/user.go:27
 #: cmd/dashboard/controller/user.go:63
 msgid "unauthorized"
-msgstr ""
+msgstr "não autorizado"
 
 #: cmd/dashboard/controller/controller.go:243
 msgid "database error"
-msgstr ""
+msgstr "erro de banco de dados"
 
 #: cmd/dashboard/controller/cron.go:75 cmd/dashboard/controller/cron.go:149
 msgid "scheduled tasks cannot be triggered by alarms"
-msgstr ""
+msgstr "tarefas agendadas não podem ser desencadeadas por alarmes"
 
 #: cmd/dashboard/controller/cron.go:132 cmd/dashboard/controller/cron.go:190
 #, c-format
 msgid "task id %d does not exist"
-msgstr ""
+msgstr "a tarefa id %d não existe"
 
 #: cmd/dashboard/controller/ddns.go:57 cmd/dashboard/controller/ddns.go:122
 msgid "the retry count must be an integer between 1 and 10"
-msgstr ""
+msgstr "a contagem de repetições deve ser um inteiro entre 1 e 10"
 
 #: cmd/dashboard/controller/ddns.go:81 cmd/dashboard/controller/ddns.go:154
+#, fuzzy
 msgid "error parsing %s: %v"
-msgstr ""
+msgstr "erro ao analisar %s: %v"
 
 #: cmd/dashboard/controller/ddns.go:127 cmd/dashboard/controller/nat.go:118
 #, c-format
 msgid "profile id %d does not exist"
-msgstr ""
+msgstr "perfil id %d não existe"
 
 #: cmd/dashboard/controller/fm.go:39 cmd/dashboard/controller/terminal.go:37
 msgid "server not found or not connected"
-msgstr ""
+msgstr "servidor não encontrado ou não conectado"
 
 #: cmd/dashboard/controller/notification.go:69
 #: cmd/dashboard/controller/notification.go:131
 msgid "a test message"
-msgstr ""
+msgstr "uma mensagem de teste"
 
 #: cmd/dashboard/controller/notification.go:108
 #, c-format
 msgid "notification id %d does not exist"
-msgstr ""
+msgstr "notificação id %d não existe"
 
 #: cmd/dashboard/controller/notification_group.go:94
 #: cmd/dashboard/controller/notification_group.go:175
 msgid "have invalid notification id"
-msgstr ""
+msgstr "há um id de notificação inválido"
 
 #: cmd/dashboard/controller/notification_group.go:160
 #: cmd/dashboard/controller/server_group.go:158
 #, c-format
 msgid "group id %d does not exist"
-msgstr ""
+msgstr "grupo id %d não existe"
 
 #: cmd/dashboard/controller/oauth2.go:42 cmd/dashboard/controller/oauth2.go:83
 msgid "provider is required"
-msgstr ""
+msgstr "o provedor é necessário"
 
 #: cmd/dashboard/controller/oauth2.go:52 cmd/dashboard/controller/oauth2.go:87
 #: cmd/dashboard/controller/oauth2.go:132
 msgid "provider not found"
-msgstr ""
+msgstr "provedor não encontrado"
 
 #: cmd/dashboard/controller/oauth2.go:100
 msgid "operation not permitted"
-msgstr ""
+msgstr "operação não permitida"
 
 #: cmd/dashboard/controller/oauth2.go:138
 msgid "code is required"
-msgstr ""
+msgstr "o código é necessário"
 
 #: cmd/dashboard/controller/oauth2.go:175
 msgid "oauth2 user not binded yet"
-msgstr ""
+msgstr "usuário oauth2 ainda não está vinculado"
 
 #: cmd/dashboard/controller/oauth2.go:217
 #: cmd/dashboard/controller/oauth2.go:223
 #: cmd/dashboard/controller/oauth2.go:228
 msgid "invalid state key"
-msgstr ""
+msgstr "chave de estado inválida"
 
 #: cmd/dashboard/controller/server.go:74
 #, c-format
 msgid "server id %d does not exist"
-msgstr ""
+msgstr "servidor id %d não existe"
 
 #: cmd/dashboard/controller/server.go:250
+#, fuzzy
 msgid "operation timeout"
-msgstr ""
+msgstr "tempo de espera esgotado"
 
 #: cmd/dashboard/controller/server.go:257
 msgid "get server config failed: %v"
-msgstr ""
+msgstr "falha em obter a configuração do servidor: %v"
 
 #: cmd/dashboard/controller/server.go:261
 msgid "get server config failed"
-msgstr ""
+msgstr "falha em obter a configuração do servidor"
 
 #: cmd/dashboard/controller/server_group.go:92
 #: cmd/dashboard/controller/server_group.go:172
 msgid "have invalid server id"
-msgstr ""
+msgstr "há um id de servidor inválido"
 
 #: cmd/dashboard/controller/service.go:90
 #: cmd/dashboard/controller/service.go:165
 msgid "server not found"
-msgstr ""
+msgstr "servidor não encontrado"
 
 #: cmd/dashboard/controller/service.go:267
 #, c-format
 msgid "service id %d does not exist"
-msgstr ""
+msgstr "serviço id %d não existe"
 
 #: cmd/dashboard/controller/user.go:68
 msgid "incorrect password"
-msgstr ""
+msgstr "senha incorreta"
 
 #: cmd/dashboard/controller/user.go:82
 msgid "you don't have any oauth2 bindings"
-msgstr ""
+msgstr "você não tem nenhuma ligação oauth2 vinculada"
 
 #: cmd/dashboard/controller/user.go:131
 msgid "password length must be greater than 6"
-msgstr ""
+msgstr "comprimento da senha deve ser maior que 6"
 
 #: cmd/dashboard/controller/user.go:134
 msgid "username can't be empty"
-msgstr ""
+msgstr "nome de usuário não pode estar vazio"
 
 #: cmd/dashboard/controller/user.go:137
 msgid "invalid role"
-msgstr ""
+msgstr "função inválida"
 
 #: cmd/dashboard/controller/user.go:176
+#, fuzzy
 msgid "can't delete yourself"
-msgstr ""
+msgstr "você não pode se apagar"
 
 #: service/rpc/io_stream.go:128
 msgid "timeout: no connection established"
-msgstr ""
+msgstr "tempo esgotado: nenhuma conexão estabelecida"
 
 #: service/rpc/io_stream.go:131
 msgid "timeout: user connection not established"
-msgstr ""
+msgstr "tempo esgotado: conexão de usuário não estabelecida"
 
 #: service/rpc/io_stream.go:134
 msgid "timeout: agent connection not established"
-msgstr ""
+msgstr "tempo esgotado: conexão de agente não estabelecida"
 
 #: service/rpc/nezha.go:71
 msgid "Scheduled Task Executed Successfully"
-msgstr ""
+msgstr "Tarefa agendada Executada com sucesso"
 
 #: service/rpc/nezha.go:75
 msgid "Scheduled Task Executed Failed"
-msgstr ""
+msgstr "Falha ao executar tarefa agendada"
 
 #: service/rpc/nezha.go:274
 msgid "IP Changed"
-msgstr ""
+msgstr "IP alterado"
 
 #: service/singleton/alertsentinel.go:169
 msgid "Incident"
-msgstr ""
+msgstr "Incidente"
 
 #: service/singleton/alertsentinel.go:179
 msgid "Resolved"
-msgstr ""
+msgstr "Resolvido"
 
 #: service/singleton/crontask.go:54
 msgid "Tasks failed to register: ["
-msgstr ""
+msgstr "As tarefas não foram registradas: ["
 
 #: service/singleton/crontask.go:61
 msgid ""
 "] These tasks will not execute properly. Fix them in the admin dashboard."
 msgstr ""
+"] Essas tarefas não serão executadas corretamente. Conserte as no painel de "
+"administração."
 
 #: service/singleton/crontask.go:144 service/singleton/crontask.go:169
 #, c-format
 msgid "[Task failed] %s: server %s is offline and cannot execute the task"
 msgstr ""
+"[Tarefa falhou] %s: servidor %s está offline e não pode executar a tarefa"
 
 #: service/singleton/servicesentinel.go:468
 #, c-format
 msgid "[Latency] %s %2f > %2f, Reporter: %s"
-msgstr ""
+msgstr "[Latência] %s %2f > %2f, Reportado por: %s"
 
 #: service/singleton/servicesentinel.go:475
 #, c-format
 msgid "[Latency] %s %2f < %2f, Reporter: %s"
-msgstr ""
+msgstr "[Latência] %s %2f < %2f, Reportado por: %s"
 
 #: service/singleton/servicesentinel.go:501
 #, c-format
 msgid "[%s] %s Reporter: %s, Error: %s"
-msgstr ""
+msgstr "[%s] %s Reportado por: %s, Erro: %s"
 
 #: service/singleton/servicesentinel.go:544
 #, c-format
 msgid "[TLS] Fetch cert info failed, Reporter: %s, Error: %s"
 msgstr ""
+"[TLS] Erro ao obter informações do certificado, Reportado por: %s, Erro: %s"
 
 #: service/singleton/servicesentinel.go:584
 #, c-format
 msgid "The TLS certificate will expire within seven days. Expiration time: %s"
-msgstr ""
+msgstr "O certificado TLS expirará dentro de sete dias. Tempo de expiração: %s"
 
 #: service/singleton/servicesentinel.go:597
 #, c-format
@@ -290,23 +299,25 @@ msgid ""
 "TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, "
 "expires at %s"
 msgstr ""
+"Certificado TLS foi alterado, antigo: emissor %s, expira em %s; novo: "
+"emissor %s, expira em %s"
 
 #: service/singleton/servicesentinel.go:633
 msgid "No Data"
-msgstr ""
+msgstr "Sem dados"
 
 #: service/singleton/servicesentinel.go:635
 msgid "Good"
-msgstr ""
+msgstr "Bom"
 
 #: service/singleton/servicesentinel.go:637
 msgid "Low Availability"
-msgstr ""
+msgstr "Baixa disponibilidade"
 
 #: service/singleton/servicesentinel.go:639
 msgid "Down"
-msgstr ""
+msgstr "Down"
 
 #: service/singleton/user.go:60
 msgid "user id not specified"
-msgstr ""
+msgstr "id do usuário não especificado"
