@@ -54,16 +54,25 @@ func (provider *Provider) updateDomain(ctx context.Context, domain string) error
 		return err
 	}
 
-	// 当IPv4和IPv6同时成功才算作成功
+	// 独立处理 IPv4 更新
 	if *provider.DDNSProfile.EnableIPv4 {
-		if err = provider.addDomainRecord(ctx, "A", provider.IPAddrs.IPv4Addr); err != nil {
-			return err
+		if provider.IPAddrs.IPv4Addr == "" {
+			log.Printf("NEZHA>> Skip IPv4 update for domain %s: IPv4 address is empty", domain)
+		} else {
+			if err = provider.addDomainRecord(ctx, "A", provider.IPAddrs.IPv4Addr); err != nil {
+				return err
+			}
 		}
 	}
 
+	// 独立处理 IPv6 更新
 	if *provider.DDNSProfile.EnableIPv6 {
-		if err = provider.addDomainRecord(ctx, "AAAA", provider.IPAddrs.IPv6Addr); err != nil {
-			return err
+		if provider.IPAddrs.IPv6Addr == "" {
+			log.Printf("NEZHA>> Skip IPv6 update for domain %s: IPv6 address is empty", domain)
+		} else {
+			if err = provider.addDomainRecord(ctx, "AAAA", provider.IPAddrs.IPv6Addr); err != nil {
+				return err
+			}
 		}
 	}
 
