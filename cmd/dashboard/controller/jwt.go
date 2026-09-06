@@ -152,7 +152,7 @@ func identityHandler() func(c *gin.Context) any {
 			return nil
 		}
 		currentIP := c.GetString(model.CtxKeyRealIPStr)
-		if sess.IP != currentIP {
+		if !singleton.Conf.AllowJWTIPChange && sess.IP != currentIP {
 			c.Set(model.CtxKeyIsIPMismatch, true)
 			return nil
 		}

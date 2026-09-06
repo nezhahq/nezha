@@ -61,6 +61,9 @@ type ConfigDashboard struct {
 	AdminTemplate     string `koanf:"admin_template" json:"admin_template,omitempty"`
 
 	EnablePlainIPInNotification bool `koanf:"enable_plain_ip_in_notification" json:"enable_plain_ip_in_notification,omitempty"` // 通知信息IP不打码
+	// AllowJWTIPChange disables the IP binding check for browser login sessions.
+	// Keep this disabled by default so a stolen JWT remains bound to its issuing IP.
+	AllowJWTIPChange bool `koanf:"allow_jwt_ip_change" json:"allow_jwt_ip_change,omitempty"`
 
 	EnableMCP bool `koanf:"enable_mcp" json:"enable_mcp,omitempty"` // 是否启用 MCP 入口（默认关闭；启用前请审视 PAT scope/whitelist）
 

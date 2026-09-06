@@ -24,6 +24,7 @@ func TestReadConfig(t *testing.T) {
 			{"user_template", c.UserTemplate, c.UserTemplate == "user-dist"},
 			{"admin_template", c.AdminTemplate, c.AdminTemplate == "admin-dist"},
 			{"agent_secret_key", c.AgentSecretKey, c.AgentSecretKey != ""},
+			{"allow_jwt_ip_change", c.AllowJWTIPChange, !c.AllowJWTIPChange},
 		}
 
 		for _, field := range testFields {
@@ -36,7 +37,7 @@ func TestReadConfig(t *testing.T) {
 	})
 
 	t.Run("ReadFile", func(t *testing.T) {
-		const testCfg = "jwt_secret_key: test\nuser_template: um\nadmin_template: am\nagent_secret_key: none\nsite_name: lowkick"
+		const testCfg = "jwt_secret_key: test\nuser_template: um\nadmin_template: am\nagent_secret_key: none\nsite_name: lowkick\nallow_jwt_ip_change: true"
 
 		var testFrontendTemplates = []FrontendTemplate{
 			{Path: "um"},
@@ -59,6 +60,7 @@ func TestReadConfig(t *testing.T) {
 			{"admin_template", c.AdminTemplate, c.AdminTemplate == "am"},
 			{"agent_secret_key", c.AgentSecretKey, c.AgentSecretKey == "none"},
 			{"site_name", c.SiteName, c.SiteName == "lowkick"},
+			{"allow_jwt_ip_change", c.AllowJWTIPChange, c.AllowJWTIPChange},
 		}
 
 		for _, field := range testFields {
