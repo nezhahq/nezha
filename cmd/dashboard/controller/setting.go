@@ -97,7 +97,9 @@ func updateConfig(c *gin.Context) (any, error) {
 
 	singleton.Conf.EnableIPChangeNotification = sf.EnableIPChangeNotification
 	singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
-	singleton.Conf.AllowJWTIPChange = resolveOptionalBool(sf.AllowJWTIPChange, singleton.Conf.AllowJWTIPChange)
+	if sf.AllowJWTIPChange != nil {
+		singleton.Conf.SetJWTIPChangeAllowed(*sf.AllowJWTIPChange)
+	}
 	singleton.Conf.Cover = sf.Cover
 	singleton.Conf.InstallHost = sf.InstallHost
 	singleton.Conf.DashboardHost = sf.DashboardHost

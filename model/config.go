@@ -106,6 +106,10 @@ type Config struct {
 	// SettingResponse 按值拷贝 ConfigDashboard 触发 copylocks。
 	mcpEnabled atomic.Bool `koanf:"-" json:"-" yaml:"-"`
 
+	// jwtIPChangeAllowed mirrors AllowJWTIPChange for concurrent authentication
+	// and setting updates. Keep atomic fields outside ConfigDashboard.
+	jwtIPChangeAllowed atomic.Bool `koanf:"-" json:"-" yaml:"-"`
+
 	// oauth2 配置
 	Oauth2 map[string]*Oauth2Config `koanf:"oauth2" json:"oauth2,omitempty"`
 
@@ -228,6 +232,8 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		c.JWTTimeout = 1
 	}
 
+	c.jwtIPChangeAllowed.Store(c.AllowJWTIPChange)
+
 	if c.AgentSecretKey == "" {
 		c.AgentSecretKey, err = utils.GenerateRandomString(32)
 		if err != nil {
@@ -253,6 +259,17 @@ func (c *Config) MCPEnabled() bool {
 // 数据竞争。持久化由 save() 在 marshal 前从 atomic 同步明文字段完成。
 func (c *Config) SetMCPEnabled(v bool) {
 	c.mcpEnabled.Store(v)
+}
+
+// JWTIPChangeAllowed reports whether JWT sessions may change IP concurrently.
+func (c *Config) JWTIPChangeAllowed() bool {
+	return c.jwtIPChangeAllowed.Load()
+}
+
+// SetJWTIPChangeAllowed updates only the atomic mirror. save() synchronizes
+// the public field for persistence; authentication must use the accessor.
+func (c *Config) SetJWTIPChangeAllowed(v bool) {
+	c.jwtIPChangeAllowed.Store(v)
 }
 
 // Save 保存配置文件
@@ -323,6 +340,7 @@ func (c *Config) patchYAMLField(key string, value any) error {
 
 func (c *Config) save() error {
 	c.EnableMCP = c.mcpEnabled.Load()
+	c.AllowJWTIPChange = c.jwtIPChangeAllowed.Load()
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return err
