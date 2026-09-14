@@ -57,19 +57,22 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 
 		// 独立处理 IPv4 更新或删除
 		if provider.DDNSProfile.EnableIPv4 != nil && *provider.DDNSProfile.EnableIPv4 {
+			isDelete := provider.IPAddrs.IPv4Addr == ""
+			actionName := utils.IfOr(isDelete, "Deleting", "Updating")
+
 			for retries := 0; retries < maxRetries; retries++ {
-				log.Printf("NEZHA>> Updating IPv4 record of domain %s: %d/%d", domain, retries+1, maxRetries)
+				log.Printf("NEZHA>> %s IPv4 record of domain %s: %d/%d", actionName, domain, retries+1, maxRetries)
 				var ipv4Err error
-				if provider.IPAddrs.IPv4Addr == "" {
+				if isDelete {
 					ipv4Err = provider.deleteDomainRecord(ctx, prefix, zone, "A")
 				} else {
 					ipv4Err = provider.addDomainRecord(ctx, prefix, zone, "A", provider.IPAddrs.IPv4Addr)
 				}
 
 				if ipv4Err != nil {
-					log.Printf("NEZHA>> Failed to update IPv4 record of domain %s: %v", domain, ipv4Err)
+					log.Printf("NEZHA>> Failed to %s IPv4 record of domain %s: %v", strings.ToLower(actionName), domain, ipv4Err)
 				} else {
-					log.Printf("NEZHA>> Update IPv4 record of domain %s succeeded", domain)
+					log.Printf("NEZHA>> %s IPv4 record of domain %s succeeded", actionName, domain)
 					break
 				}
 			}
@@ -77,19 +80,22 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 
 		// 独立处理 IPv6 更新或删除
 		if provider.DDNSProfile.EnableIPv6 != nil && *provider.DDNSProfile.EnableIPv6 {
+			isDelete := provider.IPAddrs.IPv6Addr == ""
+			actionName := utils.IfOr(isDelete, "Deleting", "Updating")
+
 			for retries := 0; retries < maxRetries; retries++ {
-				log.Printf("NEZHA>> Updating IPv6 record of domain %s: %d/%d", domain, retries+1, maxRetries)
+				log.Printf("NEZHA>> %s IPv6 record of domain %s: %d/%d", actionName, domain, retries+1, maxRetries)
 				var ipv6Err error
-				if provider.IPAddrs.IPv6Addr == "" {
+				if isDelete {
 					ipv6Err = provider.deleteDomainRecord(ctx, prefix, zone, "AAAA")
 				} else {
 					ipv6Err = provider.addDomainRecord(ctx, prefix, zone, "AAAA", provider.IPAddrs.IPv6Addr)
 				}
 
 				if ipv6Err != nil {
-					log.Printf("NEZHA>> Failed to update IPv6 record of domain %s: %v", domain, ipv6Err)
+					log.Printf("NEZHA>> Failed to %s IPv6 record of domain %s: %v", strings.ToLower(actionName), domain, ipv6Err)
 				} else {
-					log.Printf("NEZHA>> Update IPv6 record of domain %s succeeded", domain)
+					log.Printf("NEZHA>> %s IPv6 record of domain %s succeeded", actionName, domain)
 					break
 				}
 			}
@@ -122,12 +128,31 @@ func (provider *Provider) deleteDomainRecord(ctx context.Context, prefix, zone, 
 	}
 
 	targetRecType := strings.ToUpper(recType)
-	_, err := deleter.DeleteRecords(ctx, zone, []libdns.Record{
-		libdns.RR{
-			Name: prefix,
-			Type: targetRecType,
-		},
-	})
+	var recordsToDelete []libdns.Record
+
+	if getter, okGetter := provider.Setter.(libdns.RecordGetter); okGetter {
+		existingRecords, err := getter.GetRecords(ctx, zone)
+		if err == nil {
+			for _, rec := range existingRecords {
+				rr := rec.RR()
+				matchName := rr.Name == prefix || strings.TrimSuffix(rr.Name, ".") == strings.TrimSuffix(prefix, ".")
+				if matchName && strings.ToUpper(rr.Type) == targetRecType {
+					recordsToDelete = append(recordsToDelete, rec)
+				}
+			}
+		}
+	}
+
+	if len(recordsToDelete) == 0 {
+		recordsToDelete = []libdns.Record{
+			libdns.RR{
+				Name: prefix,
+				Type: targetRecType,
+			},
+		}
+	}
+
+	_, err := deleter.DeleteRecords(ctx, zone, recordsToDelete)
 	if err != nil {
 		return fmt.Errorf("deleter.DeleteRecords failed: %w", err)
 	}
