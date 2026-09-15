@@ -3,6 +3,7 @@ package ddns
 import (
 	"context"
 	"net"
+	"net/netip"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -97,10 +98,17 @@ func TestSplitDomainSOA(t *testing.T) {
 }
 
 type MockSetter struct {
-	Records        []libdns.Record
-	SetCalled      bool
-	DelCalled      bool
-	DeletedRecords []libdns.Record
+	Records         []libdns.Record
+	ExistingRecords []libdns.Record
+	GetCalled       bool
+	SetCalled       bool
+	DelCalled       bool
+	DeletedRecords  []libdns.Record
+}
+
+func (m *MockSetter) GetRecords(ctx context.Context, zone string) ([]libdns.Record, error) {
+	m.GetCalled = true
+	return m.ExistingRecords, nil
 }
 
 func (m *MockSetter) SetRecords(ctx context.Context, zone string, records []libdns.Record) ([]libdns.Record, error) {
@@ -281,5 +289,43 @@ func TestGenericRecordDeleterContract(t *testing.T) {
 
 	if rr.Name != "sub" || rr.Type != "A" {
 		t.Fatalf("unexpected RR fields: Name=%s, Type=%s", rr.Name, rr.Type)
+	}
+}
+
+func TestCloudflareSpecialDeletion(t *testing.T) {
+	mockSetter := &MockSetter{
+		ExistingRecords: []libdns.Record{
+			libdns.Address{
+				Name: "sub",
+				IP:   netip.MustParseAddr("1.2.3.4"),
+			},
+		},
+	}
+
+	provider := &Provider{
+		DDNSProfile: &model.DDNSProfile{
+			MaxRetries: 1,
+			Provider:   model.ProviderCloudflare,
+		},
+		IPAddrs: &model.IP{IPv4Addr: ""},
+		Setter:  mockSetter,
+	}
+
+	ctx := context.Background()
+	err := provider.deleteDomainRecord(ctx, "sub", "example.com", "A")
+	if err != nil {
+		t.Fatalf("unexpected error for Cloudflare special deletion: %v", err)
+	}
+
+	if !mockSetter.GetCalled {
+		t.Fatalf("expected GetRecords to have been called for Cloudflare special flow")
+	}
+
+	if !mockSetter.DelCalled {
+		t.Fatalf("expected DeleteRecords to have been called for Cloudflare special flow")
+	}
+
+	if len(mockSetter.DeletedRecords) != 1 {
+		t.Fatalf("expected 1 record matched for deletion, got %d", len(mockSetter.DeletedRecords))
 	}
 }
