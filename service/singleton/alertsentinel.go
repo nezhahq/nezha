@@ -42,6 +42,13 @@ type alertDeliveryEntry struct {
 	sendMu *sync.Mutex
 }
 
+type alertDeliveryPhase uint8
+
+const (
+	alertDeliveryIncident alertDeliveryPhase = iota
+	alertDeliveryRecovery
+)
+
 func cancelAlertDeliveries(alertID uint64) {
 	alertDeliveryMu.Lock()
 	defer alertDeliveryMu.Unlock()
@@ -49,6 +56,22 @@ func cancelAlertDeliveries(alertID uint64) {
 		close(entry.cancel)
 	}
 	delete(alertDeliveries, alertID)
+}
+
+func cancelAlertDeliveriesForServers(serverIDs []uint64) {
+	alertDeliveryMu.Lock()
+	defer alertDeliveryMu.Unlock()
+	for alertID, byServer := range alertDeliveries {
+		for _, serverID := range serverIDs {
+			if entry := byServer[serverID]; entry != nil {
+				close(entry.cancel)
+				delete(byServer, serverID)
+			}
+		}
+		if len(byServer) == 0 {
+			delete(alertDeliveries, alertID)
+		}
+	}
 }
 
 func runAlertDelivery(cancel <-chan struct{}, send func() bool, always bool, retryDelay time.Duration) {
@@ -76,7 +99,7 @@ func runAlertDelivery(cancel <-chan struct{}, send func() bool, always bool, ret
 	}
 }
 
-func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, muteLabel string) {
+func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, muteLabel string, phase alertDeliveryPhase) {
 	// A mute entry belongs to one transition, not all later incidents of the
 	// same phase. Concurrent in-flight sends may finish after a recovery.
 	muteLabel = fmt.Sprintf("%s:event-%d", muteLabel, alertEventSequence.Add(1))
@@ -97,7 +120,7 @@ func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, m
 	alertDeliveryMu.Unlock()
 
 	groupID := alert.NotificationGroupID
-	always := alert.TriggerMode == model.ModeAlwaysTrigger
+	always := phase == alertDeliveryIncident && alert.TriggerMode == model.ModeAlwaysTrigger
 	go func() {
 		defer close(entry.done)
 		runAlertDelivery(entry.cancel, func() bool {
@@ -114,6 +137,10 @@ func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, m
 			return NotificationShared.SendNotification(groupID, message, muteLabel, server)
 		}, always, 30*time.Second)
 	}()
+}
+
+func shouldRunAlertFailTasks(triggerMode uint8, newIncident bool) bool {
+	return newIncident || triggerMode == model.ModeAlwaysTrigger
 }
 
 // addCycleTransferStatsInfo 向AlertsCycleTransferStatsStore中添加周期流量报警统计信息
@@ -328,12 +355,15 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 
 	// 本次未通过检查
 	if !passed {
-		if alertsPrevState[alert.ID][server.ID] != _RuleCheckFail {
+		newIncident := alertsPrevState[alert.ID][server.ID] != _RuleCheckFail
+		if newIncident {
 			alertsPrevState[alert.ID][server.ID] = _RuleCheckFail
 			message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Incident"),
 				server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
+			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID), alertDeliveryIncident)
+		}
+		if shouldRunAlertFailTasks(alert.TriggerMode, newIncident) {
 			go CronShared.SendTriggerTasks(alert.FailTriggerTasks, curServer.ID, alert.UserID)
-			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
 		}
 	} else {
 		// 本次通过检查但上一次的状态为失败，则发送恢复通知
@@ -341,7 +371,7 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 			message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Resolved"),
 				server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
 			go CronShared.SendTriggerTasks(alert.RecoverTriggerTasks, curServer.ID, alert.UserID)
-			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
+			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), alertDeliveryRecovery)
 		}
 		alertsPrevState[alert.ID][server.ID] = _RuleCheckPass
 	}

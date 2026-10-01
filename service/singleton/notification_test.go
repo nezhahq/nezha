@@ -262,6 +262,59 @@ func TestServiceStateNotificationsKeepIncidentRecoveryOrder(t *testing.T) {
 	}
 }
 
+func TestServiceStateRetriesFailedIncidentBeforePendingRecovery(t *testing.T) {
+	oldCache := Cache
+	Cache = cache.New(time.Minute, time.Minute)
+	t.Cleanup(func() { Cache = oldCache })
+	n := &model.Notification{Common: model.Common{ID: 535}, Name: "hook"}
+	nc := newNotificationClassWithItems(n)
+	nc.UpdateGroup(&model.NotificationGroup{Common: model.Common{ID: 536}, Name: "retry-order-test"}, []uint64{n.ID})
+	t.Cleanup(func() { nc.CancelServiceState(537) })
+
+	attempts := make(chan string, 3)
+	releaseFirst := make(chan struct{})
+	var downAttempts atomic.Int32
+	nc.sendForTest = func(_ *model.Notification, desc string, _ *model.Server) error {
+		attempts <- desc
+		if desc == "down" && downAttempts.Add(1) == 1 {
+			<-releaseFirst
+			return errors.New("temporary incident failure")
+		}
+		return nil
+	}
+
+	nc.SendServiceState(537, 536, "down", "state-down-1")
+	nc.deliveryMu.Lock()
+	state := nc.serviceDelivery[537]
+	nc.deliveryMu.Unlock()
+	select {
+	case got := <-attempts:
+		if got != "down" {
+			t.Fatalf("first delivery = %q, want down", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("incident delivery did not start")
+	}
+	nc.SendServiceState(537, 536, "good", "state-good-2")
+	close(releaseFirst)
+
+	for _, want := range []string{"down", "good"} {
+		select {
+		case got := <-attempts:
+			if got != want {
+				t.Fatalf("delivery after failed incident = %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("missing %s delivery", want)
+		}
+	}
+	select {
+	case <-state.done:
+	case <-time.After(time.Second):
+		t.Fatal("ordered delivery worker did not finish")
+	}
+}
+
 func TestServiceStateCancelStopsOldConfiguration(t *testing.T) {
 	oldCache := Cache
 	Cache = cache.New(time.Minute, time.Minute)

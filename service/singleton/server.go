@@ -117,6 +117,7 @@ func (c *ServerClass) Update(s *model.Server, uuid string) {
 func (c *ServerClass) Delete(idList []uint64) {
 	c.lockLifecycleWrite()
 	defer c.unlockLifecycleWrite()
+	cancelAlertDeliveriesForServers(idList)
 
 	c.listMu.Lock()
 

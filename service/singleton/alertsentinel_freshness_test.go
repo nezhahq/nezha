@@ -115,10 +115,10 @@ func TestAlertNewIncidentNotMutedByEarlierInflightIncident(t *testing.T) {
 	}
 	server := &model.Server{Common: model.Common{ID: 604}}
 	label := NotificationMuteLabel.ServerIncident(server.ID, alert.ID)
-	startAlertDelivery(alert, server, "first incident", label)
+	startAlertDelivery(alert, server, "first incident", label, alertDeliveryIncident)
 	<-started
-	startAlertDelivery(alert, server, "recovered", NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
-	startAlertDelivery(alert, server, "second incident", label)
+	startAlertDelivery(alert, server, "recovered", NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), alertDeliveryRecovery)
+	startAlertDelivery(alert, server, "second incident", label, alertDeliveryIncident)
 	close(release)
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
@@ -141,6 +141,100 @@ func TestAlertNewIncidentNotMutedByEarlierInflightIncident(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("new incident delivery did not finish")
+	}
+}
+
+func TestAlertRecoveryDeliveryStopsAfterSuccessInAlwaysMode(t *testing.T) {
+	oldCache, oldNotifications := Cache, NotificationShared
+	Cache = cache.New(time.Minute, time.Minute)
+	n := &model.Notification{Common: model.Common{ID: 611}, Name: "hook"}
+	nc := newNotificationClassWithItems(n)
+	nc.UpdateGroup(&model.NotificationGroup{Common: model.Common{ID: 613}, Name: "recovery-test"}, []uint64{n.ID})
+	NotificationShared = nc
+	t.Cleanup(func() {
+		cancelAlertDeliveries(612)
+		NotificationShared, Cache = oldNotifications, oldCache
+	})
+
+	delivered := make(chan struct{}, 2)
+	nc.sendForTest = func(*model.Notification, string, *model.Server) error {
+		delivered <- struct{}{}
+		return nil
+	}
+	alert := &model.AlertRule{
+		Common:              model.Common{ID: 612},
+		NotificationGroupID: 613,
+		TriggerMode:         model.ModeAlwaysTrigger,
+	}
+	server := &model.Server{Common: model.Common{ID: 614}}
+	startAlertDelivery(alert, server, "recovered", "recovery-event", alertDeliveryRecovery)
+
+	select {
+	case <-delivered:
+	case <-time.After(time.Second):
+		t.Fatal("recovery notification was not delivered")
+	}
+	alertDeliveryMu.Lock()
+	done := alertDeliveries[alert.ID][server.ID].done
+	alertDeliveryMu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("successful recovery delivery kept repeating in always mode")
+	}
+	select {
+	case <-delivered:
+		t.Fatal("recovery notification was delivered more than once")
+	default:
+	}
+}
+
+func TestServerDeleteCancelsAlertDelivery(t *testing.T) {
+	alertDeliveryMu.Lock()
+	oldDeliveries := alertDeliveries
+	cancel := make(chan struct{})
+	alertDeliveries = map[uint64]map[uint64]*alertDeliveryEntry{
+		621: {622: {cancel: cancel, done: make(chan struct{})}},
+	}
+	alertDeliveryMu.Unlock()
+	t.Cleanup(func() {
+		alertDeliveryMu.Lock()
+		alertDeliveries = oldDeliveries
+		alertDeliveryMu.Unlock()
+	})
+
+	servers := &ServerClass{
+		class: class[uint64, *model.Server]{
+			list: map[uint64]*model.Server{
+				622: {Common: model.Common{ID: 622}, UUID: "delete-alert-worker"},
+			},
+		},
+		uuidToID: map[string]uint64{"delete-alert-worker": 622},
+	}
+	servers.Delete([]uint64{622})
+
+	select {
+	case <-cancel:
+	default:
+		t.Fatal("server deletion did not cancel its alert delivery")
+	}
+	alertDeliveryMu.Lock()
+	_, retained := alertDeliveries[621]
+	alertDeliveryMu.Unlock()
+	if retained {
+		t.Fatal("server deletion retained an empty alert delivery map")
+	}
+}
+
+func TestAlwaysAlertContinuesFailureTriggerTasks(t *testing.T) {
+	if !shouldRunAlertFailTasks(model.ModeAlwaysTrigger, false) {
+		t.Fatal("always mode stopped failure trigger tasks after the initial incident")
+	}
+	if shouldRunAlertFailTasks(model.ModeOnetimeTrigger, false) {
+		t.Fatal("one-time mode repeated failure trigger tasks")
+	}
+	if !shouldRunAlertFailTasks(model.ModeOnetimeTrigger, true) {
+		t.Fatal("one-time mode skipped failure trigger tasks for a new incident")
 	}
 }
 

@@ -90,7 +90,11 @@ func (c *NotificationClass) runServiceDelivery(serviceID uint64, state *orderedS
 		}
 		delivered := c.SendNotification(state.current.groupID, state.current.desc, state.current.label)
 		c.deliveryMu.Lock()
-		if next := state.pending; next != nil {
+		// Do not advance to a later phase until every recipient has received the
+		// current one. Otherwise a failed incident can be discarded as soon as a
+		// recovery is queued, leaving that recipient with a recovery but no incident.
+		if delivered && state.pending != nil {
+			next := state.pending
 			state.current = *next
 			state.pending = nil
 			delay = 30 * time.Second
