@@ -24,13 +24,13 @@ func (alertTestStateStream) SendMsg(any) error            { return nil }
 func (alertTestStateStream) RecvMsg(any) error            { return nil }
 
 func TestAlertSentinelCountsOnlyFreshDistinctMetricReports(t *testing.T) {
-	oldStore, oldPrev, oldLast, oldCycle := alertsStore, alertsPrevState, alertsLastMetricAt, AlertsCycleTransferStatsStore
+	oldStore, oldPrev, oldLast, oldCycle := alertsStore, alertsPrevState, alertsLastMetricSeq, AlertsCycleTransferStatsStore
 	alertsStore = map[uint64]map[uint64][]model.TimedAlertPoint{7: {1: nil}}
 	alertsPrevState = map[uint64]map[uint64]uint8{7: {}}
-	alertsLastMetricAt = map[uint64]map[uint64]time.Time{7: {}}
+	alertsLastMetricSeq = map[uint64]map[uint64]uint64{7: {}}
 	AlertsCycleTransferStatsStore = map[uint64]*model.CycleTransferStats{}
 	t.Cleanup(func() {
-		alertsStore, alertsPrevState, alertsLastMetricAt, AlertsCycleTransferStatsStore = oldStore, oldPrev, oldLast, oldCycle
+		alertsStore, alertsPrevState, alertsLastMetricSeq, AlertsCycleTransferStatsStore = oldStore, oldPrev, oldLast, oldCycle
 	})
 
 	alert := &model.AlertRule{
@@ -40,7 +40,8 @@ func TestAlertSentinelCountsOnlyFreshDistinctMetricReports(t *testing.T) {
 	server := &model.Server{Common: model.Common{ID: 1}}
 	model.InitServer(server)
 	lease := server.AttachStateStream(alertTestStateStream{})
-	if !lease.UpdateState(&model.HostState{CPU: 99}, time.Now()) {
+	fixedReportTime := time.Now()
+	if !lease.UpdateState(&model.HostState{CPU: 99}, fixedReportTime) {
 		t.Fatal("state update rejected")
 	}
 	checkStatusForServer(alert, server)
@@ -62,7 +63,8 @@ func TestAlertSentinelCountsOnlyFreshDistinctMetricReports(t *testing.T) {
 	}
 	alertsPrevState[7][1] = _RuleCheckFail // incident was active before disconnect
 	newLease := server.AttachStateStream(alertTestStateStream{})
-	if !newLease.UpdateState(&model.HostState{CPU: 99}, time.Now()) {
+	// Distinct reports may share a clock timestamp on coarse-resolution hosts.
+	if !newLease.UpdateState(&model.HostState{CPU: 99}, fixedReportTime) {
 		t.Fatal("reconnect state update rejected")
 	}
 	checkStatusForServer(alert, server)
@@ -71,6 +73,16 @@ func TestAlertSentinelCountsOnlyFreshDistinctMetricReports(t *testing.T) {
 	}
 	if alertsPrevState[7][1] != _RuleCheckFail {
 		t.Fatal("incomplete warm-up falsely resolved active incident")
+	}
+	replacement := &model.Server{Common: model.Common{ID: 1}}
+	model.InitServer(replacement)
+	replacementLease := replacement.AttachStateStream(alertTestStateStream{})
+	if !replacementLease.UpdateState(&model.HostState{CPU: 99}, fixedReportTime) {
+		t.Fatal("replacement server state update rejected")
+	}
+	checkStatusForServer(alert, replacement)
+	if got := len(alertsStore[7][1]); got != 2 {
+		t.Fatalf("replacement holder reused a report identity; samples=%d", got)
 	}
 }
 

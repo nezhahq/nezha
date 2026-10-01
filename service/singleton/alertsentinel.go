@@ -29,7 +29,7 @@ var (
 	Alerts                        []*model.AlertRule
 	alertsStore                   map[uint64]map[uint64][]model.TimedAlertPoint // distinct reports per alert/server
 	alertsPrevState               map[uint64]map[uint64]uint8                   // [alert_id][server_id] -> 对应报警规则的上一次报警状态
-	alertsLastMetricAt            map[uint64]map[uint64]time.Time               // last distinct Agent metric report per alert/server
+	alertsLastMetricSeq           map[uint64]map[uint64]uint64                  // last distinct Agent metric report per alert/server
 	AlertsCycleTransferStatsStore map[uint64]*model.CycleTransferStats          // [alert_id] -> 对应报警规则的周期流量统计
 	alertDeliveryMu               sync.Mutex
 	alertDeliveries               map[uint64]map[uint64]*alertDeliveryEntry
@@ -154,7 +154,7 @@ func AlertSentinelStart() {
 	alertDeliveryMu.Unlock()
 	alertsStore = make(map[uint64]map[uint64][]model.TimedAlertPoint)
 	alertsPrevState = make(map[uint64]map[uint64]uint8)
-	alertsLastMetricAt = make(map[uint64]map[uint64]time.Time)
+	alertsLastMetricSeq = make(map[uint64]map[uint64]uint64)
 	AlertsCycleTransferStatsStore = make(map[uint64]*model.CycleTransferStats)
 	AlertsLock.Lock()
 	if err := DB.Find(&Alerts).Error; err != nil {
@@ -167,7 +167,7 @@ func AlertSentinelStart() {
 		}
 		alertsStore[alert.ID] = make(map[uint64][]model.TimedAlertPoint)
 		alertsPrevState[alert.ID] = make(map[uint64]uint8)
-		alertsLastMetricAt[alert.ID] = make(map[uint64]time.Time)
+		alertsLastMetricSeq[alert.ID] = make(map[uint64]uint64)
 		if !alert.IsSafeToEvaluate() {
 			log.Printf("NEZHA>> Skipping invalid alert rule %d loaded from database", alert.ID)
 			continue
@@ -199,7 +199,7 @@ func OnRefreshOrAddAlert(alert *model.AlertRule) {
 	cancelAlertDeliveries(alert.ID)
 	delete(alertsStore, alert.ID)
 	delete(alertsPrevState, alert.ID)
-	delete(alertsLastMetricAt, alert.ID)
+	delete(alertsLastMetricSeq, alert.ID)
 	var isEdit bool
 	for i := range Alerts {
 		if Alerts[i].ID == alert.ID {
@@ -212,7 +212,7 @@ func OnRefreshOrAddAlert(alert *model.AlertRule) {
 	}
 	alertsStore[alert.ID] = make(map[uint64][]model.TimedAlertPoint)
 	alertsPrevState[alert.ID] = make(map[uint64]uint8)
-	alertsLastMetricAt[alert.ID] = make(map[uint64]time.Time)
+	alertsLastMetricSeq[alert.ID] = make(map[uint64]uint64)
 	delete(AlertsCycleTransferStatsStore, alert.ID)
 	addCycleTransferStatsInfo(alert)
 }
@@ -224,7 +224,7 @@ func OnDeleteAlert(id []uint64) {
 		cancelAlertDeliveries(i)
 		delete(alertsStore, i)
 		delete(alertsPrevState, i)
-		delete(alertsLastMetricAt, i)
+		delete(alertsLastMetricSeq, i)
 		currentAlerts := Alerts[:0]
 		for _, alert := range Alerts {
 			if alert.ID != i {
@@ -292,10 +292,10 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 			alertsStore[alert.ID][server.ID] = nil
 			return
 		}
-		if !runtime.LastActive.After(alertsLastMetricAt[alert.ID][server.ID]) {
+		if runtime.ReportSequence == 0 || runtime.ReportSequence == alertsLastMetricSeq[alert.ID][server.ID] {
 			return
 		}
-		alertsLastMetricAt[alert.ID][server.ID] = runtime.LastActive
+		alertsLastMetricSeq[alert.ID][server.ID] = runtime.ReportSequence
 	}
 	point, known := alert.SnapshotStatusWithRuntime(AlertsCycleTransferStatsStore[alert.ID], server, runtime, DB)
 	if !known {
@@ -304,7 +304,7 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 	}
 	sampledAt := time.Now()
 	if metricRule {
-		sampledAt = alertsLastMetricAt[alert.ID][server.ID]
+		sampledAt = runtime.LastActive
 	}
 	alertsStore[alert.ID][server.ID] = append(alertsStore[alert.ID][server.ID], model.TimedAlertPoint{At: sampledAt, Values: point})
 	// Bound memory even while coverage is insufficient to decide a state.

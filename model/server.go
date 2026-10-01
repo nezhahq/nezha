@@ -16,6 +16,7 @@ import (
 )
 
 var runtimeHolderInitMu sync.Mutex
+var nextServerReportSequence atomic.Uint64
 
 type Server struct {
 	Common
@@ -73,15 +74,16 @@ type taskStreamHolder struct {
 }
 
 type serverRuntimeHolder struct {
-	mu         sync.Mutex
-	canonical  *Server
-	stream     pb.NezhaService_ReportSystemStateServer
-	generation uint64
-	state      *HostState
-	host       *Host
-	lastActive time.Time
-	prevIn     uint64
-	prevOut    uint64
+	mu             sync.Mutex
+	canonical      *Server
+	stream         pb.NezhaService_ReportSystemStateServer
+	generation     uint64
+	state          *HostState
+	host           *Host
+	lastActive     time.Time
+	reportSequence uint64
+	prevIn         uint64
+	prevOut        uint64
 }
 
 type StateStreamLease struct {
@@ -204,6 +206,7 @@ func (lease StateStreamLease) updateState(receiver *Server, state *HostState, la
 			return false
 		}
 	}
+	lease.holder.reportSequence = nextServerReportSequence.Add(1)
 	return true
 }
 
@@ -334,6 +337,7 @@ type RuntimeSnapshot struct {
 	State                   *HostState
 	Host                    *Host
 	LastActive              time.Time
+	ReportSequence          uint64
 	PrevTransferInSnapshot  uint64
 	PrevTransferOutSnapshot uint64
 }
@@ -360,7 +364,7 @@ func (s *Server) RuntimeSnapshot() RuntimeSnapshot {
 			holder.host = cloneHost(s.Host)
 		}
 	}
-	return RuntimeSnapshot{State: cloneHostState(holder.state), Host: cloneHost(holder.host), LastActive: holder.lastActive, PrevTransferInSnapshot: holder.prevIn, PrevTransferOutSnapshot: holder.prevOut}
+	return RuntimeSnapshot{State: cloneHostState(holder.state), Host: cloneHost(holder.host), LastActive: holder.lastActive, ReportSequence: holder.reportSequence, PrevTransferInSnapshot: holder.prevIn, PrevTransferOutSnapshot: holder.prevOut}
 }
 
 func (s *Server) SetTransferSnapshots(inbound, outbound uint64) bool {
