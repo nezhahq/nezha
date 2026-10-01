@@ -167,7 +167,7 @@ func CleanMonitorHistory() {
 	for _, alert := range alerts {
 		for _, rule := range alert.Rules {
 			// 是不是流量记录规则
-			if !rule.IsTransferDurationRule() {
+			if !rule.HasSafeCycleConfiguration() {
 				continue
 			}
 			dataCouldRemoveBefore := rule.GetTransferDurationStart().UTC()

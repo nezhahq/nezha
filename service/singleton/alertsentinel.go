@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jinzhu/copier"
@@ -26,10 +27,94 @@ type NotificationHistory struct {
 var (
 	AlertsLock                    sync.RWMutex
 	Alerts                        []*model.AlertRule
-	alertsStore                   map[uint64]map[uint64][][]bool       // [alert_id][server_id] -> [timeTick][ruleId] 时间点对应的rule的检查结果
-	alertsPrevState               map[uint64]map[uint64]uint8          // [alert_id][server_id] -> 对应报警规则的上一次报警状态
-	AlertsCycleTransferStatsStore map[uint64]*model.CycleTransferStats // [alert_id] -> 对应报警规则的周期流量统计
+	alertsStore                   map[uint64]map[uint64][]model.TimedAlertPoint // distinct reports per alert/server
+	alertsPrevState               map[uint64]map[uint64]uint8                   // [alert_id][server_id] -> 对应报警规则的上一次报警状态
+	alertsLastMetricAt            map[uint64]map[uint64]time.Time               // last distinct Agent metric report per alert/server
+	AlertsCycleTransferStatsStore map[uint64]*model.CycleTransferStats          // [alert_id] -> 对应报警规则的周期流量统计
+	alertDeliveryMu               sync.Mutex
+	alertDeliveries               map[uint64]map[uint64]*alertDeliveryEntry
+	alertEventSequence            atomic.Uint64
 )
+
+type alertDeliveryEntry struct {
+	cancel chan struct{}
+	done   chan struct{}
+	sendMu *sync.Mutex
+}
+
+func cancelAlertDeliveries(alertID uint64) {
+	alertDeliveryMu.Lock()
+	defer alertDeliveryMu.Unlock()
+	for _, entry := range alertDeliveries[alertID] {
+		close(entry.cancel)
+	}
+	delete(alertDeliveries, alertID)
+}
+
+func runAlertDelivery(cancel <-chan struct{}, send func() bool, always bool, retryDelay time.Duration) {
+	for {
+		select {
+		case <-cancel:
+			return
+		default:
+		}
+		delivered := send()
+		if delivered && !always {
+			return
+		}
+		delay := retryDelay
+		if delivered {
+			delay = firstNotificationDelay
+		}
+		timer := time.NewTimer(delay)
+		select {
+		case <-cancel:
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, muteLabel string) {
+	// A mute entry belongs to one transition, not all later incidents of the
+	// same phase. Concurrent in-flight sends may finish after a recovery.
+	muteLabel = fmt.Sprintf("%s:event-%d", muteLabel, alertEventSequence.Add(1))
+	alertDeliveryMu.Lock()
+	if alertDeliveries == nil {
+		alertDeliveries = make(map[uint64]map[uint64]*alertDeliveryEntry)
+	}
+	if alertDeliveries[alert.ID] == nil {
+		alertDeliveries[alert.ID] = make(map[uint64]*alertDeliveryEntry)
+	}
+	sendMu := new(sync.Mutex)
+	if old := alertDeliveries[alert.ID][server.ID]; old != nil {
+		close(old.cancel)
+		sendMu = old.sendMu
+	}
+	entry := &alertDeliveryEntry{cancel: make(chan struct{}), done: make(chan struct{}), sendMu: sendMu}
+	alertDeliveries[alert.ID][server.ID] = entry
+	alertDeliveryMu.Unlock()
+
+	groupID := alert.NotificationGroupID
+	always := alert.TriggerMode == model.ModeAlwaysTrigger
+	go func() {
+		defer close(entry.done)
+		runAlertDelivery(entry.cancel, func() bool {
+			// Serialize incident/recovery delivery for this alert/server pair.
+			// A recovery can cancel a pending incident, but never overtake an
+			// already-running network request.
+			entry.sendMu.Lock()
+			defer entry.sendMu.Unlock()
+			select {
+			case <-entry.cancel:
+				return true
+			default:
+			}
+			return NotificationShared.SendNotification(groupID, message, muteLabel, server)
+		}, always, 30*time.Second)
+	}()
+}
 
 // addCycleTransferStatsInfo 向AlertsCycleTransferStatsStore中添加周期流量报警统计信息
 func addCycleTransferStatsInfo(alert *model.AlertRule) {
@@ -59,8 +144,17 @@ func addCycleTransferStatsInfo(alert *model.AlertRule) {
 
 // AlertSentinelStart 报警器启动
 func AlertSentinelStart() {
-	alertsStore = make(map[uint64]map[uint64][][]bool)
+	alertDeliveryMu.Lock()
+	for _, byServer := range alertDeliveries {
+		for _, entry := range byServer {
+			close(entry.cancel)
+		}
+	}
+	alertDeliveries = make(map[uint64]map[uint64]*alertDeliveryEntry)
+	alertDeliveryMu.Unlock()
+	alertsStore = make(map[uint64]map[uint64][]model.TimedAlertPoint)
 	alertsPrevState = make(map[uint64]map[uint64]uint8)
+	alertsLastMetricAt = make(map[uint64]map[uint64]time.Time)
 	AlertsCycleTransferStatsStore = make(map[uint64]*model.CycleTransferStats)
 	AlertsLock.Lock()
 	if err := DB.Find(&Alerts).Error; err != nil {
@@ -71,8 +165,9 @@ func AlertSentinelStart() {
 			log.Printf("NEZHA>> Skipping invalid nil alert rule loaded from database")
 			continue
 		}
-		alertsStore[alert.ID] = make(map[uint64][][]bool)
+		alertsStore[alert.ID] = make(map[uint64][]model.TimedAlertPoint)
 		alertsPrevState[alert.ID] = make(map[uint64]uint8)
+		alertsLastMetricAt[alert.ID] = make(map[uint64]time.Time)
 		if !alert.IsSafeToEvaluate() {
 			log.Printf("NEZHA>> Skipping invalid alert rule %d loaded from database", alert.ID)
 			continue
@@ -101,8 +196,10 @@ func AlertSentinelStart() {
 func OnRefreshOrAddAlert(alert *model.AlertRule) {
 	AlertsLock.Lock()
 	defer AlertsLock.Unlock()
+	cancelAlertDeliveries(alert.ID)
 	delete(alertsStore, alert.ID)
 	delete(alertsPrevState, alert.ID)
+	delete(alertsLastMetricAt, alert.ID)
 	var isEdit bool
 	for i := range Alerts {
 		if Alerts[i].ID == alert.ID {
@@ -113,8 +210,9 @@ func OnRefreshOrAddAlert(alert *model.AlertRule) {
 	if !isEdit {
 		Alerts = append(Alerts, alert)
 	}
-	alertsStore[alert.ID] = make(map[uint64][][]bool)
+	alertsStore[alert.ID] = make(map[uint64][]model.TimedAlertPoint)
 	alertsPrevState[alert.ID] = make(map[uint64]uint8)
+	alertsLastMetricAt[alert.ID] = make(map[uint64]time.Time)
 	delete(AlertsCycleTransferStatsStore, alert.ID)
 	addCycleTransferStatsInfo(alert)
 }
@@ -123,8 +221,10 @@ func OnDeleteAlert(id []uint64) {
 	AlertsLock.Lock()
 	defer AlertsLock.Unlock()
 	for _, i := range id {
+		cancelAlertDeliveries(i)
 		delete(alertsStore, i)
 		delete(alertsPrevState, i)
+		delete(alertsLastMetricAt, i)
 		currentAlerts := Alerts[:0]
 		for _, alert := range Alerts {
 			if alert.ID != i {
@@ -176,25 +276,64 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 		}
 	}()
 
-	alertsStore[alert.ID][server.ID] = append(alertsStore[alert.
-		ID][server.ID], alert.Snapshot(AlertsCycleTransferStatsStore[alert.ID], server, DB))
+	// Offline-only rules deliberately observe elapsed time on every tick. Metric
+	// rules, including compound rules, must never count the same Agent report
+	// repeatedly or treat a disconnected Agent's retained State as fresh data.
+	metricRule := false
+	runtime := server.RuntimeSnapshot()
+	for _, rule := range alert.Rules {
+		if !rule.IsOfflineRule() {
+			metricRule = true
+			break
+		}
+	}
+	if metricRule {
+		if runtime.LastActive.IsZero() || runtime.State == nil || time.Since(runtime.LastActive) > model.AlertSampleMaxAge || time.Since(runtime.LastActive) < 0 {
+			alertsStore[alert.ID][server.ID] = nil
+			return
+		}
+		if !runtime.LastActive.After(alertsLastMetricAt[alert.ID][server.ID]) {
+			return
+		}
+		alertsLastMetricAt[alert.ID][server.ID] = runtime.LastActive
+	}
+	point, known := alert.SnapshotStatusWithRuntime(AlertsCycleTransferStatsStore[alert.ID], server, runtime, DB)
+	if !known {
+		alertsStore[alert.ID][server.ID] = nil
+		return
+	}
+	sampledAt := time.Now()
+	if metricRule {
+		sampledAt = alertsLastMetricAt[alert.ID][server.ID]
+	}
+	alertsStore[alert.ID][server.ID] = append(alertsStore[alert.ID][server.ID], model.TimedAlertPoint{At: sampledAt, Values: point})
+	// Bound memory even while coverage is insufficient to decide a state.
+	cutoff := time.Now().Add(-alert.TimedRetention())
+	samples := alertsStore[alert.ID][server.ID]
+	first := 0
+	for first < len(samples) && samples[first].At.Before(cutoff) {
+		first++
+	}
+	if first > 0 {
+		alertsStore[alert.ID][server.ID] = append([]model.TimedAlertPoint(nil), samples[first:]...)
+	}
 	// 发送通知，分为触发报警和恢复通知
-	_, passed := alert.Check(alertsStore[alert.ID][server.ID])
+	known, passed := alert.CheckTimed(alertsStore[alert.ID][server.ID], time.Now())
+	if !known {
+		return
+	}
 	// 保存当前服务器状态信息
 	curServer := model.Server{}
 	copier.Copy(&curServer, server)
 
 	// 本次未通过检查
 	if !passed {
-		// 始终触发模式或上次检查不为失败时触发报警（跳过单次触发+上次失败的情况）
-		if alert.TriggerMode == model.ModeAlwaysTrigger || alertsPrevState[alert.ID][server.ID] != _RuleCheckFail {
+		if alertsPrevState[alert.ID][server.ID] != _RuleCheckFail {
 			alertsPrevState[alert.ID][server.ID] = _RuleCheckFail
 			message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Incident"),
 				server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
 			go CronShared.SendTriggerTasks(alert.FailTriggerTasks, curServer.ID, alert.UserID)
-			go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID), &curServer)
-			// 清除恢复通知的静音缓存
-			NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
+			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
 		}
 	} else {
 		// 本次通过检查但上一次的状态为失败，则发送恢复通知
@@ -202,20 +341,8 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 			message := fmt.Sprintf("[%s] %s(%s) %s", Localizer.T("Resolved"),
 				server.Name, IPDesensitize(server.GeoIP.IP.Join()), alert.Name)
 			go CronShared.SendTriggerTasks(alert.RecoverTriggerTasks, curServer.ID, alert.UserID)
-			go NotificationShared.SendNotification(alert.NotificationGroupID, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID), &curServer)
-			// 清除失败通知的静音缓存
-			NotificationShared.UnMuteNotification(alert.NotificationGroupID, NotificationMuteLabel.ServerIncident(server.ID, alert.ID))
+			startAlertDelivery(alert, &curServer, message, NotificationMuteLabel.ServerIncidentResolved(server.ID, alert.ID))
 		}
 		alertsPrevState[alert.ID][server.ID] = _RuleCheckPass
-	}
-	// 清理旧数据：保留窗口由规则定义决定（各规则 Duration 的最大值），
-	// 而非 Check 的判定结果。window==0 表示没有任何有效规则需要回看历史
-	// （例如全部 Duration<=0），此时清空采样避免切片无限增长。
-	window := alert.RetentionWindow()
-	samples := alertsStore[alert.ID][server.ID]
-	if window <= 0 {
-		alertsStore[alert.ID][server.ID] = samples[:0]
-	} else if window < len(samples) {
-		alertsStore[alert.ID][server.ID] = samples[len(samples)-window:]
 	}
 }

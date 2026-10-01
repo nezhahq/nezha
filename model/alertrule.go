@@ -2,11 +2,133 @@ package model
 
 import (
 	"slices"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
 	"gorm.io/gorm"
 )
+
+const (
+	AlertSampleInterval = 3 * time.Second
+	AlertSampleMaxAge   = 6 * time.Second
+)
+
+// TimedAlertPoint records one distinct observation. Its timestamp is the
+// dashboard receipt time of the Agent report, or the sentinel tick for an
+// offline-only rule.
+type TimedAlertPoint struct {
+	At     time.Time
+	Values []bool
+}
+
+// CheckTimed evaluates the legacy Duration as Duration * 3 seconds, avoiding
+// both repeated stale samples and cadence-dependent early incidents. Unknown
+// coverage cannot create an incident or a recovery.
+func (r *AlertRule) CheckTimed(points []TimedAlertPoint, now time.Time) (known, passed bool) {
+	if r == nil || len(r.Rules) == 0 {
+		return false, false
+	}
+	allFailed := true
+	for index, rule := range r.Rules {
+		if rule == nil || !rule.IsSupportedType() {
+			return false, false
+		}
+		ruleKnown, rulePassed := rule.checkTimed(points, index, now)
+		if !ruleKnown {
+			return false, false
+		}
+		if rulePassed {
+			allFailed = false
+		}
+	}
+	return true, !allFailed
+}
+
+func (rule *Rule) checkTimed(points []TimedAlertPoint, index int, now time.Time) (known, passed bool) {
+	if len(points) == 0 {
+		return false, false
+	}
+	if rule.IsTransferDurationRule() {
+		last := points[len(points)-1]
+		if index >= len(last.Values) || now.Sub(last.At) > AlertSampleMaxAge {
+			return false, false
+		}
+		return true, last.Values[index]
+	}
+	window := time.Duration(rule.Duration) * AlertSampleInterval
+	if window <= 0 {
+		return false, false
+	}
+	end := now.Add(AlertSampleInterval) // the current observation represents one tick
+	start := end.Add(-window)
+	if points[0].At.After(start) {
+		return false, false // the configured wall-clock window has not elapsed
+	}
+	var covered, failed time.Duration
+	for i, point := range points {
+		if index >= len(point.Values) {
+			return false, false
+		}
+		segmentStart := point.At
+		if start.After(segmentStart) {
+			segmentStart = start
+		}
+		segmentEnd := point.At.Add(AlertSampleMaxAge)
+		if end.Before(segmentEnd) {
+			segmentEnd = end
+		}
+		if i+1 < len(points) {
+			if points[i+1].At.Before(segmentEnd) {
+				segmentEnd = points[i+1].At
+			}
+		} else {
+			if tickEnd := point.At.Add(AlertSampleInterval); tickEnd.Before(segmentEnd) {
+				segmentEnd = tickEnd
+			}
+		}
+		if !segmentEnd.After(segmentStart) {
+			continue
+		}
+		span := segmentEnd.Sub(segmentStart)
+		covered += span
+		if !point.Values[index] {
+			failed += span
+		}
+	}
+	if covered < window-window/10 {
+		return false, false
+	}
+	if rule.IsOfflineRule() {
+		if covered-failed >= AlertSampleInterval {
+			return true, true
+		}
+		if failed >= window-AlertSampleInterval && covered >= window-AlertSampleInterval {
+			return true, false
+		}
+		return false, false
+	}
+	if float64(failed) > float64(window)*0.70 {
+		return true, false
+	}
+	if float64(failed+window-covered) <= float64(window)*0.70 {
+		return true, true
+	}
+	return false, false
+}
+
+func (r *AlertRule) TimedRetention() time.Duration {
+	longest := AlertSampleMaxAge
+	for _, rule := range r.Rules {
+		if rule == nil || rule.IsTransferDurationRule() {
+			continue
+		}
+		if duration, ok := rule.DurationInt(); ok {
+			longest = max(longest, time.Duration(duration)*AlertSampleInterval+AlertSampleMaxAge)
+		}
+	}
+	return longest
+}
 
 const (
 	ModeAlwaysTrigger  = 0
@@ -73,6 +195,9 @@ func (r *AlertRule) IsSafeToEvaluate() bool {
 	}
 	for _, rule := range r.Rules {
 		if rule == nil || !rule.IsSupportedType() {
+			return false
+		}
+		if !rule.HasSafeThresholds() {
 			return false
 		}
 		switch rule.Cover {
@@ -152,18 +277,38 @@ func (r *AlertRule) HasPermission(ctx *gin.Context) bool {
 
 // Snapshot 对传入的Server进行该报警规则下所有type的检查 返回每项检查结果
 func (r *AlertRule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) []bool {
+	point, _ := r.SnapshotStatus(cycleTransferStats, server, db)
+	return point
+}
+
+// SnapshotStatus preserves the distinction between a healthy measurement and
+// telemetry that is unavailable. A compound alert cannot be decided while any
+// of its applicable conditions is unknown.
+func (r *AlertRule) SnapshotStatus(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) ([]bool, bool) {
+	if server == nil {
+		return nil, false
+	}
+	return r.SnapshotStatusWithRuntime(cycleTransferStats, server, server.RuntimeSnapshot(), db)
+}
+
+// SnapshotStatusWithRuntime uses one immutable report for every condition.
+func (r *AlertRule) SnapshotStatusWithRuntime(cycleTransferStats *CycleTransferStats, server *Server, runtime RuntimeSnapshot, db *gorm.DB) ([]bool, bool) {
 	point := make([]bool, len(r.Rules))
+	known := true
 
 	for i, rule := range r.Rules {
 		if rule == nil || !rule.IsSupportedType() {
 			// Invalid persisted rules are ignored instead of being interpreted as
 			// a failed condition or allowed to panic the sentinel.
 			point[i] = true
+			known = false
 			continue
 		}
-		point[i] = rule.Snapshot(cycleTransferStats, server, db)
+		var valid bool
+		point[i], valid = rule.EvaluateRuntime(cycleTransferStats, server, runtime, db)
+		known = known && valid
 	}
-	return point
+	return point, known
 }
 
 // Check 传入包含当前报警规则下所有type检查结果 返回报警持续时间与是否通过报警检查(通过则返回true)

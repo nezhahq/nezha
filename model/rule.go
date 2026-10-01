@@ -1,6 +1,8 @@
 package model
 
 import (
+	"log"
+	"math"
 	"slices"
 	"strings"
 	"time"
@@ -90,36 +92,80 @@ func (u *Rule) DurationInt() (duration int, ok bool) {
 // which is the documented legacy spelling for hours.
 func (u *Rule) HasSafeCycleConfiguration() bool {
 	return u != nil && u.IsTransferDurationRule() && u.CycleStart != nil &&
-		u.CycleInterval > 0 && u.CycleInterval <= MaxAlertRuleCycleInterval
+		!u.CycleStart.After(time.Now()) && u.CycleInterval > 0 && u.CycleInterval <= MaxAlertRuleCycleInterval &&
+		u.HasSafeThresholds() && u.HasSafeCycleUnit()
 }
 
-// Snapshot 未通过规则返回 false, 通过返回 true
-func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
-	if u == nil || server == nil || !u.IsSupportedType() {
+func (u *Rule) HasSafeCycleUnit() bool {
+	if u == nil {
+		return false
+	}
+	switch strings.ToLower(u.CycleUnit) {
+	case "", "hour", "day", "week", "month", "year":
 		return true
+	default:
+		return false
+	}
+}
+
+func (u *Rule) HasSafeThresholds() bool {
+	if u == nil || math.IsNaN(u.Min) || math.IsNaN(u.Max) || math.IsInf(u.Min, 0) || math.IsInf(u.Max, 0) || u.Min < 0 || u.Max < 0 {
+		return false
+	}
+	return u.Min == 0 || u.Max == 0 || u.Min <= u.Max
+}
+
+// Snapshot is retained for callers which only need a boolean result. The alert
+// sentinel uses Evaluate so missing telemetry is not mistaken for a breach.
+func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) bool {
+	passed, _ := u.Evaluate(cycleTransferStats, server, db)
+	return passed
+}
+
+// Evaluate returns known=false when a metric cannot be evaluated from the
+// current report. Unknown must neither trigger nor resolve an incident.
+func (u *Rule) Evaluate(cycleTransferStats *CycleTransferStats, server *Server, db *gorm.DB) (passed, known bool) {
+	if server == nil {
+		return true, false
+	}
+	return u.EvaluateRuntime(cycleTransferStats, server, server.RuntimeSnapshot(), db)
+}
+
+// EvaluateRuntime evaluates all conditions against the same immutable Agent
+// report. Callers evaluating a compound rule must share this snapshot.
+func (u *Rule) EvaluateRuntime(cycleTransferStats *CycleTransferStats, server *Server, runtime RuntimeSnapshot, db *gorm.DB) (passed, known bool) {
+	if u == nil || server == nil || !u.IsSupportedType() {
+		return true, false
 	}
 	if u.IsTransferDurationRule() && (!u.HasSafeCycleConfiguration() || cycleTransferStats == nil) {
-		return true
+		return true, false
 	}
 
 	// 监控全部但是排除了此服务器
 	if u.Cover == RuleCoverAll && u.Ignore[server.ID] {
-		return true
+		return true, true
 	}
 	// 忽略全部但是指定监控了此服务器
 	if u.Cover == RuleCoverIgnoreAll && !u.Ignore[server.ID] {
-		return true
+		return true, true
 	}
 
+	evalNow := time.Now()
+	var cycleStart, cycleEnd time.Time
+	if u.IsTransferDurationRule() {
+		cycleStart, cycleEnd = u.transferDurationBounds(evalNow)
+	}
 	// 循环区间流量检测 · 短期无需重复检测
-	if u.IsTransferDurationRule() && u.NextTransferAt[server.ID].After(time.Now()) {
-		return u.LastCycleStatus[server.ID]
+	if u.IsTransferDurationRule() && u.NextTransferAt[server.ID].After(evalNow) {
+		return u.LastCycleStatus[server.ID], true
 	}
 
 	var src float64
-	runtime := server.RuntimeSnapshot()
+	if u.IsOfflineRule() {
+		return !runtime.LastActive.IsZero() && time.Since(runtime.LastActive) <= 6*time.Second, true
+	}
 	if runtime.State == nil {
-		return false
+		return true, false
 	}
 	state := runtime.State
 
@@ -128,22 +174,31 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		src = float64(state.CPU)
 	case "gpu", "gpu_max":
 		if len(state.GPU) == 0 {
-			return true
+			return true, false
 		}
 		src = slices.Max(state.GPU)
 	case "memory":
 		if runtime.Host == nil {
-			return false
+			return true, false
+		}
+		if runtime.Host.MemTotal == 0 {
+			return true, false
 		}
 		src = percentage(state.MemUsed, runtime.Host.MemTotal)
 	case "swap":
 		if runtime.Host == nil {
-			return false
+			return true, false
+		}
+		if runtime.Host.SwapTotal == 0 {
+			return true, false
 		}
 		src = percentage(state.SwapUsed, runtime.Host.SwapTotal)
 	case "disk":
 		if runtime.Host == nil {
-			return false
+			return true, false
+		}
+		if runtime.Host.DiskTotal == 0 {
+			return true, false
 		}
 		src = percentage(state.DiskUsed, runtime.Host.DiskTotal)
 	case "net_in_speed":
@@ -151,38 +206,50 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 	case "net_out_speed":
 		src = float64(state.NetOutSpeed)
 	case "net_all_speed":
-		src = float64(state.NetOutSpeed + state.NetOutSpeed)
+		src = float64(state.NetInSpeed) + float64(state.NetOutSpeed)
 	case "transfer_in":
 		src = float64(state.NetInTransfer)
 	case "transfer_out":
 		src = float64(state.NetOutTransfer)
 	case "transfer_all":
 		src = float64(state.NetOutTransfer + state.NetInTransfer)
-	case "offline":
-		if runtime.LastActive.IsZero() {
-			src = 0
-		} else {
-			src = float64(runtime.LastActive.Unix())
-		}
 	case "transfer_in_cycle":
+		if db == nil {
+			return true, false
+		}
 		src = float64(utils.SubUintChecked(state.NetInTransfer, runtime.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
+			if err := db.Model(&Transfer{}).Select("SUM(`in`) AS n").Where("datetime(`created_at`) >= datetime(?) AND datetime(`created_at`) < datetime(?) AND datetime(`created_at`) <= datetime(?) AND server_id = ?", cycleStart.UTC(), cycleEnd.UTC(), evalNow.UTC(), server.ID).Scan(&res).Error; err != nil {
+				log.Printf("NEZHA>> Alert cycle transfer query failed for rule %s server %d: %v", u.Type, server.ID, err)
+				return true, false
+			}
 			src += float64(res.N)
 		}
 	case "transfer_out_cycle":
+		if db == nil {
+			return true, false
+		}
 		src = float64(utils.SubUintChecked(state.NetOutTransfer, runtime.PrevTransferOutSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
+			if err := db.Model(&Transfer{}).Select("SUM(`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND datetime(`created_at`) < datetime(?) AND datetime(`created_at`) <= datetime(?) AND server_id = ?", cycleStart.UTC(), cycleEnd.UTC(), evalNow.UTC(), server.ID).Scan(&res).Error; err != nil {
+				log.Printf("NEZHA>> Alert cycle transfer query failed for rule %s server %d: %v", u.Type, server.ID, err)
+				return true, false
+			}
 			src += float64(res.N)
 		}
 	case "transfer_all_cycle":
+		if db == nil {
+			return true, false
+		}
 		src = float64(utils.SubUintChecked(state.NetOutTransfer, runtime.PrevTransferOutSnapshot) + utils.SubUintChecked(state.NetInTransfer, runtime.PrevTransferInSnapshot))
 		if u.CycleInterval != 0 {
 			var res NResult
-			db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND server_id = ?", u.GetTransferDurationStart().UTC(), server.ID).Scan(&res)
+			if err := db.Model(&Transfer{}).Select("SUM(`in`+`out`) AS n").Where("datetime(`created_at`) >= datetime(?) AND datetime(`created_at`) < datetime(?) AND datetime(`created_at`) <= datetime(?) AND server_id = ?", cycleStart.UTC(), cycleEnd.UTC(), evalNow.UTC(), server.ID).Scan(&res).Error; err != nil {
+				log.Printf("NEZHA>> Alert cycle transfer query failed for rule %s server %d: %v", u.Type, server.ID, err)
+				return true, false
+			}
 			src += float64(res.N)
 		}
 	case "load1":
@@ -205,23 +272,32 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 			}
 		}
 		if len(temp) == 0 {
-			return true
+			return true, false
 		}
 		src = slices.Max(temp)
 	default:
-		return true
+		return true, false
 	}
 
 	// 循环区间流量检测 · 更新下次需要检测时间
 	if u.IsTransferDurationRule() {
-		seconds := max(1800*((u.Max-src)/u.Max), 180)
+		seconds := float64(180)
+		if u.Max > 0 {
+			seconds = max(1800*((u.Max-src)/u.Max), 180)
+		} else if u.Min > 0 {
+			seconds = 1800
+		}
 		if u.NextTransferAt == nil {
 			u.NextTransferAt = make(map[uint64]time.Time)
 		}
 		if u.LastCycleStatus == nil {
 			u.LastCycleStatus = make(map[uint64]bool)
 		}
-		u.NextTransferAt[server.ID] = time.Now().Add(time.Second * time.Duration(seconds))
+		nextAt := evalNow.Add(time.Second * time.Duration(seconds))
+		if nextAt.After(cycleEnd) {
+			nextAt = cycleEnd
+		}
+		u.NextTransferAt[server.ID] = nextAt
 		if (u.Max > 0 && src > u.Max) || (u.Min > 0 && src < u.Min) {
 			u.LastCycleStatus[server.ID] = false
 		} else {
@@ -233,17 +309,15 @@ func (u *Rule) Snapshot(cycleTransferStats *CycleTransferStats, server *Server, 
 		cycleTransferStats.Transfer[server.ID] = uint64(src)
 		cycleTransferStats.NextUpdate[server.ID] = u.NextTransferAt[server.ID]
 		// 自动更新周期流量展示起止时间
-		cycleTransferStats.From = u.GetTransferDurationStart()
-		cycleTransferStats.To = u.GetTransferDurationEnd()
+		cycleTransferStats.From = cycleStart
+		cycleTransferStats.To = cycleEnd
 	}
 
-	if u.Type == "offline" && float64(time.Now().Unix())-src > 6 {
-		return false
-	} else if (u.Max > 0 && src > u.Max) || (u.Min > 0 && src < u.Min) {
-		return false
+	if (u.Max > 0 && src > u.Max) || (u.Min > 0 && src < u.Min) {
+		return false, true
 	}
 
-	return true
+	return true, true
 }
 
 // IsTransferDurationRule 判断该规则是否属于周期流量规则 属于则返回true
@@ -263,83 +337,49 @@ func (u *Rule) IsOfflineRule() bool {
 	return u != nil && u.Type == "offline"
 }
 
-// GetTransferDurationStart 获取周期流量的起始时间
-func (u *Rule) GetTransferDurationStart() time.Time {
-	// Accept uppercase and lowercase
-	unit := strings.ToLower(u.CycleUnit)
-	startTime := *u.CycleStart
-	var nextTime time.Time
-	switch unit {
+// transferDurationBounds computes both edges from the same clock reading.
+// Separate time.Now calls can otherwise straddle a cycle boundary.
+func (u *Rule) transferDurationBounds(now time.Time) (time.Time, time.Time) {
+	if !u.HasSafeCycleConfiguration() {
+		return time.Time{}, time.Time{}
+	}
+	start := *u.CycleStart
+	var end time.Time
+	switch strings.ToLower(u.CycleUnit) {
 	case "year":
-		nextTime = startTime.AddDate(int(u.CycleInterval), 0, 0)
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(int(u.CycleInterval), 0, 0)
+		end = start.AddDate(int(u.CycleInterval), 0, 0)
+		for !now.Before(end) {
+			start, end = end, end.AddDate(int(u.CycleInterval), 0, 0)
 		}
 	case "month":
-		nextTime = startTime.AddDate(0, int(u.CycleInterval), 0)
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, int(u.CycleInterval), 0)
+		end = start.AddDate(0, int(u.CycleInterval), 0)
+		for !now.Before(end) {
+			start, end = end, end.AddDate(0, int(u.CycleInterval), 0)
 		}
 	case "week":
-		nextTime = startTime.AddDate(0, 0, 7*int(u.CycleInterval))
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, 7*int(u.CycleInterval))
+		end = start.AddDate(0, 0, 7*int(u.CycleInterval))
+		for !now.Before(end) {
+			start, end = end, end.AddDate(0, 0, 7*int(u.CycleInterval))
 		}
 	case "day":
-		nextTime = startTime.AddDate(0, 0, int(u.CycleInterval))
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, int(u.CycleInterval))
+		end = start.AddDate(0, 0, int(u.CycleInterval))
+		for !now.Before(end) {
+			start, end = end, end.AddDate(0, 0, int(u.CycleInterval))
 		}
-	default:
-		// For hour unit or not set.
+	default: // empty is the legacy spelling for hour
 		interval := 3600 * int64(u.CycleInterval)
-		startTime = time.Unix(u.CycleStart.Unix()+(time.Now().Unix()-u.CycleStart.Unix())/interval*interval, 0)
+		start = time.Unix(u.CycleStart.Unix()+(now.Unix()-u.CycleStart.Unix())/interval*interval, 0)
+		end = time.Unix(start.Unix()+interval, 0)
 	}
-
-	return startTime
+	return start, end
 }
 
-// GetTransferDurationEnd 获取周期流量结束时间
-func (u *Rule) GetTransferDurationEnd() time.Time {
-	// Accept uppercase and lowercase
-	unit := strings.ToLower(u.CycleUnit)
-	startTime := *u.CycleStart
-	var nextTime time.Time
-	switch unit {
-	case "year":
-		nextTime = startTime.AddDate(int(u.CycleInterval), 0, 0)
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(int(u.CycleInterval), 0, 0)
-		}
-	case "month":
-		nextTime = startTime.AddDate(0, int(u.CycleInterval), 0)
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, int(u.CycleInterval), 0)
-		}
-	case "week":
-		nextTime = startTime.AddDate(0, 0, 7*int(u.CycleInterval))
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, 7*int(u.CycleInterval))
-		}
-	case "day":
-		nextTime = startTime.AddDate(0, 0, int(u.CycleInterval))
-		for time.Now().After(nextTime) {
-			startTime = nextTime
-			nextTime = nextTime.AddDate(0, 0, int(u.CycleInterval))
-		}
-	default:
-		// For hour unit or not set.
-		interval := 3600 * int64(u.CycleInterval)
-		startTime = time.Unix(u.CycleStart.Unix()+(time.Now().Unix()-u.CycleStart.Unix())/interval*interval, 0)
-		nextTime = time.Unix(startTime.Unix()+interval, 0)
-	}
+func (u *Rule) GetTransferDurationStart() time.Time {
+	start, _ := u.transferDurationBounds(time.Now())
+	return start
+}
 
-	return nextTime
+func (u *Rule) GetTransferDurationEnd() time.Time {
+	_, end := u.transferDurationBounds(time.Now())
+	return end
 }

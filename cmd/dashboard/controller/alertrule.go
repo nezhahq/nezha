@@ -178,6 +178,9 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 			if !rule.IsSupportedType() {
 				return singleton.Localizer.ErrorT("unsupported rule type")
 			}
+			if !rule.HasSafeThresholds() {
+				return singleton.Localizer.ErrorT("invalid rule thresholds")
+			}
 			switch rule.Cover {
 			case model.RuleCoverAll, model.RuleCoverIgnoreAll:
 			default:
@@ -192,6 +195,9 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 					return singleton.Localizer.ErrorT("duration is too large")
 				}
 			} else {
+				if !rule.HasSafeCycleUnit() {
+					return singleton.Localizer.ErrorT("invalid cycle unit")
+				}
 				if rule.CycleInterval < 1 {
 					return singleton.Localizer.ErrorT("cycle_interval need to be at least 1")
 				}

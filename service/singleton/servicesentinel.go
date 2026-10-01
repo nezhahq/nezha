@@ -2,6 +2,7 @@ package singleton
 
 import (
 	"cmp"
+	"crypto/sha256"
 	"fmt"
 	"iter"
 	"log"
@@ -9,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -22,8 +24,10 @@ import (
 )
 
 const (
-	_CurrentStatusSize = 30 // 统计 15 分钟内的数据为当前状态
+	_CurrentStatusSize = 30 // initial capacity for the rolling service window
 )
+
+var serviceEventSequence atomic.Uint64
 
 type serviceResponseItem struct {
 	model.ServiceResponseItem
@@ -46,9 +50,101 @@ type _TodayStatsOfService struct {
 type serviceResponseData = _TodayStatsOfService
 
 type serviceTaskStatus struct {
-	lastStatus uint8
-	t          time.Time
-	result     []*pb.TaskResult
+	lastStatus    uint8
+	stateEpoch    uint64
+	lastHistoryAt time.Time
+	history       serviceResponseData
+	lastData      string
+	result        []serviceWindowBucket
+}
+
+type serviceProbeSample struct {
+	successful bool
+	failed     bool
+	delay      float64
+}
+
+type serviceWindowBucket struct {
+	at        time.Time
+	reporters map[uint64]serviceProbeSample
+}
+
+func (status *serviceTaskStatus) appendResult(now time.Time, reporter uint64, result *pb.TaskResult) {
+	bucketAt := now.Truncate(30 * time.Second)
+	if len(status.result) > 0 && bucketAt.Before(status.result[len(status.result)-1].at) {
+		status.result = nil // wall-clock moved backwards; old buckets are not comparable
+	}
+	if len(status.result) == 0 || !status.result[len(status.result)-1].at.Equal(bucketAt) {
+		status.result = append(status.result, serviceWindowBucket{at: bucketAt, reporters: make(map[uint64]serviceProbeSample)})
+	}
+	bucket := &status.result[len(status.result)-1]
+	sample := bucket.reporters[reporter]
+	if result.Successful {
+		sample.successful = true
+		sample.delay = float64(result.Delay)
+	} else {
+		sample.failed = true
+	}
+	bucket.reporters[reporter] = sample
+	cutoff := now.Add(-15 * time.Minute)
+	first := 0
+	for first < len(status.result) && status.result[first].at.Before(cutoff) {
+		first++
+	}
+	if first > 0 {
+		status.result = append([]serviceWindowBucket(nil), status.result[first:]...)
+	}
+	if result.Successful {
+		status.history.Up++
+		status.history.Delay = (status.history.Delay*float64(status.history.Up-1) + float64(result.Delay)) / float64(status.history.Up)
+	} else {
+		status.history.Down++
+	}
+	status.lastData = result.Data
+}
+
+// flushServiceHistory persists the previous non-overlapping reporting period
+// before the next observation is added, so long probe gaps cannot lose or
+// double-count samples in the 15-minute availability history.
+func (ss *ServiceSentinel) flushServiceHistory(serviceID uint64, status *serviceTaskStatus, now time.Time) {
+	if status.lastHistoryAt.IsZero() || now.Before(status.lastHistoryAt.Add(15*time.Minute)) {
+		return
+	}
+	if status.history.Up+status.history.Down == 0 {
+		status.lastHistoryAt = now
+		return
+	}
+	if !TSDBEnabled() {
+		if err := DB.Create(&model.ServiceHistory{
+			CreatedAt: status.lastHistoryAt,
+			ServiceID: serviceID,
+			AvgDelay:  status.history.Delay,
+			Data:      status.lastData,
+			Up:        status.history.Up,
+			Down:      status.history.Down,
+		}).Error; err != nil {
+			log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+			return
+		}
+	}
+	status.history = serviceResponseData{}
+	status.lastHistoryAt = now
+}
+
+func (status *serviceTaskStatus) responseData() serviceResponseData {
+	var data serviceResponseData
+	for _, bucket := range status.result {
+		for _, sample := range bucket.reporters {
+			if sample.successful {
+				data.Up++
+				data.Delay = (data.Delay*float64(data.Up-1) + sample.delay) / float64(data.Up)
+			}
+			if sample.failed {
+				data.Down++
+			}
+		}
+	}
+	return data
 }
 
 type pingStore struct {
@@ -228,7 +324,7 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 		}
 		ss.services[service.ID] = service
 		ss.serviceCurrentStatusData[service.ID] = new(serviceTaskStatus)
-		ss.serviceCurrentStatusData[service.ID].result = make([]*pb.TaskResult, 0, _CurrentStatusSize)
+		ss.serviceCurrentStatusData[service.ID].result = make([]serviceWindowBucket, 0, _CurrentStatusSize)
 		ss.serviceStatusToday[service.ID] = &_TodayStatsOfService{}
 		validServices = append(validServices, service)
 	}
@@ -371,6 +467,9 @@ func (ss *ServiceSentinel) Update(m *model.Service) error {
 	if err != nil {
 		return err
 	}
+	// A service edit may disable notifications or change their recipients.
+	// Cancel any retry worker holding the previous service configuration.
+	NotificationShared.CancelServiceState(m.ID)
 	if ss.services[m.ID] != nil {
 		// 停掉旧任务
 		CronShared.Remove(ss.services[m.ID].CronJobID)
@@ -387,7 +486,7 @@ func (ss *ServiceSentinel) Update(m *model.Service) error {
 		if ss.serviceCurrentStatusData[m.ID] == nil {
 			ss.serviceCurrentStatusData[m.ID] = new(serviceTaskStatus)
 		}
-		ss.serviceCurrentStatusData[m.ID].result = make([]*pb.TaskResult, 0, _CurrentStatusSize)
+		ss.serviceCurrentStatusData[m.ID].result = make([]serviceWindowBucket, 0, _CurrentStatusSize)
 		ss.serviceStatusToday[m.ID] = &_TodayStatsOfService{}
 	}
 	// 更新这个任务
@@ -404,6 +503,7 @@ func (ss *ServiceSentinel) Delete(ids []uint64) {
 	defer ss.servicesLock.Unlock()
 
 	for _, id := range ids {
+		NotificationShared.CancelServiceState(id)
 		delete(ss.serviceCurrentStatusData, id)
 		delete(ss.serviceResponseDataStore, id)
 		delete(ss.serviceResponsePing, id)
@@ -669,32 +769,16 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 	}
 
 	currentTime := time.Now()
-	if serviceCurrentStatusData.t.IsZero() {
-		serviceCurrentStatusData.t = currentTime
-	}
-
-	// 写入当前数据
-	if serviceCurrentStatusData.t.Before(currentTime) {
-		serviceCurrentStatusData.t = currentTime.Add(30 * time.Second)
-		serviceCurrentStatusData.result = append(serviceCurrentStatusData.result, mh)
+	ss.flushServiceHistory(mh.GetId(), serviceCurrentStatusData, currentTime)
+	// Include every accepted reporter's result. A fixed count of samples is
+	// not a 15-minute window when probes have different intervals or reporters.
+	serviceCurrentStatusData.appendResult(currentTime, r.Reporter, mh)
+	if serviceCurrentStatusData.lastHistoryAt.IsZero() {
+		serviceCurrentStatusData.lastHistoryAt = currentTime
 	}
 
 	// 更新当前状态
-	ss.serviceResponseDataStore[mh.GetId()] = serviceResponseData{}
-
-	// 永远是最新的 30 个数据的状态 [01:00, 02:00, 03:00] -> [04:00, 02:00, 03: 00]
-	for _, cs := range serviceCurrentStatusData.result {
-		if cs.GetId() > 0 {
-			rd := ss.serviceResponseDataStore[mh.GetId()]
-			if cs.Successful {
-				rd.Up++
-				rd.Delay = (rd.Delay*float64(rd.Up-1) + float64(cs.Delay)) / float64(rd.Up)
-			} else {
-				rd.Down++
-			}
-			ss.serviceResponseDataStore[mh.GetId()] = rd
-		}
-	}
+	ss.serviceResponseDataStore[mh.GetId()] = serviceCurrentStatusData.responseData()
 
 	// 计算在线率，
 	var stateCode uint8
@@ -704,24 +788,11 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 		if rd.Down+rd.Up > 0 {
 			upPercent = rd.Up * 100 / (rd.Down + rd.Up)
 		}
-		stateCode = GetStatusCode(upPercent)
-	}
-
-	if len(serviceCurrentStatusData.result) == _CurrentStatusSize {
-		serviceCurrentStatusData.t = currentTime
-		if !TSDBEnabled() {
-			rd := ss.serviceResponseDataStore[mh.GetId()]
-			if err := DB.Create(&model.ServiceHistory{
-				ServiceID: mh.GetId(),
-				AvgDelay:  rd.Delay,
-				Data:      mh.Data,
-				Up:        rd.Up,
-				Down:      rd.Down,
-			}).Error; err != nil {
-				log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
-			}
+		if rd.Down+rd.Up == 0 {
+			stateCode = StatusNoData
+		} else {
+			stateCode = GetStatusCode(upPercent)
 		}
-		serviceCurrentStatusData.result = serviceCurrentStatusData.result[:0]
 	}
 
 	// 延迟报警
@@ -734,77 +805,100 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 		lastStatus := serviceCurrentStatusData.lastStatus
 		// 存储新的状态值
 		serviceCurrentStatusData.lastStatus = stateCode
-
-		notifyCheck(&r, m, cs, mh, lastStatus, stateCode)
-	}
-
-	// TLS 证书报警
-	if ss.serviceReportBeforeTLSSideEffectsHook != nil {
-		ss.serviceReportBeforeTLSSideEffectsHook(mh.GetId())
-	}
-	var errMsg string
-	if strings.HasPrefix(mh.Data, "SSL证书错误：") {
-		// i/o timeout、connection timeout、EOF 错误
-		if !strings.HasSuffix(mh.Data, "timeout") &&
-			!strings.HasSuffix(mh.Data, "EOF") &&
-			!strings.HasSuffix(mh.Data, "timed out") {
-			errMsg = mh.Data
-			if cs.Notify {
-				muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), "network")
-				go NotificationShared.SendNotification(cs.NotificationGroupID, Localizer.Tf("[TLS] Fetch cert info failed, Reporter: %s, Error: %s", cs.Name, errMsg), muteLabel)
-			}
+		if stateCode != lastStatus {
+			serviceCurrentStatusData.stateEpoch = serviceEventSequence.Add(1)
 		}
-	} else {
-		// 清除网络错误静音缓存
-		NotificationShared.UnMuteNotification(cs.NotificationGroupID, NotificationMuteLabel.ServiceTLS(mh.GetId(), "network"))
 
-		var newCert = strings.Split(mh.Data, "|")
-		if len(newCert) > 1 {
-			enableNotify := cs.Notify
+		notifyCheck(&r, m, cs, mh, lastStatus, stateCode, serviceCurrentStatusData.stateEpoch)
+	}
 
-			// 首次获取证书信息时，缓存证书信息
-			if ss.tlsCertCache[mh.GetId()] == "" {
-				ss.tlsCertCache[mh.GetId()] = mh.Data
+	// TLS 证书报警仅适用于 HTTPS 探针。其它探针的任意响应文本
+	// 不得被当作证书资料解析。
+	if mh.Type == model.TaskTypeHTTPGet && strings.HasPrefix(strings.ToLower(cs.Target), "https://") {
+		if ss.serviceReportBeforeTLSSideEffectsHook != nil {
+			ss.serviceReportBeforeTLSSideEffectsHook(mh.GetId())
+		}
+		var errMsg string
+		if strings.HasPrefix(mh.Data, "SSL证书错误：") {
+			// i/o timeout、connection timeout、EOF 错误
+			if !strings.HasSuffix(mh.Data, "timeout") &&
+				!strings.HasSuffix(mh.Data, "EOF") &&
+				!strings.HasSuffix(mh.Data, "timed out") {
+				errMsg = mh.Data
+				if cs.Notify {
+					muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), "network")
+					NotificationShared.SendNotificationAsync(cs.NotificationGroupID, Localizer.Tf("[TLS] Fetch cert info failed, Reporter: %s, Error: %s", cs.Name, errMsg), muteLabel)
+				}
 			}
+		} else {
+			// 清除网络错误静音缓存
+			NotificationShared.UnMuteNotification(cs.NotificationGroupID, NotificationMuteLabel.ServiceTLS(mh.GetId(), "network"))
 
-			oldCert := strings.Split(ss.tlsCertCache[mh.GetId()], "|")
-			isCertChanged := false
-			expiresOld, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", oldCert[1])
-			expiresNew, _ := time.Parse("2006-01-02 15:04:05 -0700 MST", newCert[1])
-
-			// 证书变更时，更新缓存
-			if oldCert[0] != newCert[0] && !expiresNew.Equal(expiresOld) {
-				isCertChanged = true
-				ss.tlsCertCache[mh.GetId()] = mh.Data
-			}
-
-			notificationGroupID := cs.NotificationGroupID
-			serviceName := cs.Name
-
-			// 需要发送提醒
-			if enableNotify {
-				// 证书过期提醒
-				if expiresNew.Before(time.Now().AddDate(0, 0, 7)) {
-					expiresTimeStr := expiresNew.Format("2006-01-02 15:04:05")
-					errMsg = Localizer.Tf(
-						"The TLS certificate will expire within seven days. Expiration time: %s",
-						expiresTimeStr,
-					)
-
-					// 静音规则： 服务id+证书过期时间
-					// 用于避免多个监测点对相同证书同时报警
-					muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), fmt.Sprintf("expire_%s", expiresTimeStr))
-					go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), muteLabel)
+			var newCert = strings.Split(mh.Data, "|")
+			if len(newCert) > 1 {
+				enableNotify := cs.Notify
+				expiresNew, newErr := time.Parse("2006-01-02 15:04:05 -0700 MST", newCert[1])
+				if newErr != nil {
+					log.Printf("NEZHA>> Ignoring malformed TLS certificate expiry for service %d", mh.GetId())
+					return
 				}
 
-				// 证书变更提醒
-				if isCertChanged {
-					errMsg = Localizer.Tf(
-						"TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, expires at %s",
-						oldCert[0], expiresOld.Format("2006-01-02 15:04:05"), newCert[0], expiresNew.Format("2006-01-02 15:04:05"))
+				// 首次获取证书信息时，缓存证书信息
+				if ss.tlsCertCache[mh.GetId()] == "" {
+					ss.tlsCertCache[mh.GetId()] = mh.Data
+				}
 
-					// 证书变更后会自动更新缓存，所以不需要静音
-					go NotificationShared.SendNotification(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), "")
+				oldCert := strings.Split(ss.tlsCertCache[mh.GetId()], "|")
+				isCertChanged := false
+				expiresOld, oldErr := time.Parse("2006-01-02 15:04:05 -0700 MST", oldCert[1])
+				if oldErr != nil {
+					log.Printf("NEZHA>> Ignoring malformed TLS certificate expiry for service %d", mh.GetId())
+					return
+				}
+
+				// 只有通知成功后才推进基线；失败时下一次探针结果会重试。
+				if oldCert[0] != newCert[0] || !expiresNew.Equal(expiresOld) {
+					isCertChanged = true
+					if !enableNotify {
+						ss.tlsCertCache[mh.GetId()] = mh.Data
+					}
+				}
+
+				notificationGroupID := cs.NotificationGroupID
+				serviceName := cs.Name
+
+				// 需要发送提醒
+				if enableNotify {
+					// 证书过期提醒
+					if expiresNew.Before(time.Now().AddDate(0, 0, 7)) {
+						expiresTimeStr := expiresNew.Format("2006-01-02 15:04:05")
+						errMsg = Localizer.Tf(
+							"The TLS certificate will expire within seven days. Expiration time: %s",
+							expiresTimeStr,
+						)
+
+						// 静音规则： 服务id+证书过期时间
+						// 用于避免多个监测点对相同证书同时报警
+						muteLabel := NotificationMuteLabel.ServiceTLS(mh.GetId(), fmt.Sprintf("expire_%s", expiresTimeStr))
+						NotificationShared.SendNotificationAsync(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), muteLabel)
+					}
+
+					// 证书变更提醒
+					if isCertChanged {
+						errMsg = Localizer.Tf(
+							"TLS certificate changed, old: issuer %s, expires at %s; new: issuer %s, expires at %s",
+							oldCert[0], expiresOld.Format("2006-01-02 15:04:05"), newCert[0], expiresNew.Format("2006-01-02 15:04:05"))
+
+						oldRaw, newRaw, serviceID := ss.tlsCertCache[mh.GetId()], mh.Data, mh.GetId()
+						muteLabel := NotificationMuteLabel.ServiceTLS(serviceID, fmt.Sprintf("change_%x", sha256.Sum256([]byte(newRaw))))
+						NotificationShared.sendNotificationAsync(notificationGroupID, fmt.Sprintf("[TLS] %s %s", serviceName, errMsg), muteLabel, func() {
+							ss.serviceResponseDataStoreLock.Lock()
+							if ss.serviceCurrentStatusData[serviceID] != nil && ss.tlsCertCache[serviceID] == oldRaw {
+								ss.tlsCertCache[serviceID] = newRaw
+							}
+							ss.serviceResponseDataStoreLock.Unlock()
+						})
+					}
 				}
 			}
 		}
@@ -832,11 +926,11 @@ func delayCheck(r *ReportData, m map[uint64]*model.Server, ss *model.Service, mh
 	if mh.Delay > ss.MaxLatency {
 		// 延迟超过最大值
 		msg := Localizer.Tf("[Latency] %s %2f > %2f, Reporter: %s", ss.Name, mh.Delay, ss.MaxLatency, reporterServer.Name)
-		go NotificationShared.SendNotification(notificationGroupID, msg, minMuteLabel)
+		NotificationShared.SendNotificationAsync(notificationGroupID, msg, minMuteLabel)
 	} else if mh.Delay < ss.MinLatency {
 		// 延迟低于最小值
 		msg := Localizer.Tf("[Latency] %s %2f < %2f, Reporter: %s", ss.Name, mh.Delay, ss.MinLatency, reporterServer.Name)
-		go NotificationShared.SendNotification(notificationGroupID, msg, maxMuteLabel)
+		NotificationShared.SendNotificationAsync(notificationGroupID, msg, maxMuteLabel)
 	} else {
 		// 正常延迟， 清除静音缓存
 		NotificationShared.UnMuteNotification(notificationGroupID, minMuteLabel)
@@ -845,7 +939,7 @@ func delayCheck(r *ReportData, m map[uint64]*model.Server, ss *model.Service, mh
 }
 
 func notifyCheck(r *ReportData, m map[uint64]*model.Server,
-	ss *model.Service, mh *pb.TaskResult, lastStatus, stateCode uint8) {
+	ss *model.Service, mh *pb.TaskResult, lastStatus, stateCode uint8, stateEpoch uint64) {
 	// GHSA-jx78-55p5-rwv5: guard against concurrent server deletion (same TOCTOU
 	// class as the 2026-07-21 fix, a few dozen lines lower in the same worker).
 	// ServerShared has its own lock; m is a snapshot taken outside
@@ -858,14 +952,9 @@ func notifyCheck(r *ReportData, m map[uint64]*model.Server,
 	if isNeedSendNotification && reporterServer != nil {
 		notificationGroupID := ss.NotificationGroupID
 		notificationMsg := Localizer.Tf("[%s] %s Reporter: %s, Error: %s", StatusCodeToString(stateCode), ss.Name, reporterServer.Name, mh.Data)
-		muteLabel := NotificationMuteLabel.ServiceStateChanged(mh.GetId())
+		muteLabel := fmt.Sprintf("%s:%d:%d", NotificationMuteLabel.ServiceStateChanged(mh.GetId()), stateCode, stateEpoch)
 
-		// 状态变更时，清除静音缓存
-		if stateCode != lastStatus {
-			NotificationShared.UnMuteNotification(notificationGroupID, muteLabel)
-		}
-
-		go NotificationShared.SendNotification(notificationGroupID, notificationMsg, muteLabel)
+		NotificationShared.SendServiceState(mh.GetId(), notificationGroupID, notificationMsg, muteLabel)
 	}
 
 	// 判断是否需要触发任务
@@ -890,9 +979,6 @@ const (
 )
 
 func GetStatusCode[T constraints.Float | constraints.Integer](percent T) uint8 {
-	if percent == 0 {
-		return StatusNoData
-	}
 	if percent > 95 {
 		return StatusGood
 	}

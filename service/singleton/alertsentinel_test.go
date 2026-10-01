@@ -122,7 +122,7 @@ func TestCheckStatusForServerRecoversUnexpectedEvaluatorPanic(t *testing.T) {
 	originalStore := alertsStore
 	originalPrevState := alertsPrevState
 	originalCycleStore := AlertsCycleTransferStatsStore
-	alertsStore = map[uint64]map[uint64][][]bool{}
+	alertsStore = map[uint64]map[uint64][]model.TimedAlertPoint{}
 	alertsPrevState = map[uint64]map[uint64]uint8{}
 	AlertsCycleTransferStatsStore = map[uint64]*model.CycleTransferStats{}
 	t.Cleanup(func() {
