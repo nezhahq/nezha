@@ -2,11 +2,13 @@ package singleton
 
 import (
 	"log"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/frontend"
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
@@ -16,6 +18,8 @@ type ConfigClass struct {
 	*model.Config
 
 	onlineHistoryRetentionMu sync.RWMutex
+	frontendSelectionMu      sync.RWMutex
+	FrontendStore            *frontend.Store `json:"-"`
 
 	IgnoredIPNotificationServerIDs map[uint64]bool `json:"ignored_ip_notification_server_ids,omitempty"`
 	Oauth2Providers                []string        `json:"oauth2_providers,omitempty"`
@@ -23,10 +27,15 @@ type ConfigClass struct {
 
 // InitConfigFromPath 从给出的文件路径中加载配置
 func InitConfigFromPath(path string) error {
-	Conf = &ConfigClass{
-		Config: &model.Config{},
+	store, err := frontend.NewStore(filepath.Join(filepath.Dir(path), "frontends"), FrontendTemplates)
+	if err != nil {
+		return err
 	}
-	err := Conf.Read(path, FrontendTemplates)
+	Conf = &ConfigClass{
+		Config:        &model.Config{},
+		FrontendStore: store,
+	}
+	err = Conf.Read(path, store.Templates())
 	if err != nil {
 		return err
 	}
@@ -89,6 +98,8 @@ func (c *ConfigClass) CommitOnlineHistoryRetention(days *int, persist func() err
 
 // SettingsSnapshot copies response fields without copying the retention mutex.
 func (c *ConfigClass) SettingsSnapshot() model.Setting {
+	c.frontendSelectionMu.RLock()
+	defer c.frontendSelectionMu.RUnlock()
 	c.onlineHistoryRetentionMu.RLock()
 	defer c.onlineHistoryRetentionMu.RUnlock()
 	return model.Setting{
@@ -97,4 +108,36 @@ func (c *ConfigClass) SettingsSnapshot() model.Setting {
 		IgnoredIPNotificationServerIDs: c.IgnoredIPNotificationServerIDs,
 		Oauth2Providers:                c.Oauth2Providers,
 	}
+}
+
+func (c *ConfigClass) AvailableFrontendTemplates() []model.FrontendTemplate {
+	if c.FrontendStore != nil {
+		return c.FrontendStore.Templates()
+	}
+	return append([]model.FrontendTemplate(nil), FrontendTemplates...)
+}
+
+func (c *ConfigClass) FrontendSelection() (user, admin string) {
+	c.frontendSelectionMu.RLock()
+	defer c.frontendSelectionMu.RUnlock()
+	return c.UserTemplate, c.AdminTemplate
+}
+
+// CommitFrontendSelection publishes the selection only after persistence succeeds.
+// Requests already serving the previous version keep their immutable directory.
+func (c *ConfigClass) CommitFrontendSelection(user, admin *string, persist func() error) error {
+	c.frontendSelectionMu.Lock()
+	defer c.frontendSelectionMu.Unlock()
+	previousUser, previousAdmin := c.UserTemplate, c.AdminTemplate
+	if user != nil {
+		c.UserTemplate = *user
+	}
+	if admin != nil {
+		c.AdminTemplate = *admin
+	}
+	if err := persist(); err != nil {
+		c.UserTemplate, c.AdminTemplate = previousUser, previousAdmin
+		return err
+	}
+	return nil
 }

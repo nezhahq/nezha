@@ -1,5 +1,7 @@
 package model
 
+import "github.com/nezhahq/nezha/pkg/frontend"
+
 type SettingForm struct {
 	DNSServers                  string `json:"dns_servers,omitempty" validate:"optional"`
 	IgnoredIPNotification       string `json:"ignored_ip_notification,omitempty" validate:"optional"`
@@ -33,15 +35,7 @@ type Setting struct {
 	Oauth2Providers                []string        `json:"oauth2_providers,omitempty"`
 }
 
-type FrontendTemplate struct {
-	Path       string `json:"path,omitempty"`
-	Name       string `json:"name,omitempty"`
-	Repository string `json:"repository,omitempty"`
-	Author     string `json:"author,omitempty"`
-	Version    string `json:"version,omitempty"`
-	IsAdmin    bool   `json:"is_admin,omitempty"`
-	IsOfficial bool   `json:"is_official,omitempty"`
-}
+type FrontendTemplate = frontend.Template
 
 type SettingResponse struct {
 	Config Setting `json:"config"`

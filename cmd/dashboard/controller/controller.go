@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-contrib/pprof"
@@ -194,6 +196,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.POST("/online-user/batch-block", restScopeMiddleware(model.ScopeAdminAll), adminHandler(batchBlockOnlineUser))
 	auth.PATCH("/setting", restScopeMiddleware(model.ScopeAdminAll), adminHandler(updateConfig))
 	auth.POST("/maintenance", restScopeMiddleware(model.ScopeAdminAll), adminHandler(runMaintenance))
+	registerFrontendRoutes(auth)
 
 	r.NoRoute(fallbackToFrontend(frontendDist))
 }
@@ -361,7 +364,7 @@ func getUid(c *gin.Context) uint64 {
 }
 
 func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
-	serveFile := func(c *gin.Context, name string, file fs.File, customStatusCode int) bool {
+	serveFile := func(c *gin.Context, name string, file fs.File, customStatusCode int, installation string) bool {
 		defer file.Close()
 		fileStat, err := file.Stat()
 		if err != nil {
@@ -374,17 +377,45 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if !ok {
 			return false
 		}
-		http.ServeContent(utils.NewGinCustomWriter(c, customStatusCode), c.Request, name, fileStat.ModTime(), readSeeker)
+		modified := fileStat.ModTime()
+		if name == "index.html" {
+			c.Header("Cache-Control", "no-store")
+			// Two frontend installs can share a timestamp; never answer 304 with
+			// the previous frontend's HTML after a runtime switch.
+			modified = time.Time{}
+		} else if installation != "" {
+			// Installed directories are immutable. Bind validation to the install,
+			// not timestamps: switching to an older release must not reuse newer JS.
+			etag := sha256.Sum256([]byte(installation + "\x00" + name))
+			c.Header("ETag", fmt.Sprintf(`"%x"`, etag))
+			c.Header("Cache-Control", "no-cache")
+			modified = time.Time{}
+		}
+		var writer http.ResponseWriter = c.Writer
+		// Only override the status for SPA error pages. Rewriting a real asset's
+		// 304 or 206 to 200 corrupts browser cache or partial-content responses.
+		if customStatusCode != http.StatusOK {
+			writer = utils.NewGinCustomWriter(c, customStatusCode)
+		}
+		http.ServeContent(writer, c.Request, name, modified, readSeeker)
 		return true
 	}
 
 	checkLocalFileOrFs := func(c *gin.Context, frontendFS fs.FS, templateRoot, filePath string, customStatusCode int) bool {
 		if filePath != "" {
-			localRoot, err := os.OpenRoot(templateRoot)
+			localDirectory := templateRoot
+			var installation string
+			if singleton.Conf.FrontendStore != nil {
+				localDirectory = singleton.Conf.FrontendStore.Directory(templateRoot)
+				if localDirectory != templateRoot {
+					installation = templateRoot
+				}
+			}
+			localRoot, err := os.OpenRoot(localDirectory)
 			if err == nil {
 				defer localRoot.Close()
 				// URL paths must stay inside the selected template root; never join them against the process cwd.
-				if file, err := localRoot.Open(filePath); err == nil && serveFile(c, filePath, file, customStatusCode) {
+				if file, err := localRoot.Open(filePath); err == nil && serveFile(c, filePath, file, customStatusCode, installation) {
 					return true
 				}
 			}
@@ -401,7 +432,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		if err != nil {
 			return false
 		}
-		if serveFile(c, filePath, file, customStatusCode) {
+		if serveFile(c, filePath, file, customStatusCode, "") {
 			return true
 		}
 		return false
@@ -428,6 +459,7 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		regexp.MustCompile(`^/dashboard/settings/online-user$`),
 		regexp.MustCompile(`^/dashboard/settings/waf$`),
 		regexp.MustCompile(`^/dashboard/settings/api-tokens$`),
+		regexp.MustCompile(`^/dashboard/settings/frontends$`),
 		// 注意：这里的白名单决定哪些 URL 走 index.html fallback；漏一条就会把
 		// 直接刷新该页面变成 404（HTTP 状态码层面，body 仍是 index.html，所以
 		// 浏览器内 SPA 看起来正常，但 monitoring / 链接预览会以为站点挂了）。
@@ -457,22 +489,23 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		}
 
 		fallbackStatusCode := getFallbackStatusCode(c.Request.URL.Path)
+		userTemplate, adminTemplate := singleton.Conf.FrontendSelection()
 		// Only /dashboard/ belongs to the admin frontend; /dashboard.. must not be trimmed into ../.
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard/") {
 			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard/")
-			if checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, stripPath, http.StatusOK) {
+			if checkLocalFileOrFs(c, frontendDist, adminTemplate, stripPath, http.StatusOK) {
 				return
 			}
-			if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.AdminTemplate, "index.html", fallbackStatusCode) {
+			if !checkLocalFileOrFs(c, frontendDist, adminTemplate, "index.html", fallbackStatusCode) {
 				c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 			}
 			return
 		}
 		stripPath := strings.TrimPrefix(c.Request.URL.Path, "/")
-		if checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, stripPath, http.StatusOK) {
+		if checkLocalFileOrFs(c, frontendDist, userTemplate, stripPath, http.StatusOK) {
 			return
 		}
-		if !checkLocalFileOrFs(c, frontendDist, singleton.Conf.UserTemplate, "index.html", fallbackStatusCode) {
+		if !checkLocalFileOrFs(c, frontendDist, userTemplate, "index.html", fallbackStatusCode) {
 			c.JSON(http.StatusNotFound, newErrorResponse(errors.New("404 Not Found")))
 		}
 	}

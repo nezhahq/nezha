@@ -41,7 +41,7 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 			Oauth2Providers:                config.Oauth2Providers,
 		},
 		Version:           singleton.Version,
-		FrontendTemplates: singleton.FrontendTemplates,
+		FrontendTemplates: singleton.Conf.AvailableFrontendTemplates(),
 		TSDBEnabled:       singleton.TSDBEnabled(),
 	}
 
@@ -82,7 +82,7 @@ func updateConfig(c *gin.Context) (any, error) {
 		return nil, err
 	}
 	var userTemplateValid bool
-	for _, v := range singleton.FrontendTemplates {
+	for _, v := range singleton.Conf.AvailableFrontendTemplates() {
 		if !userTemplateValid && v.Path == sf.UserTemplate && !v.IsAdmin {
 			userTemplateValid = true
 		}
@@ -100,37 +100,37 @@ func updateConfig(c *gin.Context) (any, error) {
 		return nil, fmt.Errorf("online_stats_days must be between %d and %d", model.MinOnlineStatsDays, model.MaxOnlineStatsDays)
 	}
 
-	singleton.Conf.Language = strings.ReplaceAll(sf.Language, "-", "_")
+	if err := singleton.Conf.CommitFrontendSelection(&sf.UserTemplate, nil, func() error {
+		singleton.Conf.Language = strings.ReplaceAll(sf.Language, "-", "_")
 
-	singleton.Conf.EnableIPChangeNotification = sf.EnableIPChangeNotification
-	singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
-	if sf.AllowJWTIPChange != nil {
-		singleton.Conf.SetJWTIPChangeAllowed(*sf.AllowJWTIPChange)
-	}
-	singleton.Conf.Cover = sf.Cover
-	singleton.Conf.InstallHost = sf.InstallHost
-	singleton.Conf.DashboardHost = sf.DashboardHost
-	singleton.Conf.ReservedHosts = sf.ReservedHosts
-	singleton.Conf.IgnoredIPNotification = sf.IgnoredIPNotification
-	singleton.Conf.IPChangeNotificationGroupID = sf.IPChangeNotificationGroupID
-	singleton.Conf.SiteName = sf.SiteName
-	singleton.Conf.DNSServers = sf.DNSServers
-	singleton.Conf.CustomCode = sf.CustomCode
-	singleton.Conf.CustomCodeDashboard = sf.CustomCodeDashboard
-	singleton.Conf.WebRealIPHeader = sf.WebRealIPHeader
-	singleton.Conf.AgentRealIPHeader = sf.AgentRealIPHeader
-	singleton.Conf.AgentTLS = sf.AgentTLS
-	singleton.Conf.UserTemplate = sf.UserTemplate
-
-	if err := singleton.Conf.CommitOnlineHistoryRetention(sf.OnlineStatsDays, func() error {
-		mcpWasEnabled := singleton.Conf.MCPEnabled()
-		mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
-		return applyEnableMCPTransition(
-			mcpWasEnabled, mcpNext,
-			singleton.Conf.SetMCPEnabled,
-			singleton.Conf.Save,
-			fireMCPKillSwitch,
-		)
+		singleton.Conf.EnableIPChangeNotification = sf.EnableIPChangeNotification
+		singleton.Conf.EnablePlainIPInNotification = sf.EnablePlainIPInNotification
+		if sf.AllowJWTIPChange != nil {
+			singleton.Conf.SetJWTIPChangeAllowed(*sf.AllowJWTIPChange)
+		}
+		singleton.Conf.Cover = sf.Cover
+		singleton.Conf.InstallHost = sf.InstallHost
+		singleton.Conf.DashboardHost = sf.DashboardHost
+		singleton.Conf.ReservedHosts = sf.ReservedHosts
+		singleton.Conf.IgnoredIPNotification = sf.IgnoredIPNotification
+		singleton.Conf.IPChangeNotificationGroupID = sf.IPChangeNotificationGroupID
+		singleton.Conf.SiteName = sf.SiteName
+		singleton.Conf.DNSServers = sf.DNSServers
+		singleton.Conf.CustomCode = sf.CustomCode
+		singleton.Conf.CustomCodeDashboard = sf.CustomCodeDashboard
+		singleton.Conf.WebRealIPHeader = sf.WebRealIPHeader
+		singleton.Conf.AgentRealIPHeader = sf.AgentRealIPHeader
+		singleton.Conf.AgentTLS = sf.AgentTLS
+		return singleton.Conf.CommitOnlineHistoryRetention(sf.OnlineStatsDays, func() error {
+			mcpWasEnabled := singleton.Conf.MCPEnabled()
+			mcpNext := resolveSettingEnableMCP(sf.EnableMCP, mcpWasEnabled)
+			return applyEnableMCPTransition(
+				mcpWasEnabled, mcpNext,
+				singleton.Conf.SetMCPEnabled,
+				singleton.Conf.Save,
+				fireMCPKillSwitch,
+			)
+		})
 	}); err != nil {
 		return nil, newGormError("%v", err)
 	}
