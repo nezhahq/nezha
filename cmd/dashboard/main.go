@@ -106,8 +106,8 @@ func initIDCodec() error {
 // @contact.url    http://nezhahq.github.io
 // @contact.email  hi@nai.ba
 
-// @license.name  Apache 2.0
-// @license.url   http://www.apache.org/licenses/LICENSE-2.0.html
+// @license.name  WTFPL
+// @license.url   https://github.com/nezhahq/nezha/blob/master/LICENSE
 
 // @host      localhost:8008
 // @BasePath  /api/v1
