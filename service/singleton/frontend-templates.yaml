@@ -26,8 +26,3 @@
   repository: "https://github.com/hi2shark/aobobo"
   author: "hi2shark"
   version: "v1.5.4"
-- path: "nezha-ascii-dist"
-  name: "Nezha-ASCII"
-  repository: "https://github.com/hamster1963/nezha-ascii"
-  author: "hamster1963"
-  version: "v1.1.0"
