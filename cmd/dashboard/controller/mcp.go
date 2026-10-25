@@ -85,10 +85,11 @@ type mcpInitializeResult struct {
 
 // mcpToolDescriptor 是 tools/list 返回的单条 tool 描述。
 type mcpToolDescriptor struct {
-	Name         string         `json:"name"`
-	Description  string         `json:"description"`
-	InputSchema  map[string]any `json:"inputSchema"`
-	OutputSchema map[string]any `json:"outputSchema,omitempty"`
+	Name         string          `json:"name"`
+	Description  string          `json:"description"`
+	InputSchema  map[string]any  `json:"inputSchema"`
+	OutputSchema map[string]any  `json:"outputSchema,omitempty"`
+	Annotations  map[string]bool `json:"annotations,omitempty"`
 }
 
 // mcpToolsListResult tools/list 响应。
@@ -158,7 +159,7 @@ func listRegisteredMCPTools() []*mcpTool {
 
 // mcpEndpoint 处理 POST /mcp。
 // 鉴权：上游 apiTokenAuthMiddleware 已经把 PAT 解析到 CtxKeyAuthorizedUser，
-// 此处只要确认有 PAT 即可（不接受裸 JWT，避免浏览器误触）。
+// OAuth 也解析成同一权限身份；不接受裸 JWT，避免浏览器误触。
 func mcpEndpoint(c *gin.Context) {
 	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
 		writeJSONRPCError(c, nil, rpcErrForbidden, "MCP is disabled by the dashboard administrator")
@@ -166,6 +167,7 @@ func mcpEndpoint(c *gin.Context) {
 	}
 	tok := APITokenFromContext(c)
 	if tok == nil {
+		mcpOAuthSetChallenge(c)
 		// 同时返回 HTTP 401 + JSON-RPC error：标准 MCP HTTP client 依赖
 		// HTTP 401 触发 auth 重试/OAuth discovery；JSON-RPC body 保留旧字段
 		// 不打破 ScopeDenied 类内部断言。
@@ -259,9 +261,21 @@ func buildToolDescriptors() []mcpToolDescriptor {
 			Description:  t.Description,
 			InputSchema:  t.InputSchema,
 			OutputSchema: t.OutputSchema,
+			Annotations:  mcpToolAnnotations(t.Name),
 		})
 	}
 	return out
+}
+
+// Advertise read-only hints only for known reads. Unknown/future tools keep
+// the conservative write/destructive defaults in ChatGPT and other clients.
+func mcpToolAnnotations(name string) map[string]bool {
+	switch name {
+	case "meta.whoami", "server.list", "server.get", "fs.list", "fs.read":
+		return map[string]bool{"readOnlyHint": true, "destructiveHint": false}
+	default:
+		return map[string]bool{"readOnlyHint": false, "destructiveHint": true}
+	}
 }
 
 // toolCallParams 是 tools/call 的 params 结构。

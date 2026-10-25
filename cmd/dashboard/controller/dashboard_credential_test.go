@@ -108,8 +108,14 @@ func TestIsDashboardCredentialClassification(t *testing.T) {
 
 	t.Run("non bearer scheme is not a dashboard credential", func(t *testing.T) {
 		require.False(t, IsDashboardCredential("Basic "+dashboardJWT))
-		// Scheme matching is case-sensitive, as in both dashboard auth middlewares.
-		require.False(t, IsDashboardCredential("bearer "+dashboardJWT))
+	})
+
+	t.Run("bearer scheme casing cannot bypass dashboard credential filtering", func(t *testing.T) {
+		// HTTP auth schemes are case-insensitive, including MCP OAuth. The
+		// NAT filter must strip dashboard-issued tokens for every spelling.
+		require.True(t, IsDashboardCredential("bearer "+dashboardJWT))
+		require.True(t, IsDashboardCredential("BEARER "+dashboardPAT))
+		require.False(t, IsDashboardCredential("bearer "+foreignJWT))
 	})
 
 	t.Run("empty or missing header is not a dashboard credential", func(t *testing.T) {

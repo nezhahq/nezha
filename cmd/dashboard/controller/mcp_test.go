@@ -19,6 +19,10 @@ import (
 )
 
 func setupMCPTest(t *testing.T) (func(), uint64) {
+	return setupMCPTestWithDatabase(t, ":memory:")
+}
+
+func setupMCPTestWithDatabase(t *testing.T, databasePath string) (func(), uint64) {
 	t.Helper()
 	originalDB := singleton.DB
 	originalServer := singleton.ServerShared
@@ -33,7 +37,7 @@ func setupMCPTest(t *testing.T) (func(), uint64) {
 	// Fresh per test: the DB resets token IDs to 1 each run, so a stale
 	// revoke tombstone from a prior test would otherwise cancel a reused id.
 	patConnectionRegistryShared = newPATConnectionRegistry()
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	db, err := gorm.Open(sqlite.Open(databasePath), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)

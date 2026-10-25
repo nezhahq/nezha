@@ -62,67 +62,75 @@ func setupNATFlowTest(t *testing.T) (*rpcService.NezhaHandler, *model.Server, *n
 // stripped, while foreign values and untouched query/cookie data survive
 // byte-for-byte.
 func TestServeNATWithRealClassifierStripsDashboardCredentialsFromAllChannels(t *testing.T) {
-	handler, server, taskStream := setupNATFlowTest(t)
+	for _, scheme := range []string{"Bearer", "bearer", "bEaReR"} {
+		t.Run(scheme, func(t *testing.T) {
+			handler, server, taskStream := setupNATFlowTest(t)
 
-	dashboardJWT := mintDashboardCredentialJWT(t, time.Hour)
-	foreignJWT := mintForeignJWT(t)
-	// No api_tokens row hashes to this PAT, so the classifier proves it was
-	// not issued by this dashboard and it must survive the tunnel.
-	foreignPAT := model.APITokenPrefix + "foreign-issued-pat"
-	dashboardPAT := model.APITokenPrefix + "dashboard-issued-pat"
-	require.NoError(t, singleton.DB.Create(&model.APIToken{
-		UserID:    1,
-		Name:      "nat-flow",
-		TokenHash: model.HashAPIToken(dashboardPAT),
-	}).Error)
+			dashboardJWT := mintDashboardCredentialJWT(t, time.Hour)
+			oauthAccess := mcpOAuthAccessPrefix + mcpOAuthRandom()
+			oauthRefresh := mcpOAuthNewRefresh(mcpOAuthRandom())
+			foreignJWT := mintForeignJWT(t)
+			// No api_tokens row hashes to this PAT, so the classifier proves it was
+			// not issued by this dashboard and it must survive the tunnel.
+			foreignPAT := model.APITokenPrefix + "foreign-issued-pat"
+			dashboardPAT := model.APITokenPrefix + "dashboard-issued-pat"
+			require.NoError(t, singleton.DB.Create(&model.APIToken{
+				UserID:    1,
+				Name:      "nat-flow",
+				TokenHash: model.HashAPIToken(dashboardPAT),
+			}).Error)
 
-	connection := &natFlowConn{closed: make(chan struct{})}
-	agent := &natFlowAgent{writeDone: make(chan struct{})}
-	writer := &natFlowWriter{conn: connection}
-	request := &http.Request{
-		Method: http.MethodPost,
-		URL: &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + dashboardJWT + "&token=" + url.QueryEscape(foreignJWT) +
-			"&token=" + foreignPAT + "&token=" + dashboardPAT},
-		Header: make(http.Header),
-		Body:   http.NoBody,
-	}
-	request.Header.Set("Authorization", "Bearer "+dashboardJWT)
-	request.Header.Set("Cookie", "sid=abc; nz-jwt="+dashboardJWT+"; nz-jwt="+foreignJWT+"; nz-jwt="+foreignPAT)
-	request.Header.Set("X-Ordinary-Nat", "ordinary")
-	taskStream.onSend = func(task *proto.Task) error {
-		var nat model.TaskNAT
-		if err := json.Unmarshal([]byte(task.Data), &nat); err != nil {
-			return err
-		}
-		return handler.AgentConnected(nat.StreamID, agent)
-	}
+			connection := &natFlowConn{closed: make(chan struct{})}
+			agent := &natFlowAgent{writeDone: make(chan struct{})}
+			writer := &natFlowWriter{conn: connection}
+			request := &http.Request{
+				Method: http.MethodPost,
+				URL: &url.URL{Path: "/nat", RawQuery: "keep=1&token=" + dashboardJWT + "&token=" + url.QueryEscape(foreignJWT) +
+					"&token=" + foreignPAT + "&token=" + dashboardPAT + "&token=" + oauthAccess + "&token=" + oauthRefresh},
+				Header: make(http.Header),
+				Body:   http.NoBody,
+			}
+			request.Header.Set("Authorization", scheme+" "+oauthAccess)
+			request.Header.Set("Cookie", "sid=abc; nz-jwt="+dashboardJWT+"; nz-jwt="+foreignJWT+"; nz-jwt="+foreignPAT+"; nz-jwt="+oauthRefresh)
+			request.Header.Set("X-Ordinary-Nat", "ordinary")
+			taskStream.onSend = func(task *proto.Task) error {
+				var nat model.TaskNAT
+				if err := json.Unmarshal([]byte(task.Data), &nat); err != nil {
+					return err
+				}
+				return handler.AgentConnected(nat.StreamID, agent)
+			}
 
-	done := make(chan struct{})
-	go func() {
-		rpc.ServeNAT(writer, request, &model.NAT{ServerID: server.ID, Host: "target.example"})
-		close(done)
-	}()
-	select {
-	case <-agent.writeDone:
-	case <-time.After(time.Second):
-		t.Fatal("agent did not receive the transferred NAT request")
-	}
-	require.NoError(t, connection.Close())
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("ServeNAT did not finish")
-	}
+			done := make(chan struct{})
+			go func() {
+				rpc.ServeNAT(writer, request, &model.NAT{ServerID: server.ID, Host: "target.example"})
+				close(done)
+			}()
+			select {
+			case <-agent.writeDone:
+			case <-time.After(time.Second):
+				t.Fatal("agent did not receive the transferred NAT request")
+			}
+			require.NoError(t, connection.Close())
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("ServeNAT did not finish")
+			}
 
-	forwarded := string(agent.writtenBytes())
-	// Dashboard credentials are gone from every channel.
-	require.NotContains(t, forwarded, "Authorization:")
-	require.NotContains(t, forwarded, dashboardJWT)
-	require.NotContains(t, forwarded, dashboardPAT)
-	// Foreign credentials and untouched data survive byte-for-byte.
-	require.Contains(t, forwarded, "POST /nat?keep=1&token="+url.QueryEscape(foreignJWT)+"&token="+foreignPAT+" HTTP/1.1")
-	require.Contains(t, forwarded, "Cookie: sid=abc; nz-jwt="+foreignJWT+"; nz-jwt="+foreignPAT)
-	require.Contains(t, forwarded, "X-Ordinary-Nat: ordinary")
+			forwarded := string(agent.writtenBytes())
+			// Dashboard credentials are gone from every channel.
+			require.NotContains(t, forwarded, "Authorization:")
+			require.NotContains(t, forwarded, dashboardJWT)
+			require.NotContains(t, forwarded, dashboardPAT)
+			require.NotContains(t, forwarded, oauthAccess)
+			require.NotContains(t, forwarded, oauthRefresh)
+			// Foreign credentials and untouched data survive byte-for-byte.
+			require.Contains(t, forwarded, "POST /nat?keep=1&token="+url.QueryEscape(foreignJWT)+"&token="+foreignPAT+" HTTP/1.1")
+			require.Contains(t, forwarded, "Cookie: sid=abc; nz-jwt="+foreignJWT+"; nz-jwt="+foreignPAT)
+			require.Contains(t, forwarded, "X-Ordinary-Nat: ordinary")
+		})
+	}
 }
 
 // TestServeNATWithRealClassifierKeepsForeignCredentials pins that the real

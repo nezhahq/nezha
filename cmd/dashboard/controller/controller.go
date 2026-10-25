@@ -62,11 +62,19 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	// Signature-only view of the auth middleware for IsDashboardCredential:
 	// same key and pinned algorithm, claims validation deliberately skipped.
 	dashboardCredentialJWTParser = newDashboardCredentialJWTParser(authMiddleware)
-	// /mcp — Model Context Protocol endpoint, authenticated by PAT only (闸 1 + 闸 2)。
+	// /mcp accepts PAT or MCP-only OAuth credentials (闸 1 + 闸 2).
 	// 不放在 /api/v1 下：MCP client 配置 URL 更短，且 MCP transport 协议演进与 REST API
-	// 解耦。鉴权一律走 apiTokenAuthMiddleware；不接受 JWT 以避免浏览器误触。
+	// 解耦。两种凭据共享权限身份；不接受 JWT 以避免浏览器误触。
 	// mcpOriginGuard 防止 DNS rebinding / 浏览器跨站调用。
-	r.POST("/mcp", mcpOriginGuard(), apiTokenAuthMiddleware(), mcpEndpoint)
+	registerMCPOAuthRoutes(r)
+	r.GET(mcpOAuthFrontendPath, func(c *gin.Context) {
+		// OAuth consent must not be embedded by another site for clickjacking.
+		c.Header("X-Frame-Options", "DENY")
+		c.Header("Content-Security-Policy", "frame-ancestors 'none'")
+		c.Header("Referrer-Policy", "no-referrer")
+		c.Next()
+	}, fallbackToFrontend(frontendDist))
+	r.POST("/mcp", mcpOriginGuard(), mcpOAuthAccessAuth, apiTokenAuthMiddleware(), mcpEndpoint)
 	// Streamable HTTP 规范要求：不实现 standalone SSE / session 时，GET / DELETE
 	// 必须显式返回 405，让客户端走 POST-only 路径并跳过 session 终止流程。
 	// 不显式注册时，Gin 会走 NoRoute → fallbackToFrontend，对 MCP 客户端是 HTML/404。
@@ -115,6 +123,14 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.GET("/profile", patForbidden, commonHandler(getProfile))
 	auth.POST("/profile", patForbidden, commonHandler(updateProfile))
 	auth.POST("/oauth2/:provider/unbind", patForbidden, commonHandler(unbindOauth2))
+	auth.GET("/mcp/oauth/consent", patForbidden, mcpOAuthAvailable, commonHandler(mcpOAuthConsentInfo))
+	auth.POST("/mcp/oauth/consent", patForbidden, mcpOAuthAvailable, commonHandler(mcpOAuthConsent))
+	// Management remains available when MCP is off so users can still revoke access.
+	mcpOAuthManagement := auth.Group("/mcp/oauth", patForbidden, mcpOAuthManagementHeaders)
+	mcpOAuthManagement.GET("/grants", commonHandler(listMCPOAuthGrants))
+	mcpOAuthManagement.DELETE("/grants/:id", commonHandler(revokeMCPOAuthGrant))
+	mcpOAuthManagement.GET("/clients", adminHandler(listMCPOAuthClients))
+	mcpOAuthManagement.PUT("/clients/:id", adminHandler(updateMCPOAuthClient))
 	auth.GET("/api-tokens", patForbidden, commonHandler(listAPITokens))
 	auth.POST("/api-tokens", patForbidden, commonHandler(createAPIToken))
 	auth.DELETE("/api-tokens/:id", patForbidden, commonHandler(deleteAPIToken))
@@ -459,6 +475,8 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		regexp.MustCompile(`^/dashboard/settings/online-user$`),
 		regexp.MustCompile(`^/dashboard/settings/waf$`),
 		regexp.MustCompile(`^/dashboard/settings/api-tokens$`),
+		regexp.MustCompile(`^/dashboard/settings/mcp-oauth$`),
+		regexp.MustCompile(`^/dashboard/mcp/authorize$`),
 		regexp.MustCompile(`^/dashboard/settings/frontends$`),
 		// 注意：这里的白名单决定哪些 URL 走 index.html fallback；漏一条就会把
 		// 直接刷新该页面变成 404（HTTP 状态码层面，body 仍是 index.html，所以

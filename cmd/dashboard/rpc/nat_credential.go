@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"context"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"net/http"
 	"net/url"
 	"strings"
@@ -133,9 +134,9 @@ func collectNATDashboardCredentialValues(request *http.Request) ([]string, bool)
 	}
 
 	for _, authorization := range request.Header.Values("Authorization") {
-		raw := strings.TrimSpace(authorization)
-		if strings.HasPrefix(raw, "Bearer ") {
-			add(strings.TrimPrefix(raw, "Bearer "))
+		credential := utils.BearerCredential(authorization)
+		if credential != "" {
+			add(credential)
 		}
 	}
 	if request.URL != nil {
@@ -168,8 +169,10 @@ func stripDashboardAuthorizationHeader(request *http.Request, classification nat
 	// dashboard-issued value in it must still not survive into the tunnel, so
 	// the whole header is dropped when one is recognized.
 	for _, value := range request.Header.Values("Authorization") {
-		raw := strings.TrimSpace(value)
-		if strings.HasPrefix(raw, "Bearer ") && classification.isDashboardCredential(strings.TrimPrefix(raw, "Bearer ")) {
+		// Use the same scheme parser as MCP OAuth authentication; lowercase
+		// bearer must not become a credential-forwarding bypass.
+		credential := utils.BearerCredential(value)
+		if credential != "" && classification.isDashboardCredential(credential) {
 			request.Header.Del("Authorization")
 			return
 		}

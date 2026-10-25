@@ -11,6 +11,7 @@ import (
 
 	ginjwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -36,7 +37,7 @@ func newDashboardCredentialJWTParser(authMiddleware *ginjwt.GinJWTMiddleware) *g
 }
 
 // IsDashboardCredential reports whether an Authorization header value was
-// issued by this dashboard: a panel-signed JWT or a panel API token (PAT).
+// issued by this dashboard: a panel-signed JWT, PAT, or reserved MCP OAuth credential.
 //
 // NAT ingress uses this to enforce the tunnel credential invariant: values
 // classified as dashboard-issued are stripped before the request is tunneled
@@ -50,18 +51,18 @@ func newDashboardCredentialJWTParser(authMiddleware *ginjwt.GinJWTMiddleware) *g
 // that the value was not issued by this dashboard (scheme mismatch, unknown
 // PAT hash, failed signature verification) returns false.
 func IsDashboardCredential(authz string) bool {
-	raw := strings.TrimSpace(authz)
-	if !strings.HasPrefix(raw, "Bearer ") {
+	credential := utils.BearerCredential(authz)
+	if credential == "" {
 		return false
 	}
-	return IsDashboardCredentialValue(strings.TrimPrefix(raw, "Bearer "))
+	return IsDashboardCredentialValue(credential)
 }
 
 // IsDashboardCredentialValue reports whether a raw credential value — the part
 // after the "Bearer " scheme, exactly as the panel's other TokenLookup
 // channels carry it (the ?token= query parameter and the nz-jwt cookie, see
 // initParams) — was issued by this dashboard: a panel-signed JWT or a panel
-// API token (PAT).
+// API token (PAT), or belongs to the reserved MCP OAuth credential namespace.
 //
 // Failure policy is identical to IsDashboardCredential: whenever the
 // classification cannot be completed (parser or config not ready, database
@@ -78,7 +79,8 @@ func IsDashboardCredentialValue(value string) bool {
 }
 
 // ClassifyDashboardCredentialValues classifies a bounded request batch. JWTs
-// are checked independently, while all PAT-shaped values are hashed and
+// are checked independently, MCP OAuth prefixes are always stripped, and
+// all PAT-shaped values are hashed and
 // resolved with one silent IN query. This prevents attacker-controlled NAT
 // query parameters or cookies from amplifying one HTTP request into thousands
 // of SQLite queries and record-not-found log entries.
@@ -90,6 +92,13 @@ func ClassifyDashboardCredentialValues(ctx context.Context, values []string) []b
 	patIndexes := make(map[string][]int)
 	for i, value := range values {
 		plaintext := strings.TrimSpace(value)
+		// MCP OAuth owns these reserved credential namespaces. Strip them even
+		// after rotation/revocation removes their stored hashes: forwarding a
+		// stale dashboard credential to a NAT tenant must never become allowed.
+		if strings.HasPrefix(plaintext, mcpOAuthAccessPrefix) || strings.HasPrefix(plaintext, mcpOAuthRefreshPrefix) {
+			results[i] = true
+			continue
+		}
 		if strings.HasPrefix(plaintext, model.APITokenPrefix) {
 			hash := model.HashAPIToken(plaintext)
 			patIndexes[hash] = append(patIndexes[hash], i)

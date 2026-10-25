@@ -70,12 +70,14 @@ func validateTransferPath(path string) error {
 }
 
 type transferEntry struct {
-	UserID    uint64
-	TokenID   uint64
-	ServerID  uint64
-	Path      string
-	Direction transferDirection
-	ExpiresAt time.Time
+	UserID          uint64
+	TokenID         uint64
+	ServerID        uint64
+	Path            string
+	Direction       transferDirection
+	ExpiresAt       time.Time
+	OAuthGrantID    string
+	OAuthAccessHash string
 
 	// Upload-only optional knobs carried from MCP fs.upload_url tool args
 	// to transferUploadHandler so the upload handler can forward them into
@@ -143,6 +145,9 @@ func transferTokenSig(e transferEntry) string {
 	mac := hmac.New(sha256.New, []byte(transferHMACSecret()))
 	fmt.Fprintf(mac, "%s|%d|%d|%d|%s|%d",
 		e.Direction, e.UserID, e.TokenID, e.ServerID, e.Path, e.ExpiresAt.UnixNano())
+	if e.OAuthGrantID != "" || e.OAuthAccessHash != "" {
+		fmt.Fprintf(mac, "|oauth:%s:%s", e.OAuthGrantID, e.OAuthAccessHash)
+	}
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
@@ -379,6 +384,13 @@ func mintTransferTool(c *gin.Context, serverID uint64, path string, ttlSeconds i
 		UploadMode:          uploadExtras.UploadMode,
 		UploadCreateDirs:    uploadExtras.UploadCreateDirs,
 		UploadIfMatchSHA256: uploadExtras.UploadIfMatchSHA256,
+	}
+	if value, exists := c.Get(mcpOAuthGrantContextKey); exists {
+		grant := value.(*model.MCPOAuthGrant)
+		entry.OAuthGrantID, entry.OAuthAccessHash = grant.ID, grant.AccessHash
+		if entry.ExpiresAt.After(grant.AccessExpiresAt) {
+			entry.ExpiresAt = grant.AccessExpiresAt
+		}
 	}
 	t, err := mintTransferToken(entry)
 	if err != nil {
@@ -965,6 +977,13 @@ func xferSizeFromU64(raw uint64) (int64, error) {
 func revalidateTransferEntry(e *transferEntry) error {
 	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
 		return errors.New("MCP is disabled by the dashboard administrator")
+	}
+	// A derived URL must not outlive its OAuth credentials. Checking only the
+	// shared API Token row misses password changes, audience changes and rotation.
+	if e.OAuthGrantID != "" {
+		if err := revalidateMCPOAuthTransfer(e); err != nil {
+			return err
+		}
 	}
 	var tok model.APIToken
 	if err := singleton.DB.First(&tok, e.TokenID).Error; err != nil {

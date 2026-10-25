@@ -234,48 +234,59 @@ func apiTokenAuthMiddleware() gin.HandlerFunc {
 			abortAPITokenUnauthorized(c, "api token lookup failed")
 			return
 		}
-		now := time.Now()
-		if tok.IsExpired(now) {
-			if !readOnly {
-				model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
-			}
-			abortAPITokenUnauthorized(c, "api token expired")
-			return
-		}
+		authenticateAPITokenIdentity(c, &tok)
+	}
+}
 
-		var user model.User
-		if err := singleton.DB.First(&user, tok.UserID).Error; err != nil {
-			if !readOnly {
-				model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
-			}
-			abortAPITokenUnauthorized(c, "owner of api token not found")
-			return
-		}
-
+// Share the existing ownership, expiry, audit identity and last-used handling
+// with MCP-only OAuth credentials without accepting them on REST routes.
+func authenticateAPITokenIdentity(c *gin.Context, tok *model.APIToken) {
+	readOnly := apiTokenAuthReadOnly(c)
+	realIP := c.GetString(model.CtxKeyRealIPStr)
+	now := time.Now()
+	if tok.IsExpired(now) {
 		if !readOnly {
-			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
+			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
 		}
+		abortAPITokenUnauthorized(c, "api token expired")
+		return
+	}
 
-		c.Set(model.CtxKeyAuthorizedUser, &user)
-		c.Set(apiTokenCtxKey, &tok)
-		c.Set(model.CtxKeyAPIToken, &tok)
-
-		// last_used 同步更新：开销极低（一行 UPDATE），异步路径在
-		// 多连接 sqlite 测试场景下会和测试 teardown 形成竞态，并把
-		// `last_used_*` 写丢到不可见的 :memory: 实例。生产路径上等价。
-		if !readOnly && apiTokenLastUsedOnce(c) {
-			c.Set(apiTokenLastUsedCtxKey, true)
-			_ = singleton.DB.Model(&model.APIToken{}).
-				Where("id = ?", tok.ID).
-				Updates(map[string]any{
-					"last_used_at": now,
-					"last_used_ip": c.GetString(model.CtxKeyRealIPStr),
-				}).Error
+	var user model.User
+	if err := singleton.DB.First(&user, tok.UserID).Error; err != nil {
+		if !readOnly {
+			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
 		}
+		abortAPITokenUnauthorized(c, "owner of api token not found")
+		return
+	}
+
+	if !readOnly {
+		model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
+	}
+
+	c.Set(model.CtxKeyAuthorizedUser, &user)
+	c.Set(apiTokenCtxKey, tok)
+	c.Set(model.CtxKeyAPIToken, tok)
+
+	// last_used 同步更新：开销极低（一行 UPDATE），异步路径在
+	// 多连接 sqlite 测试场景下会和测试 teardown 形成竞态，并把
+	// `last_used_*` 写丢到不可见的 :memory: 实例。生产路径上等价。
+	if !readOnly && apiTokenLastUsedOnce(c) {
+		c.Set(apiTokenLastUsedCtxKey, true)
+		_ = singleton.DB.Model(&model.APIToken{}).
+			Where("id = ?", tok.ID).
+			Updates(map[string]any{
+				"last_used_at": now,
+				"last_used_ip": c.GetString(model.CtxKeyRealIPStr),
+			}).Error
 	}
 }
 
 func abortAPITokenUnauthorized(c *gin.Context, reason string) {
+	if c.FullPath() == "/mcp" {
+		mcpOAuthSetChallenge(c)
+	}
 	c.AbortWithStatusJSON(http.StatusUnauthorized, model.CommonResponse[any]{
 		Success: false,
 		Error:   "ApiErrorUnauthorized: " + reason,
