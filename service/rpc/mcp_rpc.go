@@ -103,7 +103,7 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 	if controlErr != nil {
 		return nil, controlErr
 	}
-	defer releaseControl()
+	releaseControl()
 	if !model.IsMCPRPCResult(taskType) {
 		return nil, errors.New("CallAgent: task type is not registered as MCP RPC")
 	}
@@ -153,10 +153,18 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		return nil, ErrMCPDisabled
 	}
 
-	if err := server.SendTask(&pb.Task{
+	// A reply can follow a transfer failure on the same receiver. Holding the
+	// control lease while waiting would block that receiver in rollback. Recheck
+	// admission inside Send so timeout cleanup still protects the actual send.
+	if err := server.SendTaskGuarded(&pb.Task{
 		Id:   taskID,
 		Type: taskType,
 		Data: string(body),
+	}, func() (func(), error) {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		return singleton.BeginServerControlFromContext(ctx, serverID)
 	}); err != nil {
 		if errors.Is(err, model.ErrTaskStreamOffline) {
 			return nil, ErrAgentOffline

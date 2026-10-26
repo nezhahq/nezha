@@ -306,11 +306,17 @@ func (s *Server) GetTaskStream() pb.NezhaService_RequestTaskServer {
 // edit/transfer rotations replacing *Server in the singleton map still share
 // a single lock across the old and new objects pointing at the same stream.
 func (s *Server) SendTask(task *pb.Task) error {
+	return s.SendTaskGuarded(task, nil)
+}
+
+// SendTaskGuarded holds admission through the actual Send, including transport
+// cleanup after timeout, but never through waiting for an agent reply.
+func (s *Server) SendTaskGuarded(task *pb.Task, admit func() (func(), error)) error {
 	h := s.taskStream.Load()
 	if h == nil {
 		return ErrTaskStreamOffline
 	}
-	return h.sendBefore(task, time.Now().Add(agentTaskSendTimeout), nil)
+	return h.sendBefore(task, time.Now().Add(agentTaskSendTimeout), admit)
 }
 
 // AttachStateStream returns the ownership generation used to serialize state

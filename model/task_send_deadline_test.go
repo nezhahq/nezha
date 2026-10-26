@@ -81,3 +81,47 @@ func TestQueuedTasksRemainBoundedAndRecheckAdmission(t *testing.T) {
 	holder := server.taskStream.Load()
 	require.ErrorIs(t, holder.sendBefore(&pb.Task{}, time.Now().Add(-time.Second), nil), context.DeadlineExceeded)
 }
+
+func TestGuardedTaskSendKeepsLeaseUntilTransportReturns(t *testing.T) {
+	stream := &stalledTaskStream{entered: make(chan struct{}), release: make(chan struct{})}
+	server := &Server{}
+	server.SetTaskStream(stream)
+	released := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		done <- server.SendTaskGuarded(&pb.Task{Type: TaskTypeExec}, func() (func(), error) {
+			return func() { close(released) }, nil
+		})
+	}()
+	<-stream.entered
+	defer func() {
+		close(stream.release)
+		select {
+		case <-released:
+		case <-time.After(time.Second):
+			t.Error("admission lease remained held after transport returned")
+		}
+	}()
+	select {
+	case err := <-done:
+		require.ErrorIs(t, err, ErrTaskStreamStalled)
+	case <-time.After(2 * time.Second):
+		t.Fatal("guarded send did not honor delivery timeout")
+	}
+	select {
+	case <-released:
+		t.Fatal("timeout released admission while the transport was still sending")
+	default:
+	}
+}
+
+func TestGuardedTaskSendRejectsAdmissionWithoutSending(t *testing.T) {
+	stream := &stalledTaskStream{entered: make(chan struct{}), release: make(chan struct{})}
+	defer close(stream.release)
+	server := &Server{}
+	server.SetTaskStream(stream)
+	denied := errors.New("server ownership changed")
+	err := server.SendTaskGuarded(&pb.Task{Type: TaskTypeExec}, func() (func(), error) { return nil, denied })
+	require.ErrorIs(t, err, denied)
+	require.Zero(t, stream.sent.Load(), "a rejected operation must never reach Send")
+}

@@ -53,7 +53,8 @@ func mcpOAuthIssuer() (string, error) {
 	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
 		return "", errors.New("MCP is disabled")
 	}
-	host := singleton.Conf.DashboardHost
+	// Issuers must not observe a host before persistence succeeds or during rollback.
+	host := singleton.Conf.NATDomainPolicySnapshot().DashboardHost
 	u, err := url.Parse("https://" + host)
 	if err != nil || host == "" || u.Host != host || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || strings.ContainsAny(host, "\\\r\n\t ") || singleton.Conf.JWTSecretKey == "" {
 		return "", errors.New("configure dashboard_host as the public HTTPS host before using MCP OAuth")

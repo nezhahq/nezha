@@ -26,7 +26,7 @@ func NATDomainAllowed(domain string, admin bool) bool {
 		return false
 	}
 	policy := Conf.NATDomainPolicySnapshot()
-	if policy.isReserved(domain) {
+	if policy.IsReservedHost(domain) {
 		return false
 	}
 	if admin {
@@ -51,7 +51,7 @@ func IsReservedDashboardHost(domain string) bool {
 	if Conf == nil || Conf.Config == nil {
 		return false
 	}
-	return Conf.NATDomainPolicySnapshot().isReserved(domain)
+	return Conf.NATDomainPolicySnapshot().IsReservedHost(domain)
 }
 
 // splitDashboardHostname 归一化为小写 hostname，对 bracketed IPv6（[::1]、

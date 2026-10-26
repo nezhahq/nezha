@@ -18,7 +18,8 @@ type NATDomainPolicy struct {
 	MemberDomains []string
 }
 
-func (p NATDomainPolicy) isReserved(domain string) bool {
+// IsReservedHost checks host reservations from this same committed snapshot.
+func (p NATDomainPolicy) IsReservedHost(domain string) bool {
 	target := splitDashboardHostname(domain)
 	if target == "" {
 		return false
@@ -76,7 +77,7 @@ func ValidateNATMemberDomains(domains []string, dashboard, install, reserved, li
 		if !validNATMemberHostname(host) {
 			return nil, fmt.Errorf("nat_member_domains must contain exact hostnames without wildcards or URLs")
 		}
-		if policy.isReserved(host) {
+		if policy.IsReservedHost(host) {
 			return nil, fmt.Errorf("nat_member_domains must not include a reserved dashboard host")
 		}
 		if !slices.Contains(normalized, host) {

@@ -87,10 +87,11 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 
 	api := r.Group("api/v1")
 	api.POST("/login", authMiddleware.LoginHandler)
-	api.GET("/oauth2/:provider", commonHandler(oauth2redirect))
 
 	fallbackAuthMw := fallbackAuthMiddleware(authMiddleware)
 	fallbackAuth := api.Group("", fallbackAuthMw)
+	// Binding needs the real JWT session; anonymous OAuth login remains available.
+	fallbackAuth.GET("/oauth2/:provider", commonHandler(oauth2redirect))
 	fallbackAuth.GET("/setting", commonHandler(listConfig))
 	fallbackAuth.GET("/oauth2/callback", commonHandler(oauth2callback(authMiddleware)))
 

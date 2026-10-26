@@ -39,8 +39,12 @@ func getRedirectURL(c *gin.Context) string {
 		scheme = "https://"
 	}
 	host := c.Request.Host
-	if !singleton.IsReservedDashboardHost(host) && singleton.Conf != nil && singleton.Conf.DashboardHost != "" {
-		host = singleton.Conf.DashboardHost
+	if singleton.Conf != nil {
+		// Check reservations and canonical host from one committed configuration.
+		policy := singleton.Conf.NATDomainPolicySnapshot()
+		if !policy.IsReservedHost(host) && policy.DashboardHost != "" {
+			host = policy.DashboardHost
+		}
 	}
 	return scheme + host + "/api/v1/oauth2/callback"
 }

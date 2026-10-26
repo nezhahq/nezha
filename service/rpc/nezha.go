@@ -213,8 +213,25 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 			if result.GetSuccessful() {
 				continue
 			}
-			if _, err := singleton.ServerTransferShared.MarkFailed(result.GetId(), result.GetData()); err != nil {
-				log.Printf("NEZHA>> ServerTransfer MarkFailed(%d) failed: %v", result.GetId(), err)
+			// Rollback may wait for a guarded Send's control lease. Keep the
+			// handler free to return on send failure: gRPC cancels Send only
+			// after this handler returns. At most one rollback worker exists
+			// per stream, and it finishes once transport cancellation frees Send.
+			transfer, transferID, reason := singleton.ServerTransferShared, result.GetId(), result.GetData()
+			rolledBack := make(chan error, 1)
+			go func() {
+				_, err := transfer.MarkFailed(transferID, reason)
+				if err != nil {
+					log.Printf("NEZHA>> ServerTransfer MarkFailed(%d) failed: %v", transferID, err)
+				}
+				rolledBack <- err
+			}()
+			select {
+			case <-rolledBack:
+			case <-failed:
+				return model.ErrTaskStreamStalled
+			case <-stream.Context().Done():
+				return stream.Context().Err()
 			}
 		default:
 			if model.IsMCPRPCResult(result.GetType()) {

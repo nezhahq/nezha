@@ -50,8 +50,9 @@ func listConfig(c *gin.Context) (*model.SettingResponse, error) {
 		configForGuests := config.ConfigForGuests
 		var configDashboard model.ConfigDashboard
 		if authorized {
-			configDashboard.AgentTLS = singleton.Conf.AgentTLS
-			configDashboard.InstallHost = singleton.Conf.InstallHost
+			configDashboard.AgentTLS = config.AgentTLS
+			// Reuse the committed snapshot instead of racing host persistence/rollback.
+			configDashboard.InstallHost = config.InstallHost
 		}
 		conf = model.SettingResponse{
 			Config: model.Setting{

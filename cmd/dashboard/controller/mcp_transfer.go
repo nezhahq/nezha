@@ -107,9 +107,11 @@ func mcpTransferURLBase(c *gin.Context) (string, error) {
 	}
 
 	requestHost := strings.TrimSpace(c.Request.Host)
-	host := strings.TrimSpace(singleton.Conf.DashboardHost)
+	// Bearer URLs must use only persisted host settings, including reservations.
+	policy := singleton.Conf.NATDomainPolicySnapshot()
+	host := strings.TrimSpace(policy.DashboardHost)
 	if host == "" {
-		if !singleton.IsReservedDashboardHost(requestHost) {
+		if !policy.IsReservedHost(requestHost) {
 			return "", errMCPTransferHostNotConfigured
 		}
 		host = requestHost
