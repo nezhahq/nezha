@@ -30,11 +30,15 @@ type serveNATFixture struct {
 
 func newServeNATFixture(t *testing.T) serveNATFixture {
 	t.Helper()
+	originalUsers := singleton.UserInfoMap
+	originalConf := singleton.Conf
+	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{ConfigDashboard: model.ConfigDashboard{DashboardHost: "panel.example.test"}}}
+	singleton.UserInfoMap = map[uint64]model.UserInfo{1: {Role: model.RoleAdmin}, 100: {Role: model.RoleMember}}
 	originalDB, originalServerShared, originalHandler := singleton.DB, singleton.ServerShared, rpcService.NezhaHandlerSingleton
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	require.NoError(t, db.AutoMigrate(model.Server{}))
-	server := &model.Server{Common: model.Common{ID: 7}, UUID: "serve-nat-test", Name: "serve-nat-test"}
+	server := &model.Server{Common: model.Common{ID: 7, UserID: 1}, UUID: "serve-nat-test", Name: "serve-nat-test"}
 	require.NoError(t, db.Create(server).Error)
 	singleton.DB = db
 	singleton.ServerShared = singleton.NewServerClass()
@@ -46,6 +50,8 @@ func newServeNATFixture(t *testing.T) serveNATFixture {
 	server.SetTaskStream(taskStream)
 	taskStream.server = server
 	t.Cleanup(func() {
+		singleton.UserInfoMap = originalUsers
+		singleton.Conf = originalConf
 		rpcService.NezhaHandlerSingleton, singleton.ServerShared, singleton.DB = originalHandler, originalServerShared, originalDB
 		if dbSQL, dbErr := db.DB(); dbErr == nil {
 			_ = dbSQL.Close()
@@ -81,6 +87,7 @@ func (*serveNATTaskStream) RecvMsg(any) error                { return io.EOF }
 
 type serveNATResponseWriter struct {
 	conn           *serveNATConn
+	prefetched     []byte
 	header         http.Header
 	status, writes int
 	body           string
@@ -100,7 +107,11 @@ func (writer *serveNATResponseWriter) Write(data []byte) (int, error) {
 func (writer *serveNATResponseWriter) WriteHeader(status int) { writer.status = status }
 func (writer *serveNATResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	go func() { _, _ = writer.conn.Read(make([]byte, 1)) }()
-	return writer.conn, bufio.NewReadWriter(bufio.NewReader(writer.conn), bufio.NewWriter(writer.conn)), nil
+	reader := bufio.NewReader(io.MultiReader(bytes.NewReader(writer.prefetched), writer.conn))
+	if len(writer.prefetched) > 0 {
+		_, _ = reader.Peek(len(writer.prefetched))
+	}
+	return writer.conn, bufio.NewReadWriter(reader, bufio.NewWriter(writer.conn)), nil
 }
 
 type serveNATBody struct{ closeCount atomic.Int32 }
@@ -109,6 +120,7 @@ func (*serveNATBody) Read([]byte) (int, error) { return 0, io.EOF }
 func (body *serveNATBody) Close() error        { body.closeCount.Add(1); return nil }
 
 type serveNATConn struct {
+	deadlineErr             error
 	closed, readDone        chan struct{}
 	readDoneOnce, closeOnce sync.Once
 	closeCount              atomic.Int32
@@ -130,7 +142,7 @@ func (conn *serveNATConn) Close() error {
 }
 func (*serveNATConn) LocalAddr() net.Addr              { return serveNATAddr("local") }
 func (*serveNATConn) RemoteAddr() net.Addr             { return serveNATAddr("remote") }
-func (*serveNATConn) SetDeadline(time.Time) error      { return nil }
+func (conn *serveNATConn) SetDeadline(time.Time) error { return conn.deadlineErr }
 func (*serveNATConn) SetReadDeadline(time.Time) error  { return nil }
 func (*serveNATConn) SetWriteDeadline(time.Time) error { return nil }
 
@@ -148,7 +160,12 @@ type serveNATAgent struct {
 	closeCount atomic.Int32
 }
 
-func (agent *serveNATAgent) Read([]byte) (int, error) { return 0, agent.readErr }
+func (agent *serveNATAgent) Read([]byte) (int, error) {
+	if agent.writeDone != nil {
+		<-agent.writeDone
+	}
+	return 0, agent.readErr
+}
 func (agent *serveNATAgent) Write(data []byte) (int, error) {
 	agent.mu.Lock()
 	defer agent.mu.Unlock()

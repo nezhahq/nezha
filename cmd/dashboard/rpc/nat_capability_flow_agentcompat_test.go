@@ -35,14 +35,15 @@ func TestServeNATAgentCompatPublishesExactStreamAfterRequestTransfer(t *testing.
 	access, err := serviceRPC.ParseAgentCompatIOStreamCapability(capability.String())
 	require.NoError(t, err)
 	connection := newServeNATConn()
-	writer := &serveNATResponseWriter{conn: connection}
-	agent := &orderedNATAgent{readStarted: make(chan struct{}), readRelease: make(chan struct{}), writeStarted: make(chan struct{})}
+	writer := &serveNATResponseWriter{conn: connection, prefetched: []byte("payload")}
+	agent := &orderedNATAgent{writeMarker: []byte("payload"), readStarted: make(chan struct{}), readRelease: make(chan struct{}), writeStarted: make(chan struct{})}
 	taskStreamIDReady := make(chan string, 1)
 	request := &http.Request{
-		Method: http.MethodPost,
-		URL:    &url.URL{Scheme: "http", Host: "example.test", Path: "/nat"},
-		Header: make(http.Header),
-		Body:   io.NopCloser(strings.NewReader("payload")),
+		Method:        http.MethodPost,
+		URL:           &url.URL{Scheme: "http", Host: "example.test", Path: "/nat"},
+		Header:        make(http.Header),
+		Body:          io.NopCloser(strings.NewReader("payload")),
+		ContentLength: int64(len("payload")),
 	}
 	request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, capability.String())
 	request.Header.Set("Authorization", natTestForeignJWT)
@@ -60,7 +61,7 @@ func TestServeNATAgentCompatPublishesExactStreamAfterRequestTransfer(t *testing.
 	}
 	serveDone := make(chan struct{})
 	go func() {
-		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91}, ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(serveDone)
 	}()
 	streamID, err := fixture.handler.WaitAgentCompatIOStreamCapability(context.Background(), serviceRPC.AgentCompatCapabilityAccess{
@@ -144,7 +145,7 @@ func TestServeNATAgentCompatDoesNotForwardDashboardCredentials(t *testing.T) {
 	}
 	done := make(chan struct{})
 	go func() {
-		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91}, ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(done)
 	}()
 	select {
@@ -166,6 +167,7 @@ func TestServeNATAgentCompatDoesNotForwardDashboardCredentials(t *testing.T) {
 }
 
 type orderedNATAgent struct {
+	writeMarker  []byte
 	mu           sync.Mutex
 	written      bytes.Buffer
 	readStarted  chan struct{}
@@ -185,8 +187,11 @@ func (agent *orderedNATAgent) Read([]byte) (int, error) {
 func (agent *orderedNATAgent) Write(data []byte) (int, error) {
 	agent.mu.Lock()
 	count, err := agent.written.Write(data)
+	complete := len(agent.writeMarker) == 0 || bytes.Contains(agent.written.Bytes(), agent.writeMarker)
 	agent.mu.Unlock()
-	agent.writeOnce.Do(func() { close(agent.writeStarted) })
+	if complete {
+		agent.writeOnce.Do(func() { close(agent.writeStarted) })
+	}
 	return count, err
 }
 

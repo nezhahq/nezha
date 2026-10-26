@@ -68,9 +68,16 @@ func updateProfile(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("incorrect password")
 	}
 
-	hash, err := bcrypt.GenerateFromPassword([]byte(pf.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
+	// Optional profile fields must not silently replace credentials with empty values.
+	if pf.NewPassword != "" {
+		if len(pf.NewPassword) < 8 || len(pf.NewPassword) > 72 {
+			return nil, singleton.Localizer.ErrorT("password must contain 8 to 72 bytes")
+		}
+		hash, err := bcrypt.GenerateFromPassword([]byte(pf.NewPassword), bcrypt.DefaultCost)
+		if err != nil {
+			return nil, err
+		}
+		user.Password = string(hash)
 	}
 
 	var bindCount int64
@@ -82,8 +89,9 @@ func updateProfile(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("you don't have any oauth2 bindings")
 	}
 
-	user.Username = pf.NewUsername
-	user.Password = string(hash)
+	if pf.NewUsername != "" {
+		user.Username = pf.NewUsername
+	}
 	user.RejectPassword = pf.RejectPassword
 	user.TokenVersion += 1
 	if err := singleton.DB.Save(&user).Error; err != nil {
@@ -176,6 +184,10 @@ func batchDeleteUser(c *gin.Context) (any, error) {
 		return nil, err
 	}
 	auth := c.MustGet(model.CtxKeyAuthorizedUser).(*model.User)
+	// User zero owns legacy system resources and is not a deletable account.
+	if slices.Contains(ids, uint64(0)) {
+		return nil, singleton.Localizer.ErrorT("cannot delete reserved user")
+	}
 	if slices.Contains(ids, auth.ID) {
 		return nil, singleton.Localizer.ErrorT("can't delete yourself")
 	}

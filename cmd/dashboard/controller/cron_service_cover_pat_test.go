@@ -124,6 +124,7 @@ func TestCreateCron_RejectsCoverAllForServerLimitedPAT(t *testing.T) {
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 17, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createCron))
@@ -161,6 +162,7 @@ func TestCreateCron_RejectsCoverIgnoreAllWithEmptyServersForLimitedPAT(t *testin
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 18, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createCron))
@@ -195,6 +197,7 @@ func TestCreateService_AllowsCoverIgnoreAllEmptySkipForLimitedPAT(t *testing.T) 
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 21, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createService))
@@ -220,6 +223,7 @@ func TestCreateService_RejectsCoverAllForServerLimitedPAT(t *testing.T) {
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 19, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createService))
@@ -256,6 +260,7 @@ func TestCreateCron_RejectsCoverAllWithDenyListCoveringOnlyWhitelistedServers(t 
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 31, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createCron))
@@ -292,6 +297,7 @@ func TestCreateCron_AllowsCoverAllWhenDenyListCoversAllNonWhitelistedServers(t *
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 41, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createCron))
@@ -321,6 +327,7 @@ func TestCreateService_RejectsCoverAllWithSkipListCoveringOnlyWhitelistedServers
 	setupCoverPATFixture(t)
 
 	tok := &model.APIToken{ID: 32, UserID: 100}
+	tok.SetScopes([]string{model.ScopeCronWrite, model.ScopeCronExec})
 	tok.SetServerIDs([]uint64{1})
 
 	r := coverPATRouter(t, tok, commonHandler(createService))

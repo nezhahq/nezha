@@ -1,9 +1,11 @@
 package rpc
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/goccy/go-json"
@@ -16,7 +18,41 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
+var natActiveRequests = make(chan struct{}, 128)
+
 func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
+	// Reject unsupported protocols before allocating streams or tasking the agent.
+	if _, ok := w.(http.Hijacker); !ok {
+		http.Error(w, "NAT requires HTTP/1.1", http.StatusHTTPVersionNotSupported)
+		return
+	}
+	if r.ContentLength > utils.NATMaxBodyBytes {
+		http.Error(w, "NAT body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	singleton.UserLock.RLock()
+	owner, known := singleton.UserInfoMap[natConfig.UserID]
+	singleton.UserLock.RUnlock()
+	admin := known && owner.Role.IsAdmin()
+	release, _, accessErr := singleton.BeginServerControl(natConfig.ServerID, natConfig.UserID, admin)
+	if !known || accessErr != nil || !singleton.NATDomainAllowed(natConfig.Domain, admin) {
+		if release != nil {
+			release()
+		}
+		http.Error(w, "NAT permission denied", http.StatusForbidden)
+		return
+	}
+	var releaseOnce sync.Once
+	releaseControl := func() { releaseOnce.Do(release) }
+	defer releaseControl()
+	select {
+	case natActiveRequests <- struct{}{}:
+		defer func() { <-natActiveRequests }()
+	default:
+		http.Error(w, "NAT capacity exceeded", http.StatusTooManyRequests)
+		return
+	}
+
 	capabilityLease, capabilityErr := prepareNATCapability(r, natConfig)
 	if capabilityErr != nil {
 		w.WriteHeader(http.StatusServiceUnavailable)
@@ -80,6 +116,8 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		return
 	}
 
+	releaseControl() // The registered stream is now covered by transfer revocation.
+
 	// Credential invariant at NAT ingress: credentials issued by this
 	// dashboard — the panel-signed JWT (verified by signature only, expiry
 	// deliberately ignored) and the panel API token — must never become origin
@@ -94,6 +132,10 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 		return
 	}
 
+	requestContext, cancel := context.WithTimeout(r.Context(), utils.NATMaxDuration)
+	defer cancel()
+	stop := context.AfterFunc(requestContext, func() { _ = wWrapped.Close() })
+	defer stop()
 	if err := handler.UserConnected(streamId, wWrapped); err != nil {
 		if closeErr := wWrapped.Close(); closeErr != nil {
 			log.Printf("NEZHA>> NAT request wrapper close error after user connection failure: %v", closeErr)

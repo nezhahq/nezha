@@ -69,9 +69,8 @@ func TestGetDDNSProvidersAllowsOwnedProfile(t *testing.T) {
 	}
 }
 
-// An admin-owned profile may be shared across servers (admin resources are
-// global), so an admin profile resolves regardless of the server owner.
-func TestGetDDNSProvidersAllowsAdminOwnedProfile(t *testing.T) {
+// Administrative ownership is not an explicit grant to another tenant.
+func TestGetDDNSProvidersSkipsForeignAdminOwnedProfile(t *testing.T) {
 	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
 		1:   {Role: model.RoleAdmin}, // admin / profile owner
 		100: {Role: model.RoleMember},
@@ -88,8 +87,8 @@ func TestGetDDNSProvidersAllowsAdminOwnedProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(providers) != 1 {
-		t.Fatalf("expected admin-owned profile to resolve, got %d provider(s)", len(providers))
+	if len(providers) != 0 {
+		t.Fatalf("expected foreign admin-owned profile to be skipped, got %d provider(s)", len(providers))
 	}
 }
 

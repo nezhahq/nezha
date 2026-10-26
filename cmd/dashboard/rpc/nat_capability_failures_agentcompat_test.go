@@ -28,7 +28,7 @@ func TestServeNATAgentCompatReleasesCapabilityBeforeServerDispatch(t *testing.T)
 	t.Cleanup(func() { singleton.ServerShared = originalServers })
 	request := capabilityRequest(capability)
 
-	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 101}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 101, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertNATCapabilitySlotReleased(t, fixture.handler, access)
 	require.Equal(t, 0, fixture.handler.StreamCount())
@@ -41,7 +41,7 @@ func TestServeNATAgentCompatTaskStreamUnavailableReleasesCapabilityBeforeActivit
 	fixture.server.SetTaskStream(nil)
 	request := capabilityRequest(capability)
 
-	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 105}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 105, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertNATCapabilitySlotReleased(t, fixture.handler, access)
 	require.Equal(t, 0, fixture.handler.StreamCount())
@@ -65,7 +65,7 @@ func TestServeNATAgentCompatCreateQuotaFailurePreservesExistingStreams(t *testin
 	})
 	request := capabilityRequest(capability)
 
-	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 106}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(&serveNATResponseWriter{}, request, &model.NAT{Common: model.Common{ID: 106, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertNATCapabilitySlotReleased(t, fixture.handler, access)
 	require.Equal(t, existingStreamCount, fixture.handler.StreamCount())
@@ -94,7 +94,7 @@ func TestServeNATAgentCompatPublishCancellationClosesRegistryOwnedEndpoints(t *t
 	writer := &serveNATResponseWriter{conn: connection}
 	serveDone := make(chan struct{})
 	go func() {
-		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 107}, ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 107, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(serveDone)
 	}()
 	select {
@@ -132,7 +132,7 @@ func TestServeNATAgentCompatSendTaskFailureReleasesStreamAndCapabilityBeforeWrap
 	request.Body = &serveNATBody{}
 	writer := &serveNATResponseWriter{conn: connection}
 
-	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 102}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 102, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertCapabilityReleased(t, fixture.handler, access)
 	require.Equal(t, 0, fixture.handler.StreamCount())
@@ -143,13 +143,17 @@ func TestServeNATAgentCompatWrapperFailureReleasesCapabilityWithoutSecondRespons
 	fixture := newServeNATFixture(t)
 	capability, access := registerNATCapabilityForTest(t, fixture.handler, fixture.server.ID, 103)
 	request := capabilityRequest(capability)
-	writer := &nonHijackingResponseWriter{}
+	connection := newServeNATConn()
+	connection.deadlineErr = io.ErrClosedPipe
+	writer := &serveNATResponseWriter{conn: connection}
 
-	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 103}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 103, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertCapabilityReleased(t, fixture.handler, access)
 	require.Equal(t, 0, fixture.handler.StreamCount())
 	require.Equal(t, 0, writer.writes)
+	require.Equal(t, 0, writer.status)
+	require.EqualValues(t, 1, connection.closeCount.Load())
 }
 
 func TestServeNATAgentCompatStartFailureCancelsPublishedCapabilityAndClosesEndpoints(t *testing.T) {
@@ -167,7 +171,7 @@ func TestServeNATAgentCompatStartFailureCancelsPublishedCapabilityAndClosesEndpo
 	request := capabilityRequest(capability)
 	writer := &serveNATResponseWriter{conn: connection}
 
-	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 104}, ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 104, UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
 	assertCapabilityReleased(t, fixture.handler, access)
 	require.Equal(t, 0, fixture.handler.StreamCount())

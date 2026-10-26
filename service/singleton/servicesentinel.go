@@ -81,7 +81,7 @@ func (status *serviceTaskStatus) appendResult(now time.Time, reporter uint64, re
 	sample := bucket.reporters[reporter]
 	if result.Successful {
 		sample.successful = true
-		sample.delay = float64(result.Delay)
+		sample.delay = model.FiniteStateValue(float64(result.Delay))
 	} else {
 		sample.failed = true
 	}
@@ -96,7 +96,7 @@ func (status *serviceTaskStatus) appendResult(now time.Time, reporter uint64, re
 	}
 	if result.Successful {
 		status.history.Up++
-		status.history.Delay = (status.history.Delay*float64(status.history.Up-1) + float64(result.Delay)) / float64(status.history.Up)
+		status.history.Delay = (status.history.Delay*float64(status.history.Up-1) + model.FiniteStateValue(float64(result.Delay))) / float64(status.history.Up)
 	} else {
 		status.history.Down++
 	}
@@ -314,13 +314,18 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
 			continue
 		}
+		if service.Duration > model.MaxServiceDuration {
+			log.Printf("NEZHA>> quarantining service %d: duration exceeds 30 days", service.ID)
+			continue
+		}
 		task := service
 		// 通过cron定时将服务监控任务传递给任务调度管道
 		service.CronJobID, err = CronShared.AddFunc(task.CronSpec(), func() {
 			ss.dispatchBus <- task
 		})
 		if err != nil {
-			return err
+			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
+			continue
 		}
 		ss.services[service.ID] = service
 		ss.serviceCurrentStatusData[service.ID] = new(serviceTaskStatus)

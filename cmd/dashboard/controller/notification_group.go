@@ -70,6 +70,8 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 	if err := c.ShouldBindJSON(&ngf); err != nil {
 		return 0, err
 	}
+	// Compact removes adjacent duplicates only.
+	slices.Sort(ngf.Notifications)
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
 	if !singleton.NotificationShared.CheckPermission(c, slices.Values(ngf.Notifications)) {
@@ -155,6 +157,8 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 	}
 
 	ngDB.Name = ngf.Name
+	// Compact removes adjacent duplicates only.
+	slices.Sort(ngf.Notifications)
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
 	var count int64

@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"math"
 
 	pb "github.com/nezhahq/nezha/proto"
 )
@@ -87,11 +88,24 @@ func (s *HostState) PB() *pb.State {
 	}
 }
 
+// FiniteStateValue prevents one agent from poisoning JSON for every viewer.
+// Zero is the legacy numeric fallback for an unavailable metric.
+func FiniteStateValue(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
+}
+
 func PB2State(s *pb.State) HostState {
+	gpu := append([]float64(nil), s.GetGpu()...)
+	for i := range gpu {
+		gpu[i] = FiniteStateValue(gpu[i])
+	}
 	var gs []GPUStat
 	for _, g := range s.GetGpus() {
 		gs = append(gs, GPUStat{
-			Utilization: g.GetUtilization(),
+			Utilization: FiniteStateValue(g.GetUtilization()),
 			MemoryUsed:  g.GetMemoryUsed(),
 			MemoryTotal: g.GetMemoryTotal(),
 		})
@@ -101,12 +115,12 @@ func PB2State(s *pb.State) HostState {
 	for _, t := range s.GetTemperatures() {
 		ts = append(ts, SensorTemperature{
 			Name:        t.GetName(),
-			Temperature: t.GetTemperature(),
+			Temperature: FiniteStateValue(t.GetTemperature()),
 		})
 	}
 
 	return HostState{
-		CPU:            s.GetCpu(),
+		CPU:            FiniteStateValue(s.GetCpu()),
 		MemUsed:        s.GetMemUsed(),
 		SwapUsed:       s.GetSwapUsed(),
 		DiskUsed:       s.GetDiskUsed(),
@@ -115,15 +129,15 @@ func PB2State(s *pb.State) HostState {
 		NetInSpeed:     s.GetNetInSpeed(),
 		NetOutSpeed:    s.GetNetOutSpeed(),
 		Uptime:         s.GetUptime(),
-		Load1:          s.GetLoad1(),
-		Load5:          s.GetLoad5(),
-		Load15:         s.GetLoad15(),
+		Load1:          FiniteStateValue(s.GetLoad1()),
+		Load5:          FiniteStateValue(s.GetLoad5()),
+		Load15:         FiniteStateValue(s.GetLoad15()),
 		TcpConnCount:   s.GetTcpConnCount(),
 		UdpConnCount:   s.GetUdpConnCount(),
 		ProcessCount:   s.GetProcessCount(),
 		Temperatures:   ts,
 		GPUs:           gs,
-		GPU:            s.GetGpu(),
+		GPU:            gpu,
 	}
 }
 

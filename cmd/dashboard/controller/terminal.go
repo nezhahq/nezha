@@ -47,6 +47,12 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	releaseControl, controlErr := beginServerControl(c, server.ID)
+	if controlErr != nil {
+		return nil, controlErr
+	}
+	defer releaseControl()
+
 	streamId, err := uuid.GenerateUUID()
 	if err != nil {
 		return nil, err

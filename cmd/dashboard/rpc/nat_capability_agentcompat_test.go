@@ -247,6 +247,7 @@ func TestPrepareNATCapabilityAgentCompatKeepsForeignAndMissingQueryAndCookie(t *
 }
 
 func TestServeNATAgentCompatSensitiveHeadersStayOutOfErrorsAndLogs(t *testing.T) {
+	fixture := newServeNATFixture(t)
 	installNATCredentialTestGate(t)
 	request := &http.Request{Header: make(http.Header)}
 	request.Header.Set(agentcompatcontract.IOStreamCapabilityHeader, "capability-secret")
@@ -257,7 +258,7 @@ func TestServeNATAgentCompatSensitiveHeadersStayOutOfErrorsAndLogs(t *testing.T)
 	log.SetOutput(&logs)
 	t.Cleanup(func() { log.SetOutput(originalOutput) })
 
-	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91}, ServerID: 81})
+	ServeNAT(writer, request, &model.NAT{Common: model.Common{ID: 91, UserID: 1}, ServerID: fixture.server.ID})
 
 	if writer.status != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want %d", writer.status, http.StatusServiceUnavailable)

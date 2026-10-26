@@ -150,6 +150,11 @@ func serverStream(c *gin.Context) (any, error) {
 	for {
 		stat, err := getServerStat(count == 0, userId, isAdmin, patAccessor, patCacheKey)
 		if err != nil {
+			// A malformed sample must not spin a core per connected viewer.
+			time.Sleep(2 * time.Second)
+			if conn.WriteControl(websocket.PingMessage, nil, time.Now().Add(time.Second)) != nil {
+				break
+			}
 			continue
 		}
 		if err := conn.WriteMessage(websocket.TextMessage, stat); err != nil {

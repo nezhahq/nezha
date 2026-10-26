@@ -65,7 +65,7 @@ func TestTransferDownload_AuditsTokenExpired(t *testing.T) {
 		"failed download must still produce an audit row so SIEM can observe the rejection")
 }
 
-func TestTransferDownload_AuditsRevalidateFailureWhenMCPDisabled(t *testing.T) {
+func TestTransferDownload_RejectsWithoutAuditWhenMCPDisabled(t *testing.T) {
 	cleanup, uid := setupMCPTest(t)
 	defer cleanup()
 	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
@@ -86,10 +86,10 @@ func TestTransferDownload_AuditsRevalidateFailureWhenMCPDisabled(t *testing.T) {
 	req := httptest.NewRequest("GET", "/mcp/download/"+url, nil)
 	r.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-	require.Equal(t, int64(1),
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Equal(t, int64(0),
 		countAuditRows(t, "fs.download", model.MCPOutcomeMCPDisabled),
-		"kill switch must be observable in audit log with outcome=mcp_disabled, not silently swallowed")
+		"disabled MCP must not let anonymous traffic grow the audit database")
 }
 
 func TestTransferUpload_AuditsTokenExpired(t *testing.T) {
@@ -118,7 +118,7 @@ func TestTransferUpload_AuditsTokenExpired(t *testing.T) {
 		"failed upload must still produce an audit row")
 }
 
-func TestTransferUpload_AuditsRevalidateFailureWhenMCPDisabled(t *testing.T) {
+func TestTransferUpload_RejectsWithoutAuditWhenMCPDisabled(t *testing.T) {
 	cleanup, uid := setupMCPTest(t)
 	defer cleanup()
 	tok, _ := mkToken(t, uid, []string{model.ScopeServerWrite}, nil)
@@ -140,8 +140,8 @@ func TestTransferUpload_AuditsRevalidateFailureWhenMCPDisabled(t *testing.T) {
 	req.ContentLength = 0
 	r.ServeHTTP(w, req)
 
-	require.Equal(t, http.StatusUnauthorized, w.Code)
-	require.Equal(t, int64(1),
+	require.Equal(t, http.StatusNotFound, w.Code)
+	require.Equal(t, int64(0),
 		countAuditRows(t, "fs.upload", model.MCPOutcomeMCPDisabled),
-		"upload kill switch must be observable in audit log")
+		"disabled uploads must not allocate audit rows")
 }

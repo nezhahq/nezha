@@ -28,10 +28,10 @@ func TestServeNATClosesHijackedResourcesWhenStreamDisappearsBeforeUserTransfer(t
 		return fixture.handler.CloseStream(nat.StreamID)
 	}
 
-	ServeNAT(writer, request, &model.NAT{ServerID: fixture.server.ID, Host: "target.example"})
+	ServeNAT(writer, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 
-	if got := body.closeCount.Load(); got == 0 {
-		t.Fatal("request body was not closed after failed transfer")
+	if got := body.closeCount.Load(); got != 0 {
+		t.Fatal("original net/http body must not be used after hijack")
 	}
 	if got := conn.closeCount.Load(); got != 1 {
 		t.Fatalf("hijacked connection close count = %d, want 1", got)
@@ -64,7 +64,7 @@ func TestServeNATTransfersRequestAndRegistryOwnsSuccessfulCleanup(t *testing.T) 
 
 	serveDone := make(chan struct{})
 	go func() {
-		ServeNAT(writer, request, &model.NAT{ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(writer, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(serveDone)
 	}()
 
@@ -78,8 +78,8 @@ func TestServeNATTransfersRequestAndRegistryOwnsSuccessfulCleanup(t *testing.T) 
 	case <-time.After(time.Second):
 		t.Fatal("ServeNAT did not finish after the successful stream was closed")
 	}
-	if got := body.closeCount.Load(); got == 0 {
-		t.Fatal("registry-owned request body was not closed")
+	if got := body.closeCount.Load(); got != 0 {
+		t.Fatal("original net/http body must not be used after hijack")
 	}
 	if got := conn.closeCount.Load(); got != 1 {
 		t.Fatalf("registry-owned hijacked connection close count = %d, want 1", got)

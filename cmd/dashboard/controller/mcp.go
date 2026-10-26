@@ -512,8 +512,9 @@ func requireServerAccess(c *gin.Context, serverID uint64) (*model.Server, error)
 	if server == nil {
 		return nil, errMCPServerOffline
 	}
-	if !server.HasPermission(c) {
+	if !server.HasPermission(c) || (!callerIsAdmin(c) && singleton.ServerControlTransitioning(serverID)) {
 		return nil, errMCPPermDenied
 	}
+	c.Request = c.Request.WithContext(singleton.WithServerControlIdentity(c.Request.Context(), getUid(c), callerIsAdmin(c)))
 	return server, nil
 }

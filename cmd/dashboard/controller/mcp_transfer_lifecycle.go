@@ -26,6 +26,13 @@ func openFsTransferStream(ctx context.Context, serverID uint64, req *model.FsTra
 	if server == nil || server.GetTaskStream() == nil {
 		return nil, func() {}, errors.New("server offline")
 	}
+	releaseControl, controlErr := singleton.BeginServerControlFromContext(ctx, serverID)
+	if controlErr != nil {
+		return nil, func() {}, controlErr
+	}
+	var controlOnce sync.Once
+	releaseAdmission := func() { controlOnce.Do(releaseControl) }
+	defer releaseAdmission()
 	handler := rpc.NezhaHandlerSingleton
 
 	streamID, err := uuid.GenerateUUID()
@@ -61,6 +68,7 @@ func openFsTransferStream(ctx context.Context, serverID uint64, req *model.FsTra
 		return nil, func() {}, err
 	}
 
+	releaseAdmission() // Registered streams are now covered by ownership revocation.
 	agentStream, ok := handler.WaitForAgent(ctx, streamID, 30*time.Second)
 	if !ok {
 		cleanup()

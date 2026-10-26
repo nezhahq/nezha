@@ -22,7 +22,7 @@ func TestDashboardRejectsIncompleteHTTPHeaders(t *testing.T) {
 			server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("incomplete headers reached handler") }))
 			server.Config = newDashboardHTTPServer(server.Config.Handler)
 			require.Positive(t, server.Config.ReadHeaderTimeout)
-			server.Config.ReadHeaderTimeout = 50 * time.Millisecond
+			server.Config.ReadHeaderTimeout = 250 * time.Millisecond
 			if useTLS {
 				server.StartTLS()
 			} else {

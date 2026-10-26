@@ -155,6 +155,10 @@ func PersistTransfer(transfer model.Transfer) error {
 
 // CleanMonitorHistory 清理流量记录（TSDB 有自己的保留策略）
 func CleanMonitorHistory() {
+	// Audit retention is finite even when MCP was subsequently disabled.
+	if err := DB.Where("created_at < ?", time.Now().AddDate(0, 0, -90)).Delete(&model.MCPAuditLog{}).Error; err != nil {
+		log.Printf("NEZHA>> audit retention cleanup: %v", err)
+	}
 	// 清理已被删除的服务器的流量记录
 	DB.Unscoped().Delete(&model.Transfer{}, "server_id NOT IN (SELECT `id` FROM servers)")
 	// 计算可清理流量记录的时长
@@ -181,7 +185,10 @@ func CleanMonitorHistory() {
 				}
 			} else {
 				// 更新特定机器可以清理数据点
-				for id := range rule.Ignore {
+				for id, included := range rule.Ignore {
+					if !included {
+						continue
+					}
 					if specialServerKeep[id].IsZero() || specialServerKeep[id].After(dataCouldRemoveBefore) {
 						specialServerKeep[id] = dataCouldRemoveBefore
 						specialServerIDs = append(specialServerIDs, id)
@@ -191,6 +198,10 @@ func CleanMonitorHistory() {
 		}
 	}
 	for id, couldRemove := range specialServerKeep {
+		// Retain history required by either a global or server-specific rule.
+		if !allServerKeep.IsZero() && allServerKeep.Before(couldRemove) {
+			couldRemove = allServerKeep
+		}
 		DB.Unscoped().Delete(&model.Transfer{}, "server_id = ? AND datetime(`created_at`) < datetime(?)", id, couldRemove)
 	}
 	if len(specialServerIDs) == 0 {

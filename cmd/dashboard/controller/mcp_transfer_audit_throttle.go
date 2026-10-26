@@ -19,6 +19,7 @@ type transferAnonAuditThrottle struct {
 	mu     sync.Mutex
 	window time.Duration
 	limit  int
+	global anonHitBucket
 	hits   map[string]*anonHitBucket
 	clock  func() time.Time
 }
@@ -38,25 +39,34 @@ func newTransferAnonAuditThrottle(window time.Duration, perWindow int) *transfer
 }
 
 // shouldRecord reports whether the anonymous failure for this IP should
-// land in the audit table. Empty ip is treated as "always record" since
-// suppressing it would silently lose signal in test/headless contexts.
+// land in the audit table. Unknown sources share one bucket.
 func (t *transferAnonAuditThrottle) shouldRecord(ip string) bool {
+	// Missing source information must consume a shared budget, never bypass it.
 	if ip == "" {
-		return true
+		ip = "unknown-peer"
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	now := t.clock()
 	t.pruneLocked(now)
+	// Distributed sources share a hard write budget; entries cannot grow without bound.
+	if t.global.firstAt.IsZero() || now.Sub(t.global.firstAt) >= t.window {
+		t.global = anonHitBucket{firstAt: now}
+	}
+	if t.global.count >= 60 {
+		return false
+	}
 
 	b, ok := t.hits[ip]
 	if !ok || now.Sub(b.firstAt) >= t.window {
+		t.global.count++
 		t.hits[ip] = &anonHitBucket{firstAt: now, count: 1}
 		return true
 	}
 	if b.count >= t.limit {
 		return false
 	}
+	t.global.count++
 	b.count++
 	return true
 }

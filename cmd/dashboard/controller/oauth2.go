@@ -6,10 +6,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	jwt "github.com/appleboy/gin-jwt/v2"
 	"github.com/gin-gonic/gin"
-	"github.com/patrickmn/go-cache"
 	"github.com/tidwall/gjson"
 	"golang.org/x/oauth2"
 	"gorm.io/gorm"
@@ -62,6 +63,19 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 		return nil, err
 	}
 
+	if model.Oauth2LoginType(rTypeInt) != model.RTypeLogin && model.Oauth2LoginType(rTypeInt) != model.RTypeBind {
+		return nil, singleton.Localizer.ErrorT("invalid OAuth action")
+	}
+	var initiatingUser uint64
+	var initiatingSession string
+	if model.Oauth2LoginType(rTypeInt) == model.RTypeBind {
+		user, ok := c.Get(model.CtxKeyAuthorizedUser)
+		initiatingSession = c.GetString(jwtClaimKeyID)
+		if !ok || initiatingSession == "" {
+			return nil, singleton.Localizer.ErrorT("unauthorized")
+		}
+		initiatingUser = user.(*model.User).ID
+	}
 	o2confRaw, has := singleton.Conf.Oauth2[provider]
 	if !has {
 		return nil, singleton.Localizer.ErrorT("provider not found")
@@ -75,11 +89,13 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 	}
 	state, stateKey := randomString[:16], randomString[16:]
 	singleton.Cache.Set(fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey), &model.Oauth2State{
+		UserID:      initiatingUser,
+		SessionID:   initiatingSession,
 		Action:      model.Oauth2LoginType(rTypeInt),
 		Provider:    provider,
 		State:       state,
 		RedirectURL: redirectURL,
-	}, cache.DefaultExpiration)
+	}, 5*time.Minute)
 
 	url := o2conf.AuthCodeURL(state, oauth2.AccessTypeOnline)
 	writeOauth2StateCookie(c, stateKey)
@@ -238,15 +254,32 @@ func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
 		return "", err
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	// Provider error payloads are not identities, even if they contain an id field.
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("userinfo returned HTTP %d", resp.StatusCode)
+	}
+	const maxUserInfoSize = 1 << 20
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxUserInfoSize+1))
 	if err != nil {
 		return "", err
 	}
 
-	return gjson.GetBytes(body, o2confRaw.UserIDPath).String(), nil
+	if len(body) > maxUserInfoSize || !gjson.ValidBytes(body) {
+		return "", fmt.Errorf("invalid or oversized userinfo response")
+	}
+	id := gjson.GetBytes(body, o2confRaw.UserIDPath)
+	if (id.Type != gjson.String && id.Type != gjson.Number) || strings.TrimSpace(id.String()) == "" {
+		return "", fmt.Errorf("userinfo contains no valid user identifier")
+	}
+	return id.String(), nil
 }
 
+var oauthStateConsumeMu sync.Mutex
+
 func verifyState(c *gin.Context, state string) (*model.Oauth2State, error) {
+	// Get+Delete must be atomic: concurrent callbacks cannot both consume one state.
+	oauthStateConsumeMu.Lock()
+	defer oauthStateConsumeMu.Unlock()
 	// 验证登录跳转时的 State
 	stateKey, err := c.Cookie("nz-o2s")
 	if err != nil {
@@ -264,5 +297,12 @@ func verifyState(c *gin.Context, state string) (*model.Oauth2State, error) {
 		return nil, singleton.Localizer.ErrorT("invalid state key")
 	}
 
+	if oauth2State.Action == model.RTypeBind {
+		user, ok := c.Get(model.CtxKeyAuthorizedUser)
+		if !ok || oauth2State.UserID == 0 || user.(*model.User).ID != oauth2State.UserID || oauth2State.SessionID == "" || c.GetString(jwtClaimKeyID) != oauth2State.SessionID {
+			return nil, singleton.Localizer.ErrorT("unauthorized")
+		}
+	}
+	singleton.Cache.Delete(cacheKey)
 	return oauth2State, nil
 }

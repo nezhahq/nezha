@@ -195,6 +195,9 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 					return singleton.Localizer.ErrorT("duration is too large")
 				}
 			} else {
+				if rule.CycleStart != nil && rule.CycleStart.Year() < 2000 {
+					return singleton.Localizer.ErrorT("cycle_start must be in year 2000 or later")
+				}
 				if !rule.HasSafeCycleUnit() {
 					return singleton.Localizer.ErrorT("invalid cycle unit")
 				}

@@ -241,6 +241,11 @@ func getServerConfig(c *gin.Context) (string, error) {
 	if !ok || !s.HasPermission(c) || !patAllowsServer(c, id) {
 		return "", singleton.Localizer.ErrorT("permission denied")
 	}
+	releaseControl, controlErr := beginServerControl(c, id)
+	if controlErr != nil {
+		return "", controlErr
+	}
+	defer releaseControl()
 	if s.GetTaskStream() == nil {
 		return "", nil
 	}
@@ -325,7 +330,16 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 					respMu.Unlock()
 					continue
 				}
-				if err := s.SendTask(task); err != nil {
+				releaseControl, controlErr := beginServerControl(c, s.ID)
+				if controlErr != nil {
+					respMu.Lock()
+					resp.Failure = append(resp.Failure, s.ID)
+					respMu.Unlock()
+					continue
+				}
+				sendErr := s.SendTask(task)
+				releaseControl()
+				if err := sendErr; err != nil {
 					respMu.Lock()
 					if errors.Is(err, model.ErrTaskStreamOffline) {
 						resp.Offline = append(resp.Offline, s.ID)

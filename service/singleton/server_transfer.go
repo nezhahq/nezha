@@ -80,6 +80,7 @@ const defaultRevertDeliveryRecoveryWindow = defaultServerTransferTimeout
 // state stay in sync.
 type ServerTransferClass struct {
 	mu               sync.RWMutex
+	controlEpoch     map[uint64]uint64
 	pending          map[uint64]*model.ServerTransfer
 	revertDeliveries map[uint64]*model.ServerTransfer
 	// revertRecovery holds RevertHandshakeSecrets the dashboard has pushed
@@ -679,11 +680,17 @@ func (c *ServerTransferClass) Initiate(tx *gorm.DB, serverID, fromUserID, toUser
 // and admits the old AgentSecret on the happy "owner match" path —
 // bypassing the bounded pending-tolerance contract.
 func (c *ServerTransferClass) Register(t *model.ServerTransfer) {
+	releaseControl := lockServerControlTransition(t.ServerID)
+	defer releaseControl()
 	// SetUserID uses an atomic write because auth.go reads this hot-path field
 	// concurrently; ServerClass also serializes it with service reports.
 	ServerShared.setUserID(t.ServerID, t.ToUserID)
 
 	c.mu.Lock()
+	if c.controlEpoch == nil {
+		c.controlEpoch = make(map[uint64]uint64)
+	}
+	c.controlEpoch[t.ServerID]++
 	c.pending[t.ServerID] = t
 	// Drop only the push queue entry: pushRevertIfOnline must not re-send
 	// the prior rollback now that a new transfer is taking over the agent's
@@ -1113,6 +1120,11 @@ func (c *ServerTransferClass) Retry(prev *model.ServerTransfer, initiatorID uint
 // row as non-Pending.
 func (c *ServerTransferClass) revertTransition(transferID uint64, newStatus model.ServerTransferStatus, reason string) (*model.ServerTransfer, error) {
 	var t model.ServerTransfer
+	if err := DB.First(&t, transferID).Error; err != nil {
+		return nil, err
+	}
+	releaseControl := lockServerControlTransition(t.ServerID)
+	defer releaseControl()
 	// transitionedByThisCall distinguishes "this call performed the CAS"
 	// from "row was already terminal before we got here". Both early-return
 	// branches MUST leave it false so the post-tx SetUserID(FromUserID)

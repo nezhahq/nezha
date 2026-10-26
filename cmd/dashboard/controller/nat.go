@@ -60,11 +60,16 @@ func createNAT(c *gin.Context) (uint64, error) {
 	if !ok {
 		return 0, singleton.Localizer.ErrorT("have invalid server id")
 	}
+	releaseControl, controlErr := beginServerControl(c, server.ID)
+	if controlErr != nil {
+		return 0, controlErr
+	}
+	defer releaseControl()
 	if !server.HasPermission(c) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
-	if singleton.IsReservedDashboardHost(nf.Domain) {
+	if !singleton.NATDomainAllowed(nf.Domain, c.MustGet(model.CtxKeyAuthorizedUser).(*model.User).Role.IsAdmin()) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -117,11 +122,16 @@ func updateNAT(c *gin.Context) (any, error) {
 	if !ok {
 		return nil, singleton.Localizer.ErrorT("have invalid server id")
 	}
+	releaseControl, controlErr := beginServerControl(c, server.ID)
+	if controlErr != nil {
+		return 0, controlErr
+	}
+	defer releaseControl()
 	if !server.HasPermission(c) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
-	if singleton.IsReservedDashboardHost(nf.Domain) {
+	if !singleton.NATDomainAllowed(nf.Domain, c.MustGet(model.CtxKeyAuthorizedUser).(*model.User).Role.IsAdmin()) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 

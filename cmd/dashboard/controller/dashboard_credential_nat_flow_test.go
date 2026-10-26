@@ -31,12 +31,15 @@ func setupNATFlowTest(t *testing.T) (*rpcService.NezhaHandler, *model.Server, *n
 	setupDashboardCredentialTest(t)
 
 	require.NoError(t, singleton.DB.AutoMigrate(&model.Server{}))
+	originalUsers := singleton.UserInfoMap
+	singleton.UserInfoMap = map[uint64]model.UserInfo{1: {Role: model.RoleAdmin}}
 	originalServerShared, originalHandler := singleton.ServerShared, rpcService.NezhaHandlerSingleton
 	t.Cleanup(func() {
+		singleton.UserInfoMap = originalUsers
 		singleton.ServerShared, rpcService.NezhaHandlerSingleton = originalServerShared, originalHandler
 	})
 
-	serverRow := &model.Server{Common: model.Common{ID: 7}, UUID: "nat-credential-flow-test", Name: "nat-credential-flow-test"}
+	serverRow := &model.Server{Common: model.Common{ID: 7, UserID: 1}, UUID: "nat-credential-flow-test", Name: "nat-credential-flow-test"}
 	require.NoError(t, singleton.DB.Create(serverRow).Error)
 	singleton.ServerShared = singleton.NewServerClass()
 	handler := rpcService.NewNezhaHandler()
@@ -103,7 +106,7 @@ func TestServeNATWithRealClassifierStripsDashboardCredentialsFromAllChannels(t *
 
 			done := make(chan struct{})
 			go func() {
-				rpc.ServeNAT(writer, request, &model.NAT{ServerID: server.ID, Host: "target.example"})
+				rpc.ServeNAT(writer, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: server.ID, Host: "target.example"})
 				close(done)
 			}()
 			select {
@@ -161,7 +164,7 @@ func TestServeNATWithRealClassifierKeepsForeignCredentials(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		rpc.ServeNAT(writer, request, &model.NAT{ServerID: server.ID, Host: "target.example"})
+		rpc.ServeNAT(writer, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: server.ID, Host: "target.example"})
 		close(done)
 	}()
 	select {
@@ -242,7 +245,10 @@ type natFlowAgent struct {
 	once      sync.Once
 }
 
-func (agent *natFlowAgent) Read([]byte) (int, error) { return 0, io.EOF }
+func (agent *natFlowAgent) Read([]byte) (int, error) {
+	<-agent.writeDone
+	return 0, io.EOF
+}
 func (agent *natFlowAgent) Write(data []byte) (int, error) {
 	agent.mu.Lock()
 	agent.written.Write(data)

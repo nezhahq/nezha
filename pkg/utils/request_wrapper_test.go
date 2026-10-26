@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 var (
@@ -23,6 +24,7 @@ var (
 func TestNewRequestWrapper_closesHijackedConnectionWhenRequestWriteFails(t *testing.T) {
 	// Given
 	conn := newRequestWrapperTestConn(errConnClose)
+	conn.readErr = errRequestWrite
 	req := &http.Request{
 		Method:        "POST",
 		URL:           &url.URL{Scheme: "http", Host: "example.test", Path: "/nat"},
@@ -32,18 +34,19 @@ func TestNewRequestWrapper_closesHijackedConnectionWhenRequestWriteFails(t *test
 	writer := &requestWrapperTestResponseWriter{conn: conn}
 
 	// When
-	_, err := NewRequestWrapper(req, writer)
-
-	// Then
-	if err == nil || !strings.Contains(err.Error(), errRequestWrite.Error()) {
-		t.Fatalf("expected request write error, got %v", err)
+	wrapper, err := NewRequestWrapper(req, writer)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !errors.Is(err, errBodyClose) {
-		t.Fatalf("expected body close error, got %v", err)
+	_, readErr := io.ReadAll(wrapper)
+	if readErr == nil || !strings.Contains(readErr.Error(), errRequestWrite.Error()) {
+		t.Fatalf("expected streamed body error, got %v", readErr)
 	}
+	err = wrapper.Close()
 	if !errors.Is(err, errConnClose) {
-		t.Fatalf("expected connection close error, got %v", err)
+		t.Fatalf("missing cleanup errors: %v", err)
 	}
+
 	if got := conn.closeCount.Load(); got != 1 {
 		t.Fatalf("expected one connection close, got %d", got)
 	}
@@ -177,6 +180,7 @@ func (b *requestWrapperTestBody) Close() error {
 type requestWrapperTestConn struct {
 	net.Conn
 	closeErr    error
+	readErr     error
 	closeCount  atomic.Int32
 	closeOnce   sync.Once
 	readStarted chan struct{}
@@ -192,6 +196,9 @@ func newRequestWrapperTestConn(closeErr error) *requestWrapperTestConn {
 }
 
 func (c *requestWrapperTestConn) Read([]byte) (int, error) {
+	if c.readErr != nil {
+		return 0, c.readErr
+	}
 	select {
 	case <-c.readStarted:
 	default:
@@ -200,6 +207,8 @@ func (c *requestWrapperTestConn) Read([]byte) (int, error) {
 	<-c.readDone
 	return 0, io.ErrClosedPipe
 }
+
+func (c *requestWrapperTestConn) SetDeadline(time.Time) error { return nil }
 
 func (c *requestWrapperTestConn) Write(p []byte) (int, error) {
 	return len(p), nil

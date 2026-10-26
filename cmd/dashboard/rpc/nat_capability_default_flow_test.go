@@ -41,7 +41,7 @@ func TestServeNATDefaultForwardsCapabilityHeaderAsOrdinaryData(t *testing.T) {
 	deadline, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	go func() {
-		ServeNAT(&serveNATResponseWriter{conn: connection}, request, &model.NAT{ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(&serveNATResponseWriter{conn: connection}, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(done)
 	}()
 	select {
@@ -87,7 +87,7 @@ func TestServeNATDefaultDoesNotForwardDashboardCredentials(t *testing.T) {
 	deadline, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	go func() {
-		ServeNAT(&serveNATResponseWriter{conn: connection}, request, &model.NAT{ServerID: fixture.server.ID, Host: "target.example"})
+		ServeNAT(&serveNATResponseWriter{conn: connection}, request, &model.NAT{Common: model.Common{UserID: 1}, ServerID: fixture.server.ID, Host: "target.example"})
 		close(done)
 	}()
 	select {

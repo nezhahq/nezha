@@ -10,7 +10,7 @@ import (
 )
 
 func TestServiceSentinelStartupWithRetainedHistory(t *testing.T) {
-	for _, serviceState := range []string{"retained", "deleted", "quarantined"} {
+	for _, serviceState := range []string{"retained", "deleted", "quarantined", "invalid_duration"} {
 		t.Run(serviceState, func(t *testing.T) {
 			initial := newServiceMonitorSecurityHarness(t)
 			initial.Close()
@@ -52,6 +52,8 @@ func TestServiceSentinelStartupWithRetainedHistory(t *testing.T) {
 				result := DB.Unscoped().Delete(&model.Service{}, "id in (?)", []uint64{historicalService.ID})
 				require.NoError(t, result.Error)
 				require.EqualValues(t, 1, result.RowsAffected)
+			case "invalid_duration":
+				require.NoError(t, DB.Model(historicalService).UpdateColumn("duration", model.MaxServiceDuration+1).Error)
 			case "quarantined":
 				// Legacy invalid service types are deliberately excluded at startup.
 				result := DB.Model(historicalService).UpdateColumn("type", model.TaskTypeCommand)

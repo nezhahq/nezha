@@ -40,7 +40,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				if !canSendTaskToServer(task, server) {
 					continue
 				}
-				if err := server.SendTask(probe); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
+				if err := server.QueueTaskGuarded(probe, singleton.ServerTaskAdmission(server.ID, task.UserID)); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
 					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}
@@ -52,7 +52,7 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 				if !canSendTaskToServer(task, server) {
 					continue
 				}
-				if err := server.SendTask(probe); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
+				if err := server.QueueTaskGuarded(probe, singleton.ServerTaskAdmission(server.ID, task.UserID)); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
 					log.Printf("NEZHA>> DispatchTask send error (server=%d): %v", id, err)
 				}
 			}
@@ -67,7 +67,7 @@ func DispatchKeepalive() {
 			if s == nil {
 				continue
 			}
-			if err := s.SendTask(&proto.Task{Type: model.TaskTypeKeepalive}); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
+			if err := s.QueueTask(&proto.Task{Type: model.TaskTypeKeepalive}); err != nil && !errors.Is(err, model.ErrTaskStreamOffline) {
 				log.Printf("NEZHA>> Keepalive send error (server=%d): %v", s.ID, err)
 			}
 		}

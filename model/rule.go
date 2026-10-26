@@ -17,11 +17,8 @@ const (
 	RuleCoverIgnoreAll
 )
 
-// MaxAlertRuleDuration is the largest duration that can be converted to int
-// on every architecture supported by Go. Alert rules are persisted as uint64,
-// but their sampling windows use int indexes; keeping the public bound at
-// MaxInt32 prevents a crafted value from wrapping during that conversion.
-const MaxAlertRuleDuration uint64 = 1<<31 - 1
+// MaxAlertRuleDuration bounds the retained per-rule history, including persisted rows.
+const MaxAlertRuleDuration uint64 = 86400
 
 // MaxAlertRuleCycleInterval also leaves room for the largest integer
 // multiplication performed by the calendar helpers (weeks become 7*interval)
@@ -346,26 +343,57 @@ func (u *Rule) transferDurationBounds(now time.Time) (time.Time, time.Time) {
 	start := *u.CycleStart
 	var end time.Time
 	switch strings.ToLower(u.CycleUnit) {
-	case "year":
-		end = start.AddDate(int(u.CycleInterval), 0, 0)
-		for !now.Before(end) {
-			start, end = end, end.AddDate(int(u.CycleInterval), 0, 0)
+	case "year", "month":
+		interval := int64(u.CycleInterval)
+		years := strings.EqualFold(u.CycleUnit, "year")
+		advance := func(at time.Time, count int64) time.Time {
+			if years {
+				return at.AddDate(int(count*interval), 0, 0)
+			}
+			return at.AddDate(0, int(count*interval), 0)
 		}
-	case "month":
-		end = start.AddDate(0, int(u.CycleInterval), 0)
-		for !now.Before(end) {
-			start, end = end, end.AddDate(0, int(u.CycleInterval), 0)
+		// Preserve sequential AddDate normalization (Jan 31 -> Mar 3), then
+		// jump directly. A full Gregorian month orbit is at most 4800 steps.
+		for phase := 0; start.Day() > 28 && phase < 4800; phase++ {
+			end = advance(start, 1)
+			if now.Before(end) {
+				return start, end
+			}
+			start = end
 		}
-	case "week":
-		end = start.AddDate(0, 0, 7*int(u.CycleInterval))
-		for !now.Before(end) {
-			start, end = end, end.AddDate(0, 0, 7*int(u.CycleInterval))
+		localNow := now.In(start.Location())
+		elapsed := int64(localNow.Year() - start.Year())
+		if !years {
+			elapsed = elapsed*12 + int64(localNow.Month()-start.Month())
 		}
-	case "day":
-		end = start.AddDate(0, 0, int(u.CycleInterval))
-		for !now.Before(end) {
-			start, end = end, end.AddDate(0, 0, int(u.CycleInterval))
+		cycles := max(int64(0), elapsed/interval)
+		candidate := advance(start, cycles)
+		// Never move a configured cycle start backwards for an earlier observation.
+		if cycles > 0 && candidate.After(now) {
+			cycles--
+			candidate = advance(start, cycles)
 		}
+		start = candidate
+		end = advance(start, 1)
+	case "week", "day":
+		interval := int64(u.CycleInterval)
+		if strings.EqualFold(u.CycleUnit, "week") {
+			interval *= 7
+		}
+		localNow := now.In(start.Location())
+		civilDay := func(at time.Time) int64 {
+			year, month, day := at.Date()
+			return time.Date(year, month, day, 0, 0, 0, 0, time.UTC).Unix() / 86400
+		}
+		cycles := max(int64(0), (civilDay(localNow)-civilDay(start))/interval)
+		candidate := start.AddDate(0, 0, int(cycles*interval))
+		// Never move a configured cycle start backwards for an earlier observation.
+		if cycles > 0 && candidate.After(now) {
+			cycles--
+			candidate = start.AddDate(0, 0, int(cycles*interval))
+		}
+		start = candidate
+		end = start.AddDate(0, 0, int(interval))
 	default: // empty is the legacy spelling for hour
 		interval := 3600 * int64(u.CycleInterval)
 		start = time.Unix(u.CycleStart.Unix()+(now.Unix()-u.CycleStart.Unix())/interval*interval, 0)

@@ -101,11 +101,13 @@ func TestOAuth2_VerifyState_HappyPath(t *testing.T) {
 	stateKey := "k-ok"
 	singleton.Cache.Set(
 		fmt.Sprintf("%s%s", model.CacheKeyOauth2State, stateKey),
-		&model.Oauth2State{State: "good-state", Provider: "github", Action: model.RTypeBind},
+		&model.Oauth2State{State: "good-state", Provider: "github", Action: model.RTypeBind, UserID: 100, SessionID: "binding-session"},
 		cache.DefaultExpiration,
 	)
 	c.Request.AddCookie(&http.Cookie{Name: "nz-o2s", Value: stateKey})
 
+	c.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: 100}})
+	c.Set(jwtClaimKeyID, "binding-session")
 	st, err := verifyState(c, "good-state")
 	require.NoError(t, err)
 	require.Equal(t, "github", st.Provider)

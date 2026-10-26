@@ -19,24 +19,39 @@ import (
 // 在升级后不再生效。每个 host 拆成 hostname 后比较（忽略端口与大小写），反代/
 // 默认端口下的端口变体也拦得住。反代部署时进程看不到对外域名，运维把它配进
 // Conf.ReservedHosts（逗号分隔）即可让此处覆盖到公网入口。
-func IsReservedDashboardHost(domain string) bool {
-	if Conf == nil {
+// NATDomainAllowed requires an operator-assigned exact hostname for members.
+// Comparing only request.Host is bypassable via an alternate dashboard entrance.
+func NATDomainAllowed(domain string, admin bool) bool {
+	if Conf == nil || Conf.Config == nil {
 		return false
 	}
-
+	policy := Conf.NATDomainPolicySnapshot()
+	if policy.isReserved(domain) {
+		return false
+	}
+	if admin {
+		return true
+	}
+	if splitDashboardHostname(policy.DashboardHost) == "" {
+		return false
+	}
 	target := splitDashboardHostname(domain)
 	if target == "" {
 		return false
 	}
-
-	hosts := []string{Conf.InstallHost, Conf.DashboardHost, Conf.ListenHost}
-	hosts = append(hosts, strings.Split(Conf.ReservedHosts, ",")...)
-	for _, host := range hosts {
-		if reserved := splitDashboardHostname(host); reserved != "" && reserved == target {
+	for _, allowed := range policy.MemberDomains {
+		if splitDashboardHostname(allowed) == target {
 			return true
 		}
 	}
 	return false
+}
+
+func IsReservedDashboardHost(domain string) bool {
+	if Conf == nil || Conf.Config == nil {
+		return false
+	}
+	return Conf.NATDomainPolicySnapshot().isReserved(domain)
 }
 
 // splitDashboardHostname 归一化为小写 hostname，对 bracketed IPv6（[::1]、
@@ -136,7 +151,26 @@ func (c *NATClass) GetNATConfigByDomain(domain string) *model.NAT {
 	c.listMu.RLock()
 	defer c.listMu.RUnlock()
 
-	return c.list[domain]
+	// Runtime reservations must also invalidate routes already loaded in memory.
+	if IsReservedDashboardHost(domain) {
+		return nil
+	}
+	profile := c.list[domain]
+	if profile == nil {
+		return nil
+	}
+	UserLock.RLock()
+	owner, known := UserInfoMap[profile.UserID]
+	UserLock.RUnlock()
+	if !known || !NATDomainAllowed(domain, owner.Role.IsAdmin()) || ServerShared == nil {
+		return nil
+	}
+	server, exists := ServerShared.Get(profile.ServerID)
+	// Check even disabled profiles before the mux can let them shadow the panel.
+	if !exists || (!owner.Role.IsAdmin() && (server.GetUserID() != profile.UserID || ServerControlTransitioning(server.ID))) {
+		return nil
+	}
+	return profile
 }
 
 func (c *NATClass) GetDomain(id uint64) string {

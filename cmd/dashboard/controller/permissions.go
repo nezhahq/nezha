@@ -23,6 +23,9 @@ func streamAttachAllowedForRequest(c *gin.Context, streamId string) bool {
 	if !ok {
 		return false
 	}
+	if !callerIsAdmin(c) && singleton.ServerControlTransitioning(target) {
+		return false
+	}
 	return patAllowsServer(c, target)
 }
 

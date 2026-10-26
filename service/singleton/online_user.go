@@ -50,10 +50,14 @@ func GetOnlineUsers(limit, offset int) []*model.OnlineUser {
 	slices.SortFunc(users, func(i, j *model.OnlineUser) int {
 		return i.ConnectedAt.Compare(j.ConnectedAt)
 	})
-	if offset > len(users) {
+	// Subtract before comparing: offset+limit can overflow even for valid positive inputs.
+	if offset < 0 {
+		offset = 0
+	}
+	if limit < 1 || offset >= len(users) {
 		return nil
 	}
-	if offset+limit > len(users) {
+	if limit >= len(users)-offset {
 		return users[offset:]
 	}
 	return users[offset : offset+limit]

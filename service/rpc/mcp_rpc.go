@@ -99,6 +99,11 @@ func allocateMCPTaskID() uint64 {
 //
 // 返回的 raw JSON 是 agent 端 TaskResult.Data 的原文。
 func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any, timeout time.Duration) (json.RawMessage, error) {
+	releaseControl, controlErr := singleton.BeginServerControlFromContext(ctx, serverID)
+	if controlErr != nil {
+		return nil, controlErr
+	}
+	defer releaseControl()
 	if !model.IsMCPRPCResult(taskType) {
 		return nil, errors.New("CallAgent: task type is not registered as MCP RPC")
 	}

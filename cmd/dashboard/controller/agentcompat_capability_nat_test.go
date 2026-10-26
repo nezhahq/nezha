@@ -18,6 +18,11 @@ import (
 func TestAgentcompatNATCapabilityUsesExactCurrentProfilePermission(t *testing.T) {
 	cleanup, userID := setupMCPTest(t)
 	t.Cleanup(cleanup)
+	oldUsers := singleton.UserInfoMap
+	singleton.UserInfoMap = map[uint64]model.UserInfo{userID: {Role: model.RoleMember}, 999: {Role: model.RoleMember}}
+	t.Cleanup(func() { singleton.UserInfoMap = oldUsers })
+	singleton.Conf.DashboardHost = "panel.example"
+	singleton.Conf.NATMemberDomains = []string{"private-profile.example", "foreign-profile.example"}
 	handler := rpc.NewNezhaHandler()
 	originalHandler := rpc.NezhaHandlerSingleton
 	originalNAT := singleton.NATShared

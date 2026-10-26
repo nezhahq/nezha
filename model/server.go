@@ -64,13 +64,18 @@ type Server struct {
 // value: two words on the heap (type ptr + data ptr). Concurrent assignment
 // produced torn reads detectable by `go test -race` and crashable in production.
 //
-// sendMu lives on the holder (not on *Server) so it is bound to the stream
+// sendPermit lives on the holder (not on *Server) so it is bound to the stream
 // itself: CopyFromRunningServer shares the same holder pointer with the new
 // *Server, and SendTask locks via the holder, guaranteeing serialized SendMsg
 // even when old/new *Server objects briefly co-exist during edit/transfer.
 type taskStreamHolder struct {
-	s      pb.NezhaService_RequestTaskServer
-	sendMu sync.Mutex
+	s            pb.NezhaService_RequestTaskServer
+	sendPermit   chan struct{}
+	failed       chan struct{}
+	failOnce     sync.Once
+	queueMu      sync.Mutex
+	queue        []queuedAgentTask
+	queueRunning bool
 }
 
 type serverRuntimeHolder struct {
@@ -242,10 +247,14 @@ func (lease StateStreamLease) clear(receiver *Server, sideEffect func()) bool {
 // can deliver tasks to the agent. Pass nil to detach (e.g. on disconnect).
 func (s *Server) SetTaskStream(stream pb.NezhaService_RequestTaskServer) {
 	if stream == nil {
-		s.taskStream.Store(nil)
+		if old := s.taskStream.Swap(nil); old != nil {
+			old.fail()
+		}
 		return
 	}
-	s.taskStream.Store(&taskStreamHolder{s: stream})
+	if old := s.taskStream.Swap(&taskStreamHolder{s: stream, sendPermit: make(chan struct{}, 1), failed: make(chan struct{})}); old != nil {
+		old.fail()
+	}
 }
 
 // adoptTaskStreamHolder publishes an existing holder verbatim. Used by
@@ -268,6 +277,7 @@ func (s *Server) ClearTaskStreamIfCurrent(stream pb.NezhaService_RequestTaskServ
 			return false
 		}
 		if s.taskStream.CompareAndSwap(h, nil) {
+			h.fail()
 			return true
 		}
 	}
@@ -286,7 +296,7 @@ func (s *Server) GetTaskStream() pb.NezhaService_RequestTaskServer {
 }
 
 // SendTask dispatches a task on the agent's RequestTask stream under the
-// holder's sendMu so concurrent dispatchers (cron, server-transfer
+// holder's send permit so concurrent dispatchers (cron, server-transfer
 // ApplyConfig, MCP CallAgent, MCP fs.transfer, force-update, report-config)
 // cannot violate grpc-go's "one SendMsg goroutine per stream" rule. Returns
 // ErrTaskStreamOffline if the agent has not published a stream yet; callers
@@ -300,9 +310,7 @@ func (s *Server) SendTask(task *pb.Task) error {
 	if h == nil {
 		return ErrTaskStreamOffline
 	}
-	h.sendMu.Lock()
-	defer h.sendMu.Unlock()
-	return h.s.Send(task)
+	return h.sendBefore(task, time.Now().Add(agentTaskSendTimeout), nil)
 }
 
 // AttachStateStream returns the ownership generation used to serialize state

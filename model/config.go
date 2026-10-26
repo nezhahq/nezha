@@ -50,7 +50,7 @@ type ConfigDashboard struct {
 	// migration path, not in the gRPC task authorization model.
 	AgentTLS bool `koanf:"tls" json:"tls,omitempty"`
 
-	// DashboardHost 是 dashboard 对外访问的主机名，专用于 OAuth2 回调地址。
+	// DashboardHost 是 dashboard 对外访问的主机名，用于 OAuth2 回调、MCP 文件地址及 NAT 域名保护。
 	// 它与 InstallHost（agent 连接用主机名）解耦：两者可以是不同域名。
 	// 为空时，OAuth2 回调放行请求 Host（信任请求头），不做强制重写。
 	DashboardHost string `koanf:"dashboard_host" json:"dashboard_host,omitempty"`
@@ -90,6 +90,8 @@ type Config struct {
 	ConfigDashboard
 
 	AvgPingCount int `koanf:"avg_ping_count" json:"avg_ping_count,omitempty"`
+
+	NATMemberDomains []string `koanf:"nat_member_domains" json:"nat_member_domains,omitempty"`
 
 	Debug          bool   `koanf:"debug" json:"debug,omitempty"`           // debug模式开关
 	Location       string `koanf:"location" json:"location,omitempty"`     // 时区，默认为 Asia/Shanghai
@@ -356,7 +358,18 @@ func (c *Config) save() error {
 	if err != nil {
 		return err
 	}
-
+	// Public JSON must omit the signing key, but file-backed keys must survive Save.
+	if !c.jwtSecretFromEnv && c.JWTSecretKey != "" {
+		var persisted map[string]any
+		if err := yaml.Unmarshal(data, &persisted); err != nil {
+			return err
+		}
+		persisted["jwt_secret_key"] = c.JWTSecretKey
+		data, err = yaml.Marshal(persisted)
+		if err != nil {
+			return err
+		}
+	}
 	return c.write(data)
 }
 

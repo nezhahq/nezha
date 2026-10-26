@@ -115,9 +115,44 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 	if singleton.ServerTransferShared != nil {
 		singleton.ServerTransferShared.OnAgentReconnect(clientID)
 	}
+	// Returning the handler cancels the real gRPC stream and wakes a blocked Send.
+	// A single receiver allows the handler to observe send-side failure while Recv waits.
+	failed := server.TaskStreamFailure(stream)
+	type taskReception struct {
+		result *pb.TaskResult
+		err    error
+	}
+	received := make(chan taskReception)
+	receiveStop := make(chan struct{})
+	defer close(receiveStop)
+	go func() {
+		for {
+			result, err := stream.Recv()
+			select {
+			case received <- taskReception{result, err}:
+			case <-receiveStop:
+				return
+			case <-stream.Context().Done():
+				return
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
 	var result *pb.TaskResult
 	for {
-		result, err = stream.Recv()
+		select {
+		case <-failed:
+			if _, err := currentRequestTaskServer(clientID, stream); err != nil {
+				return err
+			}
+			return model.ErrTaskStreamStalled
+		case <-stream.Context().Done():
+			return stream.Context().Err()
+		case reception := <-received:
+			result, err = reception.result, reception.err
+		}
 		if err != nil {
 			log.Printf("NEZHA>> RequestTask error: %v, clientID: %d\n", err, clientID)
 			return err
@@ -125,6 +160,10 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		server, err = currentRequestTaskServer(clientID, stream)
 		if err != nil {
 			return err
+		}
+		// Task latency is untrusted and is later aggregated into JSON service statistics.
+		if result != nil {
+			result.Delay = float32(model.FiniteStateValue(float64(result.Delay)))
 		}
 		switch result.GetType() {
 		case model.TaskTypeCommand:

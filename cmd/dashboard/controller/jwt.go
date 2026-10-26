@@ -12,7 +12,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 	"gorm.io/gorm"
 
-	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/idcodec"
 	"github.com/nezhahq/nezha/pkg/utils"
@@ -186,10 +185,20 @@ func identityHandler() func(c *gin.Context) any {
 func authenticator() func(c *gin.Context) (any, error) {
 	return func(c *gin.Context) (any, error) {
 		var loginVals model.LoginRequest
-		if err := c.ShouldBind(&loginVals); err != nil {
+		if !checkSameOrigin(c.Request) || c.GetHeader("Sec-Fetch-Site") == "cross-site" {
+			return nil, jwt.ErrFailedAuthentication
+		}
+		if c.ContentType() != "application/json" {
+			return nil, jwt.ErrMissingLoginValues
+		}
+		// Form-compatible login permits cross-site form submissions without a preflight.
+		if err := c.ShouldBindJSON(&loginVals); err != nil {
 			return "", jwt.ErrMissingLoginValues
 		}
 
+		if loginVals.Username == "" || loginVals.Password == "" {
+			return nil, jwt.ErrFailedAuthentication
+		}
 		var user model.User
 		realip := c.GetString(model.CtxKeyRealIPStr)
 
@@ -295,13 +304,8 @@ func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 		if identity != nil {
 			model.UnblockIP(singleton.DB, realIP, model.BlockIDToken)
 			c.Set(mw.IdentityKey, identity)
-		} else {
-			isIpMismatch := c.GetBool(model.CtxKeyIsIPMismatch)
-			if !isIpMismatch {
-				waf.ShowBlockPage(c, model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken))
-				return
-			}
 		}
+		// Revoked or version-stale sessions are not evidence of an IP guessing attack.
 
 		c.Next()
 	}

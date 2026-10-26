@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -70,6 +71,7 @@ func validateTransferPath(path string) error {
 }
 
 type transferEntry struct {
+	ControlEpoch    uint64
 	UserID          uint64
 	TokenID         uint64
 	ServerID        uint64
@@ -143,8 +145,8 @@ func transferHMACSecret() string {
 // transferTokenSig 计算 entry 的 HMAC-SHA256 签名（hex）；mint 与 consume 共用。
 func transferTokenSig(e transferEntry) string {
 	mac := hmac.New(sha256.New, []byte(transferHMACSecret()))
-	fmt.Fprintf(mac, "%s|%d|%d|%d|%s|%d",
-		e.Direction, e.UserID, e.TokenID, e.ServerID, e.Path, e.ExpiresAt.UnixNano())
+	fmt.Fprintf(mac, "%s|%d|%d|%d|%s|%d|%d",
+		e.Direction, e.UserID, e.TokenID, e.ServerID, e.Path, e.ExpiresAt.UnixNano(), e.ControlEpoch)
 	if e.OAuthGrantID != "" || e.OAuthAccessHash != "" {
 		fmt.Fprintf(mac, "|oauth:%s:%s", e.OAuthGrantID, e.OAuthAccessHash)
 	}
@@ -152,6 +154,7 @@ func transferTokenSig(e transferEntry) string {
 }
 
 func mintTransferToken(e transferEntry) (string, error) {
+	e.ControlEpoch = singleton.ServerControlEpoch(e.ServerID)
 	id, err := utils.GenerateRandomString(24)
 	if err != nil {
 		return "", err
@@ -392,6 +395,11 @@ func mintTransferTool(c *gin.Context, serverID uint64, path string, ttlSeconds i
 			entry.ExpiresAt = grant.AccessExpiresAt
 		}
 	}
+	releaseControl, err := beginServerControl(c, serverID)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseControl()
 	t, err := mintTransferToken(entry)
 	if err != nil {
 		return nil, err
@@ -420,7 +428,7 @@ func transferRevokableContext(c *gin.Context, e *transferEntry) (context.Context
 	// complete header/chunk/final frame pins this goroutine, the IOStream and
 	// the spool tmpfile until the client disconnects, allowing concurrent
 	// hung transfers to exhaust resources within the rate limit.
-	ctx, cancel := context.WithTimeout(c.Request.Context(), maxTransferDuration)
+	ctx, cancel := context.WithTimeout(singleton.WithServerControlEpoch(c.Request.Context(), e.ControlEpoch), maxTransferDuration)
 	dereg := patConnectionRegistryShared.register(e.TokenID, cancel)
 	return ctx, func() {
 		dereg()
@@ -429,6 +437,11 @@ func transferRevokableContext(c *gin.Context, e *transferEntry) (context.Context
 }
 
 func transferDownloadHandler(c *gin.Context) {
+	// The kill switch applies before token parsing and anonymous audit writes.
+	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
+		c.Status(http.StatusNotFound)
+		return
+	}
 	tok := c.Param("token")
 	entry, err := consumeTransferToken(tok, transferDirDownload)
 	if err != nil {
@@ -442,6 +455,12 @@ func transferDownloadHandler(c *gin.Context) {
 		return
 	}
 
+	var transferUser model.User
+	if err := singleton.DB.First(&transferUser, entry.UserID).Error; err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	c.Request = c.Request.WithContext(singleton.WithServerControlIdentity(c.Request.Context(), entry.UserID, transferUser.Role.IsAdmin()))
 	ctx, stop := transferRevokableContext(c, entry)
 	defer stop()
 
@@ -496,6 +515,36 @@ func transferDownloadHandler(c *gin.Context) {
 // transferUploadHandler 处理 POST /mcp/upload/:token；body 转发到 agent，
 // 单文件 hard cap 100MiB。
 func transferUploadHandler(c *gin.Context) {
+	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
+		c.Status(http.StatusNotFound)
+		return
+	}
+	// 1) 体积闸门：Content-Length 必须存在并且不超过 cap。流式上传时这是
+	// 唯一能在打开 IOStream 之前就拒掉超大请求的依据，避免 agent 端
+	// 拒绝时已经占了一个连接。
+	if c.Request.ContentLength < 0 {
+		writeTransferFailureAudit(c, nil, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("Content-Length required"))
+		c.String(http.StatusLengthRequired, "Content-Length required")
+		return
+	}
+	if c.Request.ContentLength > model.MCPFsTransferMaxSize {
+		writeTransferFailureAudit(c, nil, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("body exceeds MCP transfer cap"))
+		c.String(http.StatusRequestEntityTooLarge, "body exceeds MCP transfer cap (100MiB)")
+		return
+	}
+	size := c.Request.ContentLength
+
+	// 可选的端到端 sha256：通过 query 参数 sha256=<hex> 传入，agent 收到全部
+	// 字节后会比对；不传则只回带 sha 但不强校验。
+	expected := strings.ToLower(strings.TrimSpace(c.Query("sha256")))
+	if expected != "" {
+		if _, decErr := hex.DecodeString(expected); decErr != nil || len(expected) != 64 {
+			writeTransferFailureAudit(c, nil, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("sha256 must be 64 hex chars"))
+			c.String(http.StatusBadRequest, "sha256 must be 64 hex chars")
+			return
+		}
+	}
+
 	tok := c.Param("token")
 	entry, err := consumeTransferToken(tok, transferDirUpload)
 	if err != nil {
@@ -509,36 +558,16 @@ func transferUploadHandler(c *gin.Context) {
 		return
 	}
 
-	// 1) 体积闸门：Content-Length 必须存在并且不超过 cap。流式上传时这是
-	// 唯一能在打开 IOStream 之前就拒掉超大请求的依据，避免 agent 端
-	// 拒绝时已经占了一个连接。
-	if c.Request.ContentLength < 0 {
-		writeTransferFailureAudit(c, entry, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("Content-Length required"))
-		c.String(http.StatusLengthRequired, "Content-Length required")
-		return
-	}
-	if c.Request.ContentLength > model.MCPFsTransferMaxSize {
-		writeTransferFailureAudit(c, entry, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("body exceeds MCP transfer cap"))
-		c.String(http.StatusRequestEntityTooLarge, "body exceeds MCP transfer cap (100MiB)")
-		return
-	}
-	size := c.Request.ContentLength
-
-	// 可选的端到端 sha256：通过 query 参数 sha256=<hex> 传入，agent 收到全部
-	// 字节后会比对；不传则只回带 sha 但不强校验。
-	expected := strings.ToLower(strings.TrimSpace(c.Query("sha256")))
-	if expected != "" {
-		if _, decErr := hex.DecodeString(expected); decErr != nil || len(expected) != 64 {
-			writeTransferFailureAudit(c, entry, "fs.upload", model.MCPOutcomeInvalidArgs, errors.New("sha256 must be 64 hex chars"))
-			c.String(http.StatusBadRequest, "sha256 must be 64 hex chars")
-			return
-		}
-	}
-
 	// 上限再加一个字节做 MaxBytesReader 屏障：若客户端撒谎、实际 body 超过
 	// Content-Length，HTTP 层会立即截断并报 413。
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, model.MCPFsTransferMaxSize+1)
 
+	var transferUser model.User
+	if err := singleton.DB.First(&transferUser, entry.UserID).Error; err != nil {
+		c.Status(http.StatusUnauthorized)
+		return
+	}
+	c.Request = c.Request.WithContext(singleton.WithServerControlIdentity(c.Request.Context(), entry.UserID, transferUser.Role.IsAdmin()))
 	ctx, stop := transferRevokableContext(c, entry)
 	defer stop()
 
@@ -624,6 +653,9 @@ func transferUploadHandler(c *gin.Context) {
 // throttle so SIEM signal stays intact.
 func writeTransferFailureAudit(c *gin.Context, entry *transferEntry, tool, outcome string, err error) {
 	ip := c.GetString(model.CtxKeyRealIPStr)
+	if ip == "" {
+		ip, _, _ = net.SplitHostPort(c.Request.RemoteAddr)
+	}
 	if entry == nil && !transferAnonAuditThrottleShared.shouldRecord(ip) {
 		return
 	}
@@ -725,7 +757,23 @@ type frameReceiver interface {
 // to 502, which forces us to defer the body write until the final NZTO
 // frame is observed; but we MUST NOT pay 100MiB of heap per concurrent
 // download to do so.
+var downloadSpoolSlots = make(chan struct{}, 32)
+
 func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) error {
+	// Bound disk occupancy independently of IOStream quotas and client reading speed.
+	select {
+	case downloadSpoolSlots <- struct{}{}:
+		defer func() { <-downloadSpoolSlots }()
+	default:
+		c.String(http.StatusTooManyRequests, "download capacity exceeded")
+		return errors.New("download capacity exceeded")
+	}
+	responseControl := http.NewResponseController(c.Writer)
+	// The deployed net/http writer supports deadlines; in-memory recorders may not.
+	if err := responseControl.SetWriteDeadline(time.Now().Add(maxTransferDuration)); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
+	defer responseControl.SetWriteDeadline(time.Time{})
 	spool, err := newTransferSpool()
 	if err != nil {
 		c.String(http.StatusInternalServerError, "transfer spool: "+err.Error())
@@ -975,6 +1023,9 @@ func xferSizeFromU64(raw uint64) (int64, error) {
 // server 转手）时的兜底闸门：HMAC 签发与 sync.Map 一次性消费机制本身只能
 // 防伪造与防重放，无法感知后端状态。
 func revalidateTransferEntry(e *transferEntry) error {
+	if e.ControlEpoch != singleton.ServerControlEpoch(e.ServerID) {
+		return errors.New("target server ownership changed since URL issuance")
+	}
 	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
 		return errors.New("MCP is disabled by the dashboard administrator")
 	}
@@ -1017,7 +1068,7 @@ func revalidateTransferEntry(e *transferEntry) error {
 	if err := singleton.DB.First(&user, e.UserID).Error; err != nil {
 		return errors.New("originating user no longer exists")
 	}
-	if user.Role != model.RoleAdmin && srv.GetUserID() != e.UserID {
+	if user.Role != model.RoleAdmin && (srv.GetUserID() != e.UserID || singleton.ServerControlTransitioning(e.ServerID)) {
 		return errors.New("target server is no longer owned by the originating user")
 	}
 	return nil

@@ -2,6 +2,7 @@ package singleton
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -2245,3 +2246,9 @@ func TestNewServerTransferClassSkipsAckedRollbackRecovery(t *testing.T) {
 	require.True(t, ok, "ACKed rollback secret must still be rebuilt into verifiedHandshakes — the agent on disk holds exactly this credential")
 	require.Equal(t, uint64(1), sid)
 }
+
+func (*fakeTaskStream) Context() context.Context { return context.Background() }
+
+func (*cancelRaceApplyConfigStream) Context() context.Context { return context.Background() }
+
+func (*neverReturningTaskStream) Context() context.Context { return context.Background() }

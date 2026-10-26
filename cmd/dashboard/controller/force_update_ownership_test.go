@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -147,3 +148,5 @@ func TestForceUpdateServerOwnerOnlineStillDispatches(t *testing.T) {
 	assert.Empty(t, resp.Data.Failure)
 	assert.Len(t, stream.sentTasks, 1, "owner's own server must receive the upgrade task exactly once")
 }
+
+func (*fakeTaskStream) Context() context.Context { return context.Background() }

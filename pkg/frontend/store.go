@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
 	"path"
 	"path/filepath"
@@ -62,20 +63,24 @@ func NewStore(root string, builtins []Template) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A broken optional installation must not prevent the dashboard from starting.
 	for _, entry := range entries {
 		if !entry.IsDir() || strings.HasPrefix(entry.Name(), ".") {
 			continue
 		}
 		data, err := directory.ReadFile(filepath.Join(entry.Name(), "metadata.json"))
 		if err != nil {
-			return nil, err
+			log.Printf("NEZHA>> quarantining frontend %q: %v", entry.Name(), err)
+			continue
 		}
 		var template Template
 		if err := json.Unmarshal(data, &template); err != nil {
-			return nil, err
+			log.Printf("NEZHA>> quarantining frontend %q: %v", entry.Name(), err)
+			continue
 		}
 		if !template.Custom || template.Path != entry.Name() || template.IsOfficial {
-			return nil, errors.New("invalid installed frontend metadata")
+			log.Printf("NEZHA>> quarantining frontend %q: invalid metadata", entry.Name())
+			continue
 		}
 		if _, err := directory.Stat(filepath.Join(template.Path, "dist", "index.html")); err != nil {
 			continue

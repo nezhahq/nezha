@@ -1,7 +1,9 @@
 package rpc
 
 import (
+	"github.com/nezhahq/nezha/proto"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -20,7 +22,8 @@ func TestDispatchTaskSendsOnlyProbeTypes(t *testing.T) {
 	})
 
 	server := &model.Server{Common: model.Common{ID: 1, UserID: 100}}
-	stream := &serveNATTaskStream{}
+	sent := make(chan struct{})
+	stream := &serveNATTaskStream{onSend: func(*proto.Task) error { close(sent); return nil }}
 	server.SetTaskStream(stream)
 	serverShared := singleton.NewEmptyServerClassForTest()
 	serverShared.InsertForTest(server)
@@ -52,6 +55,11 @@ func TestDispatchTaskSendsOnlyProbeTypes(t *testing.T) {
 	}
 	close(bus)
 	<-done
+	select {
+	case <-sent:
+	case <-time.After(time.Second):
+		t.Fatal("probe was not delivered")
+	}
 
 	require.Len(t, stream.sent, 1)
 	require.Equal(t, uint64(model.TaskTypeTCPPing), stream.sent[0].GetType())

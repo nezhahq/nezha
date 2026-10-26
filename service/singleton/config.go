@@ -19,6 +19,7 @@ type ConfigClass struct {
 
 	onlineHistoryRetentionMu sync.RWMutex
 	frontendSelectionMu      sync.RWMutex
+	natDomainPolicyMu        sync.RWMutex
 	FrontendStore            *frontend.Store `json:"-"`
 
 	IgnoredIPNotificationServerIDs map[uint64]bool `json:"ignored_ip_notification_server_ids,omitempty"`
@@ -100,9 +101,12 @@ func (c *ConfigClass) CommitOnlineHistoryRetention(days *int, persist func() err
 func (c *ConfigClass) SettingsSnapshot() model.Setting {
 	c.frontendSelectionMu.RLock()
 	defer c.frontendSelectionMu.RUnlock()
+	c.natDomainPolicyMu.RLock()
+	defer c.natDomainPolicyMu.RUnlock()
 	c.onlineHistoryRetentionMu.RLock()
 	defer c.onlineHistoryRetentionMu.RUnlock()
 	return model.Setting{
+		NATMemberDomains:               append([]string(nil), c.NATMemberDomains...),
 		ConfigForGuests:                c.ConfigForGuests,
 		ConfigDashboard:                c.ConfigDashboard,
 		IgnoredIPNotificationServerIDs: c.IgnoredIPNotificationServerIDs,

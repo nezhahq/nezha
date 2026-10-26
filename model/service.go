@@ -326,7 +326,14 @@ func (m *Service) CronSpec() string {
 	return fmt.Sprintf("@every %ds", m.Duration)
 }
 
+// MaxServiceDuration is the largest supported probe interval, in seconds.
+const MaxServiceDuration uint64 = 30 * 24 * 60 * 60
+
 func (m *Service) BeforeSave(tx *gorm.DB) error {
+	// Reject before persistence; a row that only fails cron registration can prevent restart.
+	if m.Duration > MaxServiceDuration {
+		return fmt.Errorf("service duration exceeds 30 days")
+	}
 	if err := ValidateServiceMonitorType(uint64(m.Type)); err != nil {
 		return err
 	}

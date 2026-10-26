@@ -3,6 +3,7 @@ package controller
 import (
 	"slices"
 	"strconv"
+	"sync/atomic"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
@@ -43,6 +44,11 @@ func listCron(c *gin.Context) ([]*model.Cron, error) {
 // @Success 200 {object} model.CommonResponse[uint64]
 // @Router /cron [post]
 func createCron(c *gin.Context) (uint64, error) {
+	// Scheduled commands execute autonomously; write scope cannot imply execution.
+	if tok := APITokenFromContext(c); tok != nil && !tok.HasScope(model.ScopeCronExec) {
+		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	var cf model.CronForm
 	var cr model.Cron
 
@@ -81,17 +87,28 @@ func createCron(c *gin.Context) (uint64, error) {
 	}
 
 	var err error
+	var committed atomic.Bool
 	if cf.TaskType == model.CronTypeCronTask {
-		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
+		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, func() {
+			// Scheduler callbacks must not observe an uncommitted row or its mutable ID.
+			if committed.Load() {
+				singleton.CronTrigger(&cr)()
+			}
+		}); err != nil {
 			return 0, err
 		}
 	}
 
 	if err = singleton.DB.Create(&cr).Error; err != nil {
+		// Registration is provisional until persistence succeeds.
+		if cr.CronJobID != 0 {
+			singleton.CronShared.Remove(cr.CronJobID)
+		}
 		return 0, newGormError("%v", err)
 	}
 
 	singleton.CronShared.Update(&cr)
+	committed.Store(true)
 	return cr.ID, nil
 }
 
@@ -108,6 +125,11 @@ func createCron(c *gin.Context) (uint64, error) {
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /cron/{id} [patch]
 func updateCron(c *gin.Context) (any, error) {
+	// Scheduled commands execute autonomously; write scope cannot imply execution.
+	if tok := APITokenFromContext(c); tok != nil && !tok.HasScope(model.ScopeCronExec) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+
 	idStr := c.Param("id")
 	id, err := strconv.ParseUint(idStr, 10, 64)
 	if err != nil {
@@ -157,18 +179,29 @@ func updateCron(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("scheduled tasks cannot be triggered by alarms")
 	}
 
+	var committed atomic.Bool
+	cr.CronJobID = 0 // Only remove the newly registered job on failure, never the prior live job.
 	// 对于计划任务类型，需要更新CronJob
 	if cf.TaskType == model.CronTypeCronTask {
-		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, singleton.CronTrigger(&cr)); err != nil {
+		if cr.CronJobID, err = singleton.CronShared.AddFunc(cr.Scheduler, func() {
+			// Scheduler callbacks must not observe an uncommitted row or its mutable ID.
+			if committed.Load() {
+				singleton.CronTrigger(&cr)()
+			}
+		}); err != nil {
 			return nil, err
 		}
 	}
 
 	if err = singleton.DB.Save(&cr).Error; err != nil {
+		if cr.CronJobID != 0 {
+			singleton.CronShared.Remove(cr.CronJobID)
+		}
 		return nil, newGormError("%v", err)
 	}
 
 	singleton.CronShared.Update(&cr)
+	committed.Store(true)
 	return nil, nil
 }
 

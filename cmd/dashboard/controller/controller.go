@@ -29,7 +29,8 @@ import (
 
 func ServeWeb(frontendDist fs.FS) http.Handler {
 	gin.SetMode(gin.ReleaseMode)
-	r := gin.Default()
+	r := gin.New()
+	r.Use(dashboardRequestLogger(), dashboardRecovery())
 
 	if singleton.Conf.Debug {
 		gin.SetMode(gin.DebugMode)

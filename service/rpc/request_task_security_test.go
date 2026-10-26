@@ -220,7 +220,7 @@ func TestRequestTaskClearsTaskStreamOnRecvError(t *testing.T) {
 
 	stream := requestTaskSecurityAuthedStream("reporter-secret", reporter.UUID)
 	err := NewNezhaHandler().RequestTask(stream)
-	if !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, ErrRequestTaskStreamSuperseded) {
 		t.Fatalf("expected RequestTask to finish after Recv error, got %v", err)
 	}
 
@@ -250,7 +250,7 @@ func TestRequestTaskKeepsNewerTaskStreamOnOldRecvError(t *testing.T) {
 	}
 
 	err := NewNezhaHandler().RequestTask(old)
-	if !errors.Is(err, context.Canceled) {
+	if !errors.Is(err, context.Canceled) && !errors.Is(err, ErrRequestTaskStreamSuperseded) {
 		t.Fatalf("expected RequestTask to finish after Recv error, got %v", err)
 	}
 	if got := server.GetTaskStream(); got != newer {

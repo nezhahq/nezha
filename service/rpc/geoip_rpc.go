@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/netip"
 
 	"github.com/nezhahq/nezha/model"
 	geoipx "github.com/nezhahq/nezha/pkg/geoip"
@@ -23,7 +24,25 @@ func (s *NezhaHandler) ReportGeoIP(ctx context.Context, report *pb.GeoIP) (*pb.G
 		if ip == "" {
 			ip, _ = ctx.Value(model.CtxKeyConnectingIP{}).(string)
 		}
-		geoIP.IP.IPv4Addr = ip
+		if address, parseErr := netip.ParseAddr(ip); parseErr == nil && address.Is6() && !address.Is4In6() {
+			geoIP.IP.IPv6Addr = address.String()
+		} else {
+			geoIP.IP.IPv4Addr = ip
+		}
+	}
+	// Validate before DDNS, notification and state side effects, including fallback addresses.
+	for _, field := range []struct {
+		value *string
+		ipv4  bool
+	}{{&geoIP.IP.IPv4Addr, true}, {&geoIP.IP.IPv6Addr, false}} {
+		if *field.value == "" {
+			continue
+		}
+		address, parseErr := netip.ParseAddr(*field.value)
+		if parseErr != nil || address.Zone() != "" || address.Is4() != field.ipv4 || address.Is4In6() {
+			return nil, fmt.Errorf("invalid reported IP address")
+		}
+		*field.value = address.String()
 	}
 	joinedIP := geoIP.IP.Join()
 	server, ok := singleton.ServerShared.Get(clientID)

@@ -3,7 +3,9 @@ package controller
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"gorm.io/gorm"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/nezhahq/nezha/model"
@@ -41,8 +43,37 @@ func mcpAuditWrite(entry model.MCPAuditLog, argsBytes []byte) {
 		write(entry)
 		return
 	}
-	go write(entry)
+	// One bounded writer replaces one goroutine per anonymous failure.
+	mcpAuditWorkerOnce.Do(func() {
+		go func() {
+			for job := range mcpAuditQueue {
+				job.write()
+			}
+		}()
+	})
+	select {
+	case mcpAuditQueue <- mcpAuditJob{db: db, entry: entry}:
+	default:
+	}
+
 }
 
 // mcpAuditSync 仅供测试切换为同步写入，生产保持 false。
 var mcpAuditSync = false
+
+type mcpAuditJob struct {
+	db    *gorm.DB
+	entry model.MCPAuditLog
+}
+
+var mcpAuditQueue = make(chan mcpAuditJob, 128)
+var mcpAuditWorkerOnce sync.Once
+
+func (job mcpAuditJob) write() {
+	if job.db == nil {
+		return
+	}
+	if err := job.db.Create(&job.entry).Error; err != nil {
+		log.Printf("NEZHA>> mcp audit write failed: %v", err)
+	}
+}

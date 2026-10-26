@@ -17,6 +17,8 @@ const (
 )
 
 type Oauth2State struct {
+	UserID      uint64
+	SessionID   string
 	Action      Oauth2LoginType
 	Provider    string
 	State       string
