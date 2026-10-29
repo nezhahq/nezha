@@ -18,6 +18,7 @@ func registerFrontendRoutes(auth *gin.RouterGroup) {
 	frontends.GET("/releases", adminHandler(listFrontendReleases))
 	frontends.POST("/install", adminHandler(installFrontend))
 	frontends.POST("/activate", adminHandler(activateFrontend))
+	frontends.POST("/remove", adminHandler(removeFrontend))
 }
 
 type frontendStatus struct {
@@ -121,4 +122,21 @@ func activateFrontend(c *gin.Context) (any, error) {
 		return nil, singleton.Conf.CommitFrontendSelection(user, admin, singleton.Conf.Save)
 	}
 	return nil, errors.New("frontend is not installed for the selected role")
+}
+
+// Remove frontend
+// @Summary Remove an inactive custom frontend and its files
+// @Security BearerAuth
+// @Tags admin required
+// @Accept json
+// @Param body body frontendActivateForm true "Installed frontend"
+// @Produce json
+// @Success 200 {object} model.CommonResponse[any]
+// @Router /frontend/remove [post]
+func removeFrontend(c *gin.Context) (any, error) {
+	var form frontendActivateForm
+	if err := c.ShouldBindJSON(&form); err != nil {
+		return nil, err
+	}
+	return nil, singleton.Conf.RemoveFrontend(form.Path, form.IsAdmin)
 }

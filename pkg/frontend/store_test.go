@@ -217,3 +217,69 @@ func TestDistributionCannotWriteThroughExistingEscapingSymlink(t *testing.T) {
 		t.Errorf("outside file changed: %q %v", data, err)
 	}
 }
+
+func TestRemoveCustomFrontendConfinesFilesAndAllowsReinstall(t *testing.T) {
+	store, _ := installationStore(t, distributionZIP(t, "dist/index.html"), "")
+	template, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	canary := filepath.Join(outside, "retained.txt")
+	if err := os.WriteFile(canary, []byte("retained"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(store.Directory(template.Path), "outside")); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"user-dist", "", ".", "..", "../retained.txt", "/etc", `..\outside`, "missing"} {
+		if err := store.Remove(id, false); err == nil {
+			t.Fatalf("removed invalid or built-in path %q", id)
+		}
+	}
+	if err := store.Remove(template.Path, true); err == nil {
+		t.Fatal("removed wrong role")
+	}
+	if err := store.Remove(template.Path, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(store.root, template.Path)); !os.IsNotExist(err) {
+		t.Fatalf("installation remains: %v", err)
+	}
+	if data, err := os.ReadFile(canary); err != nil || string(data) != "retained" {
+		t.Fatalf("outside file changed: %q %v", data, err)
+	}
+	if len(store.Templates()) != 1 {
+		t.Fatalf("catalog still contains installation: %+v", store.Templates())
+	}
+	reinstalled, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false)
+	if err != nil || reinstalled.Path != template.Path {
+		t.Fatalf("cannot reinstall: %+v %v", reinstalled, err)
+	}
+}
+
+func TestRemoveFilesystemFailurePreservesCatalog(t *testing.T) {
+	store, _ := installationStore(t, distributionZIP(t, "dist/index.html"), "")
+	template, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Replace the root with a regular file to force a real error even as root.
+	saved := store.root + "-unavailable"
+	if err := os.Rename(store.root, saved); err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(saved)
+	if err := os.WriteFile(store.root, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Remove(template.Path, false); err == nil {
+		t.Fatal("filesystem failure reported as success")
+	}
+	if len(store.Templates()) != 2 {
+		t.Fatal("failed deletion removed catalog entry")
+	}
+	if _, err := os.Stat(filepath.Join(saved, template.Path, "dist", "index.html")); err != nil {
+		t.Fatal(err)
+	}
+}

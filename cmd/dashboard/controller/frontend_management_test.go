@@ -96,6 +96,7 @@ func TestFrontendManagementRejectsUnauthorizedRolesAndScopes(t *testing.T) {
 				{"GET", "/api/v1/frontend/releases?repository=https://github.com/owner/site", ""},
 				{"POST", "/api/v1/frontend/install", `{"repository":"https://github.com/owner/site","tag":"v1"}`},
 				{"POST", "/api/v1/frontend/activate", `{"path":"installed-user"}`},
+				{"POST", "/api/v1/frontend/remove", `{"path":"installed-user"}`},
 			} {
 				response := frontendManagementRequest(t, router, endpoint.method, endpoint.path, endpoint.body)
 				var result model.CommonResponse[any]
@@ -228,6 +229,7 @@ func TestFrontendManagementCSRFRejectsMissingAndForgedTokens(t *testing.T) {
 	for _, endpoint := range []struct{ path, body string }{
 		{"/api/v1/frontend/install", `{"repository":"https://github.com/owner/site","tag":"v1"}`},
 		{"/api/v1/frontend/activate", `{"path":"installed-user"}`},
+		{"/api/v1/frontend/remove", `{"path":"installed-user"}`},
 	} {
 		for _, token := range []string{"", "forged-csrf-token"} {
 			request := httptest.NewRequest("POST", endpoint.path, strings.NewReader(endpoint.body))
@@ -373,4 +375,50 @@ func TestFrontendSwitchInvalidatesSameNameAssetCache(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestFrontendRemovalProtectsActiveAndBuiltinTemplates(t *testing.T) {
+	configPath := frontendManagementFixture(t)
+	router := frontendManagementRouter(&model.User{Role: model.RoleAdmin}, nil)
+	remove := func(body string, success bool) {
+		t.Helper()
+		response := frontendManagementRequest(t, router, "POST", "/api/v1/frontend/remove", body)
+		var result model.CommonResponse[any]
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result), response.Body.String())
+		require.Equal(t, success, result.Success, response.Body.String())
+		if !success {
+			require.NotEmpty(t, result.Error)
+		}
+	}
+	for _, body := range []string{`{}`, `{"path":"user-dist"}`, `{"path":"admin-dist","is_admin":true}`, `{"path":"missing"}`, `{"path":"../config.yaml"}`, `{"path":"installed-admin"}`, `{"path":"installed-user","is_admin":true}`} {
+		remove(body, false)
+	}
+	for _, role := range []struct {
+		path  string
+		admin bool
+	}{{"installed-user", false}, {"installed-admin", true}} {
+		body, err := json.Marshal(frontendActivateForm{Path: role.path, IsAdmin: role.admin})
+		require.NoError(t, err)
+		response := frontendManagementRequest(t, router, "POST", "/api/v1/frontend/activate", string(body))
+		var activation model.CommonResponse[any]
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &activation))
+		require.True(t, activation.Success)
+		directory := filepath.Join(filepath.Dir(configPath), "frontends", role.path)
+		remove(string(body), false)
+		require.FileExists(t, filepath.Join(directory, "dist", "index.html"))
+		user, admin := "user-dist", "admin-dist"
+		require.NoError(t, singleton.Conf.CommitFrontendSelection(&user, &admin, singleton.Conf.Save))
+		remove(string(body), true)
+		require.NoDirExists(t, directory)
+		require.NoError(t, singleton.InitConfigFromPath(configPath))
+		for _, template := range singleton.Conf.AvailableFrontendTemplates() {
+			require.NotEqual(t, role.path, template.Path)
+		}
+		response = frontendManagementRequest(t, router, "POST", "/api/v1/frontend/activate", string(body))
+		activation = model.CommonResponse[any]{}
+		require.NoError(t, json.Unmarshal(response.Body.Bytes(), &activation))
+		require.False(t, activation.Success)
+		require.Contains(t, activation.Error, "not installed")
+	}
+	require.FileExists(t, configPath)
 }

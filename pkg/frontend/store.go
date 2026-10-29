@@ -211,6 +211,39 @@ func (s *Store) Install(ctx context.Context, repository, tag string, admin bool)
 	return &template, nil
 }
 
+// Remove deletes an inactive custom installation; callers must serialize selection
+// changes with this operation and reject currently selected templates.
+func (s *Store) Remove(id string, admin bool) error {
+	s.installMu.Lock()
+	defer s.installMu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Never interpret caller-controlled paths as filesystem paths before matching
+	// the catalog and validating a single directory component.
+	if id == "." || id == ".." || strings.ContainsAny(id, "/\\") || id == "" {
+		return errors.New("invalid frontend path")
+	}
+	for i, template := range s.templates {
+		if template.Path != id || template.IsAdmin != admin {
+			continue
+		}
+		if !template.Custom || template.IsOfficial {
+			return errors.New("built-in frontends cannot be removed")
+		}
+		root, err := os.OpenRoot(s.root)
+		if err != nil {
+			return err
+		}
+		defer root.Close()
+		if err := root.RemoveAll(id); err != nil {
+			return err
+		}
+		s.templates = append(s.templates[:i], s.templates[i+1:]...)
+		return nil
+	}
+	return errors.New("frontend is not installed for the selected role")
+}
+
 func extractDistribution(ctx context.Context, archivePath, destination string) error {
 	archive, err := zip.OpenReader(archivePath)
 	if err != nil {

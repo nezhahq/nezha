@@ -36,6 +36,12 @@ dist.zip
 
 若第三方管理前端无法正常使用，可使用管理员 PAT（`nezha:admin:*` scope）请求 `POST /api/v1/frontend/activate`，JSON 为 `{"path":"admin-dist","is_admin":true}`；也可停止面板，将配置中的 `admin_template` 改回 `admin-dist`，再启动。用户前端对应 `user-dist`。
 
+## 删除旧版本
+
+安装新版本不会自动删除旧版本。切换成功后，可在前端管理中删除不再需要的自定义版本；确认后同时清理安装目录和列表记录。当前启用的版本与内置前端不可删除，需要先切换到其他版本再删除。删除无法撤销，再次使用需重新安装。
+
+管理员也可请求 `POST /api/v1/frontend/remove`，JSON 为 `{"path":"安装记录中的 path","is_admin":false}`；管理前端使用 `is_admin:true`。接口要求管理员权限及 `nezha:admin:*` scope（使用 PAT 时），并与启用操作互斥，防止启用已删除的版本。
+
 ## 开发与发版
 
 此功能需要配套的 `admin-frontend` 页面。正式发版时，先在管理前端仓库创建 tag 触发 release，再更新本仓库 `service/singleton/frontend-templates.yaml` 中管理前端的版本并构建面板。仅发布后端而继续嵌入旧管理前端，不会出现新的管理入口。

@@ -1,6 +1,7 @@
 package singleton
 
 import (
+	"errors"
 	"log"
 	"path/filepath"
 	"strconv"
@@ -128,10 +129,32 @@ func (c *ConfigClass) FrontendSelection() (user, admin string) {
 }
 
 // CommitFrontendSelection publishes the selection only after persistence succeeds.
-// Requests already serving the previous version keep their immutable directory.
+// Previous versions remain installed until explicitly removed.
 func (c *ConfigClass) CommitFrontendSelection(user, admin *string, persist func() error) error {
 	c.frontendSelectionMu.Lock()
 	defer c.frontendSelectionMu.Unlock()
+	// Revalidate under the same lock as removal: a handler's earlier catalog
+	// snapshot may refer to a version deleted while it waited for this lock.
+	if c.FrontendStore != nil {
+		for _, selection := range []struct {
+			path  *string
+			admin bool
+		}{{user, false}, {admin, true}} {
+			if selection.path == nil {
+				continue
+			}
+			valid := false
+			for _, template := range c.FrontendStore.Templates() {
+				if template.Path == *selection.path && template.IsAdmin == selection.admin {
+					valid = true
+					break
+				}
+			}
+			if !valid {
+				return errors.New("frontend is not installed for the selected role")
+			}
+		}
+	}
 	previousUser, previousAdmin := c.UserTemplate, c.AdminTemplate
 	if user != nil {
 		c.UserTemplate = *user
@@ -144,4 +167,17 @@ func (c *ConfigClass) CommitFrontendSelection(user, admin *string, persist func(
 		return err
 	}
 	return nil
+}
+
+// RemoveFrontend keeps active-version protection atomic with activation and settings updates.
+func (c *ConfigClass) RemoveFrontend(path string, admin bool) error {
+	c.frontendSelectionMu.Lock()
+	defer c.frontendSelectionMu.Unlock()
+	if c.FrontendStore == nil {
+		return errors.New("frontend storage is not initialized")
+	}
+	if path == c.UserTemplate || path == c.AdminTemplate {
+		return errors.New("active frontends cannot be removed")
+	}
+	return c.FrontendStore.Remove(path, admin)
 }
