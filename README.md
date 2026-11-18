@@ -21,19 +21,7 @@
 
 ## Sponsors / 赞助商
 
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://t.me/feepayNotice">
-        <img src=".github/sponsor/feepay.jpg" alt="feepay" width="160">
-      </a>
-      <br>
-      <b>feepay收款，独角异次元。</b>
-      <br><br>
-      👉 <a href="https://t.me/feepayNotice">feepay</a>
-    </td>
-  </tr>
-</table>
+> 🤝 Sponsorship slot available / 赞助位待认领
 
 ## User Guide
 
