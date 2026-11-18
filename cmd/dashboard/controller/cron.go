@@ -55,6 +55,8 @@ func createCron(c *gin.Context) (uint64, error) {
 	if err := c.ShouldBindJSON(&cf); err != nil {
 		return 0, err
 	}
+	// 见 resource_reference_limits.go（GHSA-8fgr-wx8p-v6q7）。
+	cf.Servers = normalizeCronServers(cf.Cover, cf.Servers)
 
 	if !isValidCronCover(cf.Cover) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
@@ -140,6 +142,8 @@ func updateCron(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&cf); err != nil {
 		return 0, err
 	}
+	// 见 resource_reference_limits.go（GHSA-8fgr-wx8p-v6q7）。
+	cf.Servers = normalizeCronServers(cf.Cover, cf.Servers)
 
 	if !isValidCronCover(cf.Cover) {
 		return nil, singleton.Localizer.ErrorT("permission denied")

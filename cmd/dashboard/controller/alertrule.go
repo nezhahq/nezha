@@ -170,6 +170,10 @@ func validateRule(c *gin.Context, r *model.AlertRule) error {
 	if !r.HasPermission(c) {
 		return singleton.Localizer.ErrorT("permission denied")
 	}
+	// 规范化必须先于 trigger task 权限校验（GHSA-8fgr-wx8p-v6q7）。
+	if err := normalizeAlertRuleReferences(r); err != nil {
+		return err
+	}
 	if len(r.Rules) > 0 {
 		for _, rule := range r.Rules {
 			if rule == nil {

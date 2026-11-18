@@ -534,12 +534,16 @@ func (s *Server) AfterFind(tx *gorm.DB) error {
 			return nil
 		}
 	}
+	// 重复 profile ID 会让 UpdateDDNS 为同一 profile 重复起 goroutine 外呼
+	// （GHSA-8fgr-wx8p-v6q7），读取时收敛历史膨胀数据。
+	s.DDNSProfiles = UniqueIDs(s.DDNSProfiles)
 	if s.OverrideDDNSDomainsRaw != "" {
 		if err := json.Unmarshal([]byte(s.OverrideDDNSDomainsRaw), &s.OverrideDDNSDomains); err != nil {
 			log.Println("NEZHA>> Server.AfterFind:", err)
 			return nil
 		}
 	}
+	s.OverrideDDNSDomains = PruneOverrideDDNSDomains(s.OverrideDDNSDomains, s.DDNSProfiles)
 	return nil
 }
 

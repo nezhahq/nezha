@@ -361,6 +361,8 @@ func (m *Service) AfterFind(tx *gorm.DB) error {
 		log.Println("NEZHA>> Service.AfterFind:", err)
 		return nil
 	}
+	// 收敛历史上落库的 false 条目（GHSA-8fgr-wx8p-v6q7），见 reference_set.go。
+	m.SkipServers = EnabledIDSet(m.SkipServers)
 
 	// 加载触发任务列表
 	if err := json.Unmarshal([]byte(m.FailTriggerTasksRaw), &m.FailTriggerTasks); err != nil {
@@ -369,6 +371,9 @@ func (m *Service) AfterFind(tx *gorm.DB) error {
 	if err := json.Unmarshal([]byte(m.RecoverTriggerTasksRaw), &m.RecoverTriggerTasks); err != nil {
 		return err
 	}
+	// 重复 task ID 会让 SendTriggerTasks 重复触发同一个 cron。
+	m.FailTriggerTasks = UniqueIDs(m.FailTriggerTasks)
+	m.RecoverTriggerTasks = UniqueIDs(m.RecoverTriggerTasks)
 
 	return nil
 }

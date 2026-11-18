@@ -513,6 +513,7 @@ func createService(c *gin.Context) (uint64, error) {
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
 
+	normalizeServiceReferences(&m)
 	if err := validateServers(c, &m); err != nil {
 		return 0, err
 	}
@@ -585,6 +586,7 @@ func updateService(c *gin.Context) (any, error) {
 	m.RecoverTriggerTasks = mf.RecoverTriggerTasks
 	m.FailTriggerTasks = mf.FailTriggerTasks
 
+	normalizeServiceReferences(&m)
 	if err := validateServers(c, &m); err != nil {
 		return 0, err
 	}

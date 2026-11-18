@@ -85,7 +85,9 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	r.POST("/mcp/upload/:token", mcpOriginGuard(), transferUploadHandler)
 	registerAgentcompatRoutes(r)
 
-	api := r.Group("api/v1")
+	// 所有 /api/v1 请求体统一限长：ShouldBindJSON 会完整读取请求体
+	// （GHSA-8fgr-wx8p-v6q7）。
+	api := r.Group("api/v1", restRequestBodyLimitMiddleware(restAPIRequestMaxBodyBytes))
 	api.POST("/login", authMiddleware.LoginHandler)
 
 	fallbackAuthMw := fallbackAuthMiddleware(authMiddleware)

@@ -63,6 +63,14 @@ func updateServer(c *gin.Context) (any, error) {
 	if err := c.ShouldBindJSON(&sf); err != nil {
 		return nil, err
 	}
+	// DDNSShared.CheckPermission 不去重；重复 ID 会让 UpdateDDNS 重复外呼
+	// （GHSA-8fgr-wx8p-v6q7）。必须在权限校验前规范化。
+	sf.DDNSProfiles = model.UniqueIDs(sf.DDNSProfiles)
+	overrideDomains, err := normalizeOverrideDDNSDomains(sf.OverrideDDNSDomains, sf.DDNSProfiles)
+	if err != nil {
+		return nil, err
+	}
+	sf.OverrideDDNSDomains = overrideDomains
 
 	if !singleton.DDNSShared.CheckPermission(c, slices.Values(sf.DDNSProfiles)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
@@ -296,6 +304,8 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	if err := c.ShouldBindJSON(&configForm); err != nil {
 		return nil, err
 	}
+	// 重复 ID 会向同一 agent 重复下发配置。
+	configForm.Servers = model.UniqueIDs(configForm.Servers)
 
 	var resp model.ServerTaskResponse
 	slist := singleton.ServerShared.GetList()

@@ -44,7 +44,12 @@ func (c *Cron) BeforeSave(tx *gorm.DB) error {
 }
 
 func (c *Cron) AfterFind(tx *gorm.DB) error {
-	return json.Unmarshal([]byte(c.ServersRaw), &c.Servers)
+	if err := json.Unmarshal([]byte(c.ServersRaw), &c.Servers); err != nil {
+		return err
+	}
+	// 收敛历史上落库的重复 server ID（GHSA-8fgr-wx8p-v6q7）。
+	c.Servers = UniqueIDs(c.Servers)
+	return nil
 }
 
 // HasPermission 扩展默认的 owner/admin 检查，使得 PAT 的 server_ids 白名单

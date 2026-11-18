@@ -179,6 +179,15 @@ func (r *AlertRule) AfterFind(tx *gorm.DB) error {
 	if err = json.Unmarshal([]byte(r.RecoverTriggerTasksRaw), &r.RecoverTriggerTasks); err != nil {
 		return err
 	}
+	// 收敛历史膨胀数据（GHSA-8fgr-wx8p-v6q7）：重复 task 会重复触发 cron，
+	// Ignore 里的 false 条目没有语义却常驻内存。
+	r.FailTriggerTasks = UniqueIDs(r.FailTriggerTasks)
+	r.RecoverTriggerTasks = UniqueIDs(r.RecoverTriggerTasks)
+	for _, rule := range r.Rules {
+		if rule != nil && rule.Ignore != nil {
+			rule.Ignore = EnabledIDSet(rule.Ignore)
+		}
+	}
 	return nil
 }
 
