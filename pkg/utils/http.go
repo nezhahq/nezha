@@ -38,17 +38,26 @@ var blockedHTTPClientCIDRs = mustParseHTTPClientCIDRs([]string{
 	"240.0.0.0/4",
 	"::/128",
 	"::1/128",
+	"::/96",
 	"::ffff:0:0/96",
+	"::ffff:0:0:0/96",
 	"64:ff9b::/96",
 	"64:ff9b:1::/48",
 	"100::/64",
 	"2001::/23",
 	"2001:db8::/32",
 	"2002::/16",
+	"3fff::/20",
 	"fc00::/7",
 	"fe80::/10",
+	"fec0::/10",
 	"ff00::/8",
 })
+
+// IPv6 global unicast space is only assigned from 2000::/3. Everything outside
+// it is special-purpose, deprecated or unassigned, yet netip's IsGlobalUnicast
+// still reports it as global, so the deny list alone cannot be exhaustive.
+var allowedHTTPClientIPv6CIDR = netip.MustParsePrefix("2000::/3")
 
 func init() {
 	HttpClientSkipTlsVerify = httpClient(_httpClient{
@@ -180,6 +189,9 @@ func HTTPURLTargetIPAllowed(ip net.IP) bool {
 		if cidr.Contains(parsedIP) {
 			return false
 		}
+	}
+	if parsedIP.Is6() && !allowedHTTPClientIPv6CIDR.Contains(parsedIP) {
+		return false
 	}
 	return parsedIP.IsGlobalUnicast()
 }

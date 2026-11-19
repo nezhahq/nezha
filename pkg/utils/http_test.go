@@ -21,6 +21,17 @@ func TestHTTPURLTargetIPAllowed(t *testing.T) {
 		{name: "local-use NAT64", address: "64:ff9b:1::a9fe:a9fe", allowed: false},
 		{name: "6to4 public IPv4 embedding", address: "2002:0101:0101::1", allowed: false},
 		{name: "6to4 link-local IPv4 embedding", address: "2002:a9fe:a9fe::1", allowed: false},
+		{name: "site-local", address: "fec0::2", allowed: false},
+		{name: "site-local upper bound", address: "feff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", allowed: false},
+		{name: "IPv4-compatible loopback embedding", address: "::127.0.0.1", allowed: false},
+		{name: "IPv4-compatible link-local embedding", address: "::169.254.169.254", allowed: false},
+		{name: "IPv4-translated link-local embedding", address: "::ffff:0:169.254.169.254", allowed: false},
+		{name: "documentation", address: "3fff::1", allowed: false},
+		{name: "unassigned below global unicast", address: "200::1", allowed: false},
+		{name: "unassigned above global unicast", address: "4000::1", allowed: false},
+		{name: "SRv6 SIDs", address: "5f00::1", allowed: false},
+		{name: "global unicast lower bound", address: "2000::1", allowed: true},
+		{name: "global unicast upper bound", address: "3fff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", allowed: true},
 	}
 
 	for _, test := range tests {
@@ -40,6 +51,9 @@ func TestResolveAllowedHTTPURLRejectsSpecialIPv6Literals(t *testing.T) {
 	for _, rawURL := range []string{
 		"http://[64:ff9b:1::a9fe:a9fe]/metadata",
 		"http://[2002:a9fe:a9fe::1]/metadata",
+		"http://[fec0::2]/metadata",
+		"http://[::169.254.169.254]/metadata",
+		"http://[::ffff:0:169.254.169.254]/metadata",
 	} {
 		t.Run(rawURL, func(t *testing.T) {
 			_, _, err := ResolveAllowedHTTPURL(rawURL)
