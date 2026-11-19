@@ -359,6 +359,23 @@ func (s *Server) AttachStateStream(stream pb.NezhaService_ReportSystemStateServe
 	return StateStreamLease{holder: holder, generation: holder.generation}
 }
 
+// RevokeStateStream ends the agent's ReportSystemState session from the
+// dashboard side. The stream authenticates only when it is opened, so this is
+// how a credential that stops being valid is taken away from a stream that is
+// already open: the lease handed out by AttachStateStream stops being current
+// and can neither update nor clear the runtime state any more.
+func (s *Server) RevokeStateStream() {
+	holder := s.RuntimeHandle().holder
+	holder.mu.Lock()
+	defer holder.mu.Unlock()
+	holder.generation++
+	holder.stream = nil
+	holder.lastActive = time.Time{}
+	if holder.canonical != nil {
+		holder.canonical.LastActive = time.Time{}
+	}
+}
+
 func (s *Server) UpdateStateIfCurrent(lease StateStreamLease, state *HostState, lastActive time.Time) bool {
 	return s.UpdateStateIfCurrentWithSideEffect(lease, state, lastActive, nil)
 }

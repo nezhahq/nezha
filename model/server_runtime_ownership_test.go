@@ -445,3 +445,21 @@ func TestStateStreamSideEffectDoesNotBlockRuntimeSnapshot(t *testing.T) {
 	require.False(t, lease.UpdateState(&HostState{}, time.Now()))
 	require.True(t, next.UpdateState(&HostState{}, time.Now()))
 }
+
+func TestServerRuntimeOwnership_revokedLeaseCannotMutateRuntime(t *testing.T) {
+	server := &Server{}
+	InitServer(server)
+	lease := server.AttachStateStream(runtimeOwnershipStream{})
+	require.True(t, lease.UpdateState(&HostState{Uptime: 1}, time.Unix(1, 0)))
+
+	server.RevokeStateStream()
+
+	require.False(t, lease.UpdateState(&HostState{Uptime: 2}, time.Unix(2, 0)))
+	require.False(t, lease.Clear())
+	snapshot := server.RuntimeSnapshot()
+	require.Equal(t, uint64(1), snapshot.State.Uptime)
+	require.True(t, snapshot.LastActive.IsZero())
+
+	replacement := server.AttachStateStream(runtimeOwnershipStream{})
+	require.True(t, replacement.UpdateState(&HostState{Uptime: 3}, time.Unix(3, 0)))
+}

@@ -1382,7 +1382,7 @@ func (c *ServerTransferClass) ReturnPendingToSource(userIDs []uint64) error {
 // to a nonexistent ToUserID. Settle the row up-front instead, mirroring
 // OnServersDeleted's CAS + in-memory cleanup pattern.
 //
-// We deliberately do NOT touch model.Server here — the live owner may be
+// We deliberately do NOT touch Server.UserID here — the live owner may be
 // a third party (chained transfers) or the surviving counterparty, and the
 // caller's own delete loop (singleton.OnUserDelete) is responsible for any
 // servers still attributed to the deleted user. A server that is only on its
@@ -1424,20 +1424,53 @@ func (c *ServerTransferClass) OnUsersDeleted(userIDs []uint64) {
 		terminated = append(terminated, t)
 	}
 
+	servers := make([]*model.Server, len(terminated))
+	for i := range terminated {
+		servers[i], _ = ServerShared.Get(terminated[i].ServerID)
+	}
+
+	// Unlike revertTransition, ownership is not rolled back: the server stays
+	// with ToUserID, and it got there without MarkVerified, so the agent never
+	// proved it left the source side. Nothing the source side holds as this
+	// server's agent may survive that:
+	//
+	//   - credentials: the per-server slots are dropped regardless of transfer
+	//     id. Register keeps terminalSecretRecovery and verifiedHandshakes of
+	//     EARLIER transfers alive for the Pending window, and an id-matched
+	//     delete would leave those secrets authenticating as the new owner's
+	//     server (a restart already refuses to rebuild them once Server.UserID
+	//     no longer matches). A stale slot would also keep
+	//     ServerControlTransitioning true and lock the new owner out.
+	//   - streams: RequestTask and ReportSystemState authenticate only when
+	//     they are opened, and no agent reconnect is going to replace them.
+	//
+	// The task stream is detached inside the critical section that drops the
+	// pending entry. ServerControlTransitioning reads under c.mu, so the new
+	// owner's tasks, held back while Pending, can never be admitted while the
+	// source side's stream is still published. SetTaskStream(nil) is a
+	// non-blocking pointer swap; the ServerShared lookup and the revocations
+	// that take locks of their own stay outside c.mu.
 	c.mu.Lock()
 	for i := range terminated {
 		t := &terminated[i]
 		if existing, ok := c.pending[t.ServerID]; ok && existing.ID == t.ID {
 			delete(c.pending, t.ServerID)
 		}
-		if existing, ok := c.revertDeliveries[t.ServerID]; ok && existing.ID == t.ID {
-			delete(c.revertDeliveries, t.ServerID)
-		}
-		if existing, ok := c.terminalSecretRecovery[t.ServerID]; ok && existing.ID == t.ID {
-			delete(c.terminalSecretRecovery, t.ServerID)
+		delete(c.revertDeliveries, t.ServerID)
+		delete(c.terminalSecretRecovery, t.ServerID)
+		delete(c.verifiedHandshakes, t.ServerID)
+		if servers[i] != nil {
+			servers[i].SetTaskStream(nil)
 		}
 	}
 	c.mu.Unlock()
+
+	for i := range terminated {
+		if servers[i] != nil {
+			servers[i].RevokeStateStream()
+		}
+		ServerTransferRevokeStreamsForServer(terminated[i].ServerID)
+	}
 
 	for i := range terminated {
 		c.broadcast(&terminated[i])
