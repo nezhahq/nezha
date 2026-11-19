@@ -166,6 +166,10 @@ func mintTransferToken(e transferEntry) (string, error) {
 	return tok, nil
 }
 
+// consumeTransferToken returns the entry without an error only when the URL may
+// be used. A URL that is genuine (known and correctly signed) but refused for
+// its direction or age is returned together with the error, for audit
+// attribution only: the refusal belongs to the token the URL was minted from.
 func consumeTransferToken(tok string, dir transferDirection) (*transferEntry, error) {
 	raw, ok := transferEntries.LoadAndDelete(tok)
 	if !ok {
@@ -183,10 +187,10 @@ func consumeTransferToken(tok string, dir transferDirection) (*transferEntry, er
 		return nil, errors.New("transfer token signature mismatch")
 	}
 	if e.Direction != dir {
-		return nil, errors.New("transfer token direction mismatch")
+		return &e, errors.New("transfer token direction mismatch")
 	}
 	if time.Now().After(e.ExpiresAt) {
-		return nil, errors.New("transfer token expired")
+		return &e, errors.New("transfer token expired")
 	}
 	return &e, nil
 }
@@ -447,7 +451,7 @@ func transferDownloadHandler(c *gin.Context) {
 	tok := c.Param("token")
 	entry, err := consumeTransferToken(tok, transferDirDownload)
 	if err != nil {
-		writeTransferFailureAudit(c, nil, "fs.download", classifyTransferConsumeError(err), err)
+		writeTransferFailureAudit(c, entry, "fs.download", classifyTransferConsumeError(err), err)
 		c.String(http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -559,7 +563,7 @@ func transferUploadHandler(c *gin.Context) {
 	tok := c.Param("token")
 	entry, err := consumeTransferToken(tok, transferDirUpload)
 	if err != nil {
-		writeTransferFailureAudit(c, nil, "fs.upload", classifyTransferConsumeError(err), err)
+		writeTransferFailureAudit(c, entry, "fs.upload", classifyTransferConsumeError(err), err)
 		c.String(http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -656,7 +660,7 @@ func transferUploadHandler(c *gin.Context) {
 
 // writeTransferFailureAudit 是 fs.upload / fs.download HTTP handler 失败路径
 // 共用的审计写入。outcome 必须用 model.MCPOutcome* 常量；entry 可以是 nil
-// （token consume 阶段就失败时拿不到 entry，UserID/TokenID/ServerID 写 0）。
+// （token 未知/已用/签名不符时拿不到 entry，UserID/TokenID/ServerID 写 0）。
 //
 // Anonymous failures (entry == nil) go through transferAnonAuditThrottleShared
 // per-IP sampler so an unauthenticated attacker cannot flood mcp_audit_log

@@ -145,3 +145,53 @@ func TestTransferUpload_RejectsWithoutAuditWhenMCPDisabled(t *testing.T) {
 		countAuditRows(t, "fs.upload", model.MCPOutcomeMCPDisabled),
 		"disabled uploads must not allocate audit rows")
 }
+
+// A URL refused for its direction or expiry is genuine: consumeTransferToken
+// has its entry and has verified its signature. The refusal must be audited
+// against the token the URL was minted from, outside the anonymous sampler
+// (5 rows per minute and address), not as a guess with user/token/server 0.
+func TestTransferRefusedGenuineURLIsAuditedForItsToken(t *testing.T) {
+	cleanup, uid := setupMCPTest(t)
+	defer cleanup()
+	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	r := newTransferRouter(t)
+
+	refuse := func(expiresAt time.Time, method, route, wantBody string) {
+		t.Helper()
+		url, err := mintTransferToken(transferEntry{
+			UserID:    uid,
+			TokenID:   tok.ID,
+			ServerID:  7,
+			Path:      "/srv/blob",
+			Direction: transferDirDownload,
+			ExpiresAt: expiresAt,
+		})
+		require.NoError(t, err)
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(method, route+url, strings.NewReader(""))
+		req.ContentLength = 0
+		r.ServeHTTP(w, req)
+		require.Equal(t, http.StatusUnauthorized, w.Code)
+		require.Equal(t, wantBody, w.Body.String())
+		_, err = consumeTransferToken(url, transferDirDownload)
+		require.Error(t, err, "a refused URL must stay consumed")
+	}
+	const each = 8 // more than the anonymous per-address budget
+	for range each {
+		refuse(time.Now().Add(time.Minute), "POST", "/mcp/upload/", "transfer token direction mismatch")
+		refuse(time.Now().Add(-time.Second), "GET", "/mcp/download/", "transfer token expired")
+	}
+
+	attributed := func(tool, outcome string) int64 {
+		t.Helper()
+		var cnt int64
+		require.NoError(t, singleton.DB.Model(&model.MCPAuditLog{}).
+			Where("tool = ? AND outcome = ? AND user_id = ? AND token_id = ? AND server_id = ?", tool, outcome, uid, tok.ID, 7).
+			Count(&cnt).Error)
+		return cnt
+	}
+	require.Equal(t, int64(each), attributed("fs.upload", model.MCPOutcomeInvalidArgs),
+		"every wrong-direction refusal must name the token of the URL")
+	require.Equal(t, int64(each), attributed("fs.download", model.MCPOutcomeScopeDenied),
+		"every expiry refusal must name the token of the URL")
+}

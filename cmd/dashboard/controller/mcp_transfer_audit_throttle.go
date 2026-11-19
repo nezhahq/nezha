@@ -7,14 +7,16 @@ import (
 
 // transferAnonAuditThrottle caps the number of audit rows written per
 // source IP within a sliding window for transfer requests that failed
-// before a valid `entry` could be loaded (bogus/expired/replayed token).
+// before a valid `entry` could be loaded (bogus, replayed or GC-collected token).
 //
 // Without this cap an unauthenticated attacker can POST millions of
 // /mcp/upload/<random> requests; every miss invokes
 // writeTransferFailureAudit which inserts into mcp_audit_log. The
 // throttle keeps a small per-IP token bucket in memory and drops audit
 // rows past the budget — successful and authenticated failures (entry
-// != nil) bypass this gate entirely so SIEM signal is unaffected.
+// != nil) bypass this gate entirely so SIEM signal is unaffected. That
+// includes a genuine URL refused for its direction or expiry: it is
+// consumed by the refusal, so such rows are bounded by the URLs minted.
 type transferAnonAuditThrottle struct {
 	mu     sync.Mutex
 	window time.Duration
