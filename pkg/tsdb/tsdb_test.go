@@ -675,3 +675,83 @@ func TestTSDB_QueryServiceHistoryByServerID_ClosedDB(t *testing.T) {
 	_, err = db.QueryServiceHistoryByServerID(1, Period1Day)
 	assert.Error(t, err)
 }
+
+// Releases before v2.6.0 wrote agent-reported ±Inf to the store unchecked.
+// Every query must still return values that a JSON response can carry.
+func TestTSDB_QueriesSanitizeStoredNonFiniteSamples(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "tsdb_test")
+	require.NoError(t, err)
+	defer os.RemoveAll(tempDir)
+
+	config := &Config{
+		DataPath:           filepath.Join(tempDir, "tsdb"),
+		RetentionDays:      30,
+		MinFreeDiskSpaceGB: 1,
+		DedupInterval:      time.Second,
+	}
+
+	db, err := Open(config)
+	require.NoError(t, err)
+	defer db.Close()
+
+	now := time.Now()
+	serviceID := uint64(100)
+	serverID := uint64(1)
+
+	for _, age := range []time.Duration{time.Minute, 72 * time.Hour} {
+		for _, delay := range []float64{math.Inf(1), math.Inf(-1)} {
+			require.NoError(t, db.WriteServiceMetrics(&ServiceMetrics{
+				ServiceID:  serviceID,
+				ServerID:   serverID,
+				Timestamp:  now.Add(-age),
+				Delay:      delay,
+				Successful: true,
+			}))
+			age += time.Minute
+		}
+	}
+	require.NoError(t, db.WriteServerMetrics(&ServerMetrics{
+		ServerID:  serverID,
+		Timestamp: now.Add(-time.Minute),
+		CPU:       math.Inf(1),
+	}))
+
+	db.Flush()
+
+	byService, err := db.QueryServiceHistory(serviceID, Period1Day)
+	require.NoError(t, err)
+	require.Len(t, byService.Servers, 1)
+	assert.Equal(t, uint64(2), byService.Servers[0].Stats.TotalUp, "status samples are kept")
+	assert.Equal(t, float64(0), byService.Servers[0].Stats.AvgDelay)
+
+	byServer, err := db.QueryServiceHistoryByServerID(serverID, Period1Day)
+	require.NoError(t, err)
+	require.Contains(t, byServer, serviceID)
+	assert.Equal(t, float64(0), byServer[serviceID].Servers[0].Stats.AvgDelay)
+
+	year, month, day := now.Date()
+	today := time.Date(year, month, day, 0, 0, 0, 0, now.Location())
+	daily, err := db.QueryServiceDailyStats(serviceID, today, 30)
+	require.NoError(t, err)
+	var dailyUp uint64
+	for _, stats := range daily {
+		dailyUp += stats.Up
+		assert.Equal(t, float64(0), stats.Delay)
+	}
+	assert.GreaterOrEqual(t, dailyUp, uint64(2))
+
+	cpu, err := db.QueryServerMetrics(serverID, MetricServerCPU, Period1Day)
+	require.NoError(t, err)
+	require.Len(t, cpu, 1)
+	assert.Equal(t, float64(0), cpu[0].Value)
+
+	for name, value := range map[string]any{
+		"service history": byService,
+		"server services": byServer,
+		"daily stats":     daily,
+		"server metrics":  cpu,
+	} {
+		_, err := json.Marshal(value)
+		assert.NoError(t, err, name)
+	}
+}

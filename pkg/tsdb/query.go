@@ -283,9 +283,11 @@ func (db *TSDB) queryMetricByServiceID(metric MetricType, serviceID string, tr s
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {
+			// Releases before FiniteStateValue stored agent-reported ±Inf as is;
+			// read it back as the value that is stored for such a report today.
 			result[serverID] = append(result[serverID], metricPoint{
 				timestamp: timestamps[i],
-				value:     values[i],
+				value:     model.FiniteStateValue(values[i]),
 			})
 		}
 	}
@@ -506,9 +508,10 @@ func (db *TSDB) QueryServerMetrics(serverID uint64, metric MetricType, period Qu
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {
+			// Stored ±Inf from older releases, see queryMetricByServiceID.
 			points = append(points, rawDataPoint{
 				timestamp: timestamps[i],
-				value:     values[i],
+				value:     model.FiniteStateValue(values[i]),
 			})
 		}
 	}
@@ -653,9 +656,10 @@ func (db *TSDB) queryMetricByServerID(metric MetricType, serverID string, tr sto
 		timestamps, values = block.AppendRowsWithTimeRangeFilter(timestamps, values, tr)
 
 		for i := range timestamps {
+			// Stored ±Inf from older releases, see queryMetricByServiceID.
 			result[serviceID] = append(result[serviceID], metricPoint{
 				timestamp: timestamps[i],
-				value:     values[i],
+				value:     model.FiniteStateValue(values[i]),
 			})
 		}
 	}

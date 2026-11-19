@@ -2,6 +2,8 @@ package model
 
 import (
 	"time"
+
+	"gorm.io/gorm"
 )
 
 type ServiceHistory struct {
@@ -14,4 +16,11 @@ type ServiceHistory struct {
 	Up        uint64    `json:"up,omitempty"`                                                                   // 检查状态良好计数
 	Down      uint64    `json:"down,omitempty"`                                                                 // 检查状态异常计数
 	Data      string    `json:"data,omitempty"`
+}
+
+// AfterFind replaces a non-finite delay stored by a release that predates
+// FiniteStateValue; one such row fails every JSON response built from it.
+func (h *ServiceHistory) AfterFind(tx *gorm.DB) error {
+	h.AvgDelay = FiniteStateValue(h.AvgDelay)
+	return nil
 }
