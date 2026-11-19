@@ -5,7 +5,9 @@ import (
 	"iter"
 	"log"
 	"maps"
+	"os"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -81,6 +83,9 @@ func InitFrontendTemplates() error {
 // InitDBFromPath 从给出的文件路径中加载数据库
 func InitDBFromPath(path string) error {
 	var err error
+	if err = restrictSQLiteFileMode(path); err != nil {
+		log.Printf("NEZHA>> database file %s may be readable by other users: %v", path, err)
+	}
 	DB, err = gorm.Open(openSQLiteDialector(path), &gorm.Config{
 		CreateBatchSize: 200,
 	})
@@ -110,6 +115,38 @@ func InitDBFromPath(path string) error {
 		log.Printf("NEZHA>> Migrated legacy mcp:* api token scopes: rewritten=%d deleted=%d", rewritten, deleted)
 	}
 
+	return nil
+}
+
+// restrictSQLiteFileMode makes the database owner-only before SQLite opens it.
+// SQLite creates the database 0644 and gives its -journal/-wal/-shm files the
+// mode of the database, so the file is created here with 0600 and files that
+// already exist are tightened. The database holds password hashes, agent
+// secrets, session ids and notification / DDNS credentials.
+func restrictSQLiteFileMode(dsn string) error {
+	// Same DSN handling as go-sqlite3: options follow '?'. file: URIs and
+	// in-memory / temporary databases are left to SQLite.
+	if strings.HasPrefix(dsn, "file:") {
+		return nil
+	}
+	if pos := strings.IndexRune(dsn, '?'); pos >= 1 {
+		dsn = dsn[:pos]
+	}
+	if dsn == "" || dsn == ":memory:" {
+		return nil
+	}
+
+	f, err := os.OpenFile(dsn, os.O_RDONLY|os.O_CREATE, 0600)
+	if err != nil {
+		return err
+	}
+	f.Close()
+
+	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
+		if err := utils.RestrictFileToOwner(dsn + suffix); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	return nil
 }
 

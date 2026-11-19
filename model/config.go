@@ -168,6 +168,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	}
 
 	if _, err := os.Stat(path); err == nil {
+		c.restrictFileMode()
 		err = c.k.Load(file.Provider(path), new(utils.KubeYAML), koanf.WithMergeFunc(mergeDedup))
 		if err != nil {
 			return err
@@ -348,7 +349,20 @@ func (c *Config) patchYAMLField(key string, value any) error {
 	if err != nil {
 		return err
 	}
+	c.restrictFileMode()
 	return os.WriteFile(c.filePath, out, 0600)
+}
+
+// restrictFileMode drops group/other access from an existing config file.
+// The 0600 given to os.WriteFile only applies when it creates the file, so a
+// config.yaml that was there before (seeded by an installer, bind-mounted,
+// written by an older version) would otherwise keep its mode while holding
+// jwt_secret_key and agent_secret_key. Failure is not fatal: the file may be
+// on a read-only mount or owned by another user.
+func (c *Config) restrictFileMode() {
+	if err := utils.RestrictFileToOwner(c.filePath); err != nil && !os.IsNotExist(err) {
+		log.Printf("NEZHA>> config file %s may be readable by other users: %v", c.filePath, err)
+	}
 }
 
 func (c *Config) save() error {
@@ -379,6 +393,7 @@ func (c *Config) write(data []byte) error {
 		return err
 	}
 
+	c.restrictFileMode()
 	return os.WriteFile(c.filePath, data, 0600)
 }
 

@@ -2,6 +2,8 @@ package model
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -259,6 +261,88 @@ func TestConfigCoverConstantValues(t *testing.T) {
 	if ConfigCoverIgnoreAll != originalConfigCoverIgnoreAll {
 		t.Fatalf("ConfigCoverIgnoreAll = %d, want original value %d", ConfigCoverIgnoreAll, originalConfigCoverIgnoreAll)
 	}
+}
+
+// A config.yaml that exists before the first start (seeded by an installer,
+// bind-mounted, left 0644 by an older version) must not stay readable by other
+// local users once jwt_secret_key and agent_secret_key are stored in it.
+func TestConfigFileIsRestrictedToOwner(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix permission bits are not available on windows")
+	}
+	t.Setenv(JWTSecretEnvKey, "")
+
+	worldReadableConfig := func(t *testing.T, cfg string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "config.yaml")
+		if err := os.WriteFile(path, []byte(cfg), 0600); err != nil {
+			t.Fatalf("write config failed: %v", err)
+		}
+		// chmod is not subject to the umask of the test process
+		if err := os.Chmod(path, 0644); err != nil {
+			t.Fatalf("chmod config failed: %v", err)
+		}
+		return path
+	}
+	assertPrivate := func(t *testing.T, path string) {
+		t.Helper()
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat config failed: %v", err)
+		}
+		if mode := info.Mode().Perm(); mode&0077 != 0 {
+			t.Fatalf("config holds jwt_secret_key and agent_secret_key but has mode %04o", mode)
+		}
+	}
+
+	t.Run("FirstStartGeneratesSecrets", func(t *testing.T) {
+		path := worldReadableConfig(t, "listen_port: 8008\n")
+		c := &Config{}
+		if err := c.Read(path, nil); err != nil {
+			t.Fatalf("read config failed: %v", err)
+		}
+		saved, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read saved config failed: %v", err)
+		}
+		if !strings.Contains(string(saved), "jwt_secret_key: "+c.JWTSecretKey) {
+			t.Fatal("generated jwt_secret_key was not persisted")
+		}
+		assertPrivate(t, path)
+	})
+
+	t.Run("ExistingSecretsAreNotRewritten", func(t *testing.T) {
+		path := worldReadableConfig(t, "jwt_secret_key: test\nagent_secret_key: none\n")
+		c := &Config{}
+		if err := c.Read(path, nil); err != nil {
+			t.Fatalf("read config failed: %v", err)
+		}
+		assertPrivate(t, path)
+	})
+
+	t.Run("SaveAndPatch", func(t *testing.T) {
+		path := worldReadableConfig(t, "jwt_secret_key: test\nagent_secret_key: none\n")
+		c := &Config{}
+		if err := c.Read(path, nil); err != nil {
+			t.Fatalf("read config failed: %v", err)
+		}
+
+		if err := os.Chmod(path, 0644); err != nil {
+			t.Fatalf("chmod config failed: %v", err)
+		}
+		if err := c.Save(); err != nil {
+			t.Fatalf("save config failed: %v", err)
+		}
+		assertPrivate(t, path)
+
+		if err := os.Chmod(path, 0644); err != nil {
+			t.Fatalf("chmod config failed: %v", err)
+		}
+		if err := c.patchYAMLField("jwt_secret_key", "patched"); err != nil {
+			t.Fatalf("patch config failed: %v", err)
+		}
+		assertPrivate(t, path)
+	})
 }
 
 func newTempConfig(t *testing.T, cfg string) string {
