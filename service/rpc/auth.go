@@ -280,7 +280,7 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 		if t, ok := singleton.ServerTransferShared.LookupRevertDelivery(cid); ok && t.FromUserID == userId {
 			return cid, true, nil
 		}
-		if pending != nil && pending.FromUserID == userId {
+		if pending != nil && pending.FromUserID == userId && singleton.ServerTransferShared.PendingSourceOwner(cid, userId) {
 			return cid, true, nil
 		}
 	}

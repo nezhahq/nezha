@@ -145,6 +145,16 @@ type ServerTransferClass struct {
 	// concurrent callers could both pass the HasPending guard, both run
 	// their transactions, and both succeed in creating Pending rows.
 	initiating map[uint64]bool
+	// verifying tracks servers whose MarkVerified call is currently running
+	// the Pending -> Verified CAS in the DB, which it must do without holding
+	// mu (see MarkVerified). The pending entry stays published for that time,
+	// so everything it keeps closed stays closed; what it would open is
+	// refused on this mark instead (PendingSourceOwner, InitiateExclusive).
+	verifying map[uint64]bool
+	// verifyLocks serializes MarkVerified per server, so a second presentation
+	// of the same HandshakeSecret waits for the first one's outcome. Do not
+	// use c.mu for this: the CAS is a DB write and may block.
+	verifyLocks sync.Map
 	// applyConfigSendLocks orders ApplyConfig sends per server transfer lifecycle.
 	// Do not use c.mu for this: stream.Send may block, but stale new-secret
 	// pushes and cancel/fail/timeout revert pushes must not overtake each other
@@ -224,6 +234,7 @@ func NewServerTransferClass() *ServerTransferClass {
 		terminalSecretRecovery: make(map[uint64]*model.ServerTransfer),
 		verifiedHandshakes:     make(map[uint64]string),
 		initiating:             make(map[uint64]bool),
+		verifying:              make(map[uint64]bool),
 		subs:                   make(map[uint64]chan *model.ServerTransfer),
 		subOwners:              make(map[uint64]uint64),
 		subCounts:              make(map[uint64]int),
@@ -427,6 +438,18 @@ func (c *ServerTransferClass) LookupOwnerAndPending(s *model.Server) (uint64, *m
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return s.GetUserID(), c.pending[s.ID]
+}
+
+// PendingSourceOwner reports whether userID is the previous owner of a server
+// whose transfer is still Pending, i.e. whether auth may keep tolerating that
+// user's global AgentSecret for it. Not while MarkVerified is settling the
+// transfer: the DB row may already be Verified although the pending entry is
+// still published.
+func (c *ServerTransferClass) PendingSourceOwner(serverID, userID uint64) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	t, ok := c.pending[serverID]
+	return ok && t.FromUserID == userID && !c.verifying[serverID]
 }
 
 // HasPending reports whether the given server has an in-flight transfer.
@@ -633,6 +656,11 @@ func (c *ServerTransferClass) applyConfigSendLock(serverID uint64) *sync.Mutex {
 	return lock.(*sync.Mutex)
 }
 
+func (c *ServerTransferClass) verifyLock(serverID uint64) *sync.Mutex {
+	lock, _ := c.verifyLocks.LoadOrStore(serverID, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 // Initiate runs inside the given transaction and:
 //   - creates the ServerTransfer row with Status=Pending
 //   - flips Server.UserID to toUserID
@@ -763,7 +791,7 @@ func (c *ServerTransferClass) InitiateExclusive(serverID, fromUserID, toUserID, 
 		c.mu.Unlock()
 		return nil, ErrServerAlreadyTransferring
 	}
-	if c.initiating[serverID] {
+	if c.initiating[serverID] || c.verifying[serverID] {
 		c.mu.Unlock()
 		return nil, ErrServerAlreadyTransferring
 	}
@@ -994,26 +1022,45 @@ func (c *ServerTransferClass) sendApplyConfigTask(s *model.Server, stream pb.Nez
 // DB, the UPDATE affects zero rows and the in-memory state is left alone.
 // MarkVerified atomically transitions a Pending transfer to Verified.
 //
-// Invariant: c.mu is held across the DB CAS, the in-memory pending delete,
-// and the verifiedHandshakes write. Callers reading c.pending under c.mu
-// (auth.go's tolerance window) therefore can never observe a state where
-// the DB row is Verified but c.pending still flags the transfer as Pending —
-// the auth-bypass window that would otherwise let either a stale
-// HandshakeSecret or the old owner's global AgentSecret authenticate
-// between the two updates.
+// Invariant: auth can never act on a state where the DB row is Verified but
+// c.pending still flags the transfer as Pending — the auth-bypass window that
+// would otherwise let either a stale HandshakeSecret or the old owner's
+// global AgentSecret authenticate between the two updates.
+//
+// c.mu must NOT be what enforces this across the DB CAS: every agent auth
+// (LookupByHandshakeSecret & co.) and every non-admin control admission
+// (ServerControlTransitioning) takes c.mu for ANY server, and the agent
+// presenting the HandshakeSecret picks the moment the UPDATE runs. Holding
+// c.mu while that UPDATE waits for a DB connection or the write lock stalls
+// every other tenant's agents for as long as the DB is slow. Instead:
+//   - the per-server verify lock serializes MarkVerified for one server, so a
+//     concurrent presentation of the same HandshakeSecret waits for the
+//     outcome and then finds the promoted credential;
+//   - c.verifying[serverID] is set under c.mu before the CAS and cleared in
+//     the same c.mu hold that applies the outcome. While it is set the
+//     pending entry stays published (destination secret and control stay
+//     refused), the old owner's tolerance is withdrawn (PendingSourceOwner)
+//     and no new transfer can claim the slot (InitiateExclusive);
+//   - the in-memory pending delete and the verifiedHandshakes write are
+//     still a single c.mu critical section.
 //
 // Returns verified=true exactly when this call performed the Pending →
 // Verified transition for the supplied (serverID, transferID). All other
 // outcomes (no pending, transfer id mismatch, lost CAS, DB error) return
 // verified=false and the caller (auth) must reject the credential.
 func (c *ServerTransferClass) MarkVerified(serverID, transferID uint64) (verified bool, transfer *model.ServerTransfer, err error) {
-	c.mu.Lock()
+	lock := c.verifyLock(serverID)
+	lock.Lock()
+	defer lock.Unlock()
 
+	c.mu.Lock()
 	t, ok := c.pending[serverID]
 	if !ok || t.ID != transferID {
 		c.mu.Unlock()
 		return false, nil, nil
 	}
+	c.verifying[serverID] = true
+	c.mu.Unlock()
 
 	now := time.Now()
 	res := DB.Model(&model.ServerTransfer{}).
@@ -1022,6 +1069,9 @@ func (c *ServerTransferClass) MarkVerified(serverID, transferID uint64) (verifie
 			"status":   model.ServerTransferStatusVerified,
 			"acked_at": &now,
 		})
+
+	c.mu.Lock()
+	delete(c.verifying, serverID)
 	if res.Error != nil {
 		c.mu.Unlock()
 		return false, nil, res.Error

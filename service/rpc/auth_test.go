@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"google.golang.org/grpc/metadata"
 	"gorm.io/driver/sqlite"
@@ -577,9 +578,9 @@ func TestAuthHandshakeSecretRejectedAfterTransferTerminated(t *testing.T) {
 }
 
 // HIGH security regression: the auth tolerance window for the old owner's
-// global AgentSecret must close in lockstep with MarkVerified. Holding c.mu
-// across the DB CAS, the c.pending delete and the verifiedHandshakes write
-// inside MarkVerified makes those three steps a single observable event for
+// global AgentSecret must close in lockstep with MarkVerified. The tolerance
+// is withdrawn before the DB CAS starts (see the next test), and the c.pending
+// delete and the verifiedHandshakes write are a single observable event for
 // any auth-path lookup taking c.mu.RLock; once MarkVerified returns
 // verified=true, no later authorizeAgentForUUID can still see the pending
 // entry that previously admitted FromUserID.
@@ -602,6 +603,60 @@ func TestAuthOldOwnerSecretRejectedOnceTransferIsVerifiedInDB(t *testing.T) {
 
 	if _, _, err := authorizeAgentForUUID(100, authHandshakeUUID); err == nil {
 		t.Fatal("old owner's global AgentSecret must be rejected once MarkVerified has returned — the auth tolerance window must not outlive the verified transition")
+	}
+}
+
+// MarkVerified does not keep the transfer index locked while its CAS waits for
+// the DB, so auth can run in between. The row may already be Verified then
+// while the pending entry is still published: the old owner's global
+// AgentSecret must not be admitted on that entry.
+func TestAuthOldOwnerSecretRejectedWhileTransferIsBeingVerified(t *testing.T) {
+	defer setupAuthHandshakeFixture(t)()
+
+	initiatePendingTransfer(t, 11, 100, 200)
+	pending, ok := singleton.ServerTransferShared.LookupPending(11)
+	if !ok {
+		t.Fatal("expected pending transfer")
+	}
+	if _, _, err := authorizeAgentForUUID(100, authHandshakeUUID); err != nil {
+		t.Fatalf("old owner's global AgentSecret must be tolerated while the transfer is pending: %v", err)
+	}
+
+	writing, release := make(chan struct{}), make(chan struct{})
+	var park sync.Once
+	if err := singleton.DB.Callback().Update().Before("gorm:update").Register("park_verify_cas", func(tx *gorm.DB) {
+		park.Do(func() {
+			close(writing)
+			<-release
+		})
+	}); err != nil {
+		t.Fatalf("register callback: %v", err)
+	}
+	verified := make(chan bool, 1)
+	go func() {
+		ok, _, _ := singleton.ServerTransferShared.MarkVerified(11, pending.ID)
+		verified <- ok
+	}()
+	<-writing
+
+	rejected := make(chan error, 1)
+	go func() {
+		_, _, err := authorizeAgentForUUID(100, authHandshakeUUID)
+		rejected <- err
+	}()
+	select {
+	case err := <-rejected:
+		if err == nil {
+			t.Error("old owner's global AgentSecret must be rejected while MarkVerified is settling the transfer")
+		}
+		close(release)
+	case <-time.After(5 * time.Second):
+		t.Error("agent auth waited for MarkVerified's DB write")
+		close(release)
+		<-rejected
+	}
+	if !<-verified {
+		t.Fatal("MarkVerified must report verified=true for a fresh pending")
 	}
 }
 
