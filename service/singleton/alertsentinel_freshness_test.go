@@ -2,6 +2,7 @@ package singleton
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,6 +142,84 @@ func TestAlertNewIncidentNotMutedByEarlierInflightIncident(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("new incident delivery did not finish")
+	}
+}
+
+func TestSupersededAlertDeliveriesDoNotQueueBehindStalledSend(t *testing.T) {
+	oldCache, oldNotifications := Cache, NotificationShared
+	Cache = cache.New(time.Minute, time.Minute)
+	n := &model.Notification{Common: model.Common{ID: 641}, Name: "hook"}
+	nc := newNotificationClassWithItems(n)
+	nc.UpdateGroup(&model.NotificationGroup{Common: model.Common{ID: 643}, Name: "stalled-test"}, []uint64{n.ID})
+	NotificationShared = nc
+	t.Cleanup(func() {
+		cancelAlertDeliveries(642)
+		NotificationShared, Cache = oldNotifications, oldCache
+	})
+	started := make(chan struct{})
+	release := make(chan struct{})
+	releaseStalledSend := sync.OnceFunc(func() { close(release) })
+	t.Cleanup(releaseStalledSend)
+	delivered := make(chan string, 2)
+	nc.sendForTest = func(_ *model.Notification, desc string, _ *model.Server) error {
+		if desc == "first incident" {
+			close(started)
+			<-release
+		}
+		delivered <- desc
+		return nil
+	}
+	alert := &model.AlertRule{
+		Common:              model.Common{ID: 642},
+		NotificationGroupID: 643,
+		TriggerMode:         model.ModeOnetimeTrigger,
+	}
+	server := &model.Server{Common: model.Common{ID: 644}}
+	current := func() *alertDeliveryEntry {
+		alertDeliveryMu.Lock()
+		defer alertDeliveryMu.Unlock()
+		return alertDeliveries[alert.ID][server.ID]
+	}
+	startAlertDelivery(alert, server, "first incident", "incident", alertDeliveryIncident)
+	<-started
+	var entries []*alertDeliveryEntry
+	for i := range 20 {
+		if i%2 == 0 {
+			startAlertDelivery(alert, server, "recovered", "recovery", alertDeliveryRecovery)
+		} else {
+			startAlertDelivery(alert, server, "next incident", "incident", alertDeliveryIncident)
+		}
+		entries = append(entries, current())
+		// Let the delivery start waiting for the stalled send before the next
+		// transition supersedes it.
+		time.Sleep(5 * time.Millisecond)
+	}
+	last := entries[len(entries)-1]
+	for _, superseded := range entries[:len(entries)-1] {
+		select {
+		case <-superseded.done:
+		case <-time.After(time.Second):
+			t.Fatal("superseded delivery is still queued behind the stalled send")
+		}
+	}
+	select {
+	case <-last.done:
+		t.Fatal("latest delivery overtook the send that is still running")
+	default:
+	}
+	releaseStalledSend()
+	select {
+	case <-last.done:
+	case <-time.After(time.Second):
+		t.Fatal("latest transition was not delivered after the stalled send returned")
+	}
+	if first, second := <-delivered, <-delivered; first != "first incident" || second != "next incident" {
+		t.Fatalf("unexpected deliveries: %q, %q", first, second)
+	}
+	select {
+	case message := <-delivered:
+		t.Fatalf("superseded transition was delivered: %q", message)
+	default:
 	}
 }
 

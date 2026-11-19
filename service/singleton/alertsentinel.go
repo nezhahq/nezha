@@ -39,7 +39,7 @@ var (
 type alertDeliveryEntry struct {
 	cancel chan struct{}
 	done   chan struct{}
-	sendMu *sync.Mutex
+	sendCh chan struct{} // one-slot lock shared by successive deliveries of one alert/server pair
 }
 
 type alertDeliveryPhase uint8
@@ -110,12 +110,12 @@ func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, m
 	if alertDeliveries[alert.ID] == nil {
 		alertDeliveries[alert.ID] = make(map[uint64]*alertDeliveryEntry)
 	}
-	sendMu := new(sync.Mutex)
+	sendCh := make(chan struct{}, 1)
 	if old := alertDeliveries[alert.ID][server.ID]; old != nil {
 		close(old.cancel)
-		sendMu = old.sendMu
+		sendCh = old.sendCh
 	}
-	entry := &alertDeliveryEntry{cancel: make(chan struct{}), done: make(chan struct{}), sendMu: sendMu}
+	entry := &alertDeliveryEntry{cancel: make(chan struct{}), done: make(chan struct{}), sendCh: sendCh}
 	alertDeliveries[alert.ID][server.ID] = entry
 	alertDeliveryMu.Unlock()
 
@@ -126,9 +126,15 @@ func startAlertDelivery(alert *model.AlertRule, server *model.Server, message, m
 		runAlertDelivery(entry.cancel, func() bool {
 			// Serialize incident/recovery delivery for this alert/server pair.
 			// A recovery can cancel a pending incident, but never overtake an
-			// already-running network request.
-			entry.sendMu.Lock()
-			defer entry.sendMu.Unlock()
+			// already-running network request. A superseded delivery stops
+			// waiting for that request instead of queueing behind it, so a
+			// flapping server cannot pile up goroutines behind a stalled send.
+			select {
+			case entry.sendCh <- struct{}{}:
+				defer func() { <-entry.sendCh }()
+			case <-entry.cancel:
+				return true
+			}
 			select {
 			case <-entry.cancel:
 				return true
