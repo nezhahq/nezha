@@ -317,8 +317,7 @@ func NewServerTransferClass() *ServerTransferClass {
 		transferID uint64
 		secret     string
 		ackedAt    time.Time
-		isRevert   bool
-		toUserID   uint64
+		ownerID    uint64
 	}
 	candidates := make([]credCandidate, 0, len(verified)+len(rollbackAcked))
 	for i := range verified {
@@ -331,7 +330,7 @@ func NewServerTransferClass() *ServerTransferClass {
 			transferID: t.ID,
 			secret:     t.HandshakeSecret,
 			ackedAt:    *t.AckedAt,
-			toUserID:   t.ToUserID,
+			ownerID:    t.ToUserID,
 		})
 	}
 	for i := range rollbackAcked {
@@ -344,8 +343,7 @@ func NewServerTransferClass() *ServerTransferClass {
 			transferID: t.ID,
 			secret:     t.RevertHandshakeSecret,
 			ackedAt:    *t.AckedAt,
-			isRevert:   true,
-			toUserID:   t.FromUserID,
+			ownerID:    t.FromUserID,
 		})
 	}
 	// Sort newest-first by AckedAt, breaking ties with transferID. AckedAt
@@ -363,30 +361,34 @@ func NewServerTransferClass() *ServerTransferClass {
 		return candidates[i].ackedAt.After(candidates[j].ackedAt)
 	})
 
+	// Only the newest candidate of each server is eligible, whether or not it
+	// passes the ownership gate below. Every older candidate was overwritten
+	// in verifiedHandshakes by the rotation that produced the newer one, so
+	// falling back to it would re-admit a credential the dashboard had
+	// already retired (and that a previous owner may still hold a copy of).
+	decided := make(map[uint64]bool, len(candidates))
 	for _, cand := range candidates {
-		if _, alreadySeen := c.verifiedHandshakes[cand.serverID]; alreadySeen {
+		if decided[cand.serverID] {
 			continue
 		}
+		decided[cand.serverID] = true
 		server, ok := ServerShared.Get(cand.serverID)
 		if !ok || server == nil {
 			continue
 		}
-		// Forward Verified credential is accepted when either the server
-		// still belongs to ToUserID (steady state) or a subsequent transfer
-		// is Pending whose FromUserID equals this ToUserID (chained-transfer
-		// rollover window — agent on disk still holds the previous
-		// HandshakeSecret until MarkVerified on the new transfer).
-		// Rollback credential is accepted only when current owner still
-		// equals the original FromUserID (the rollback target).
-		if cand.isRevert {
-			if server.GetUserID() != cand.toUserID {
+		// The credential is accepted when either the server still belongs to
+		// the user it was issued under — ToUserID for a forward Verified
+		// credential, FromUserID (the rollback target) for an acked rollback
+		// credential — (steady state) or a subsequent transfer is Pending
+		// whose FromUserID equals that user (chained-transfer rollover
+		// window — Register leaves verifiedHandshakes alone, so the agent on
+		// disk still holds this secret until MarkVerified on the new
+		// transfer). The rollover window applies to both kinds: a transfer
+		// retried after its rollback was acked is Pending on top of the
+		// rollback credential.
+		if server.GetUserID() != cand.ownerID {
+			if pending, hasPending := c.pending[cand.serverID]; !hasPending || pending.FromUserID != cand.ownerID {
 				continue
-			}
-		} else {
-			if server.GetUserID() != cand.toUserID {
-				if pending, hasPending := c.pending[cand.serverID]; !hasPending || pending.FromUserID != cand.toUserID {
-					continue
-				}
 			}
 		}
 		c.verifiedHandshakes[cand.serverID] = cand.secret
