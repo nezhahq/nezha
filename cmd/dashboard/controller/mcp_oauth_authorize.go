@@ -101,56 +101,22 @@ func mcpOAuthAuthorizeRedirect(c *gin.Context) {
 	}
 	request, _, err := parseMCPOAuthAuthorization(c.Request.URL.Query())
 	if err != nil {
-		// Once the callback is independently verified, OAuth errors belong to
-		// the client along with state and iss; never redirect to untrusted URIs.
-		if callback := mcpOAuthTrustedErrorCallback(c.Request.URL.Query(), err); callback != "" {
-			c.Redirect(http.StatusFound, callback)
-		} else {
-			mcpOAuthError(c, 400, "invalid_request", err.Error())
+		// Registration is anonymous, so a registered redirect URI is still chosen
+		// by the caller until a logged-in user reviews it on the consent page.
+		// Report errors here; redirecting would make this endpoint an open
+		// redirector (RFC 9700 section 4.11.2).
+		code := "invalid_request"
+		var protocolError *mcpOAuthAuthorizationError
+		if errors.As(err, &protocolError) {
+			code = protocolError.code
 		}
+		mcpOAuthError(c, 400, code, err.Error())
 		return
 	}
 	issuer, _ := mcpOAuthIssuer()
 	// The independent admin frontend owns all login and consent UI. This
 	// protocol endpoint never renders HTML and never grants access on GET.
 	c.Redirect(http.StatusFound, issuer+mcpOAuthFrontendPath+"?"+request.query().Encode())
-}
-
-func mcpOAuthTrustedErrorCallback(values url.Values, cause error) string {
-	if len(values["client_id"]) != 1 || len(values["redirect_uri"]) != 1 || len(values["state"]) > 1 || len(values.Get("state")) > 2048 || len(values.Get("client_id")) > 64 {
-		return ""
-	}
-	var client model.MCPOAuthClient
-	if singleton.DB.First(&client, "id = ?", values.Get("client_id")).Error != nil {
-		return ""
-	}
-	var redirects []string
-	raw := values.Get("redirect_uri")
-	if json.Unmarshal([]byte(client.RedirectURIs), &redirects) != nil || !slices.Contains(redirects, raw) || !mcpOAuthRedirectURI(raw) {
-		return ""
-	}
-	issuer, err := mcpOAuthIssuer()
-	if err != nil {
-		return ""
-	}
-	callback, err := url.Parse(raw)
-	if err != nil {
-		return ""
-	}
-	code := "invalid_request"
-	var protocolError *mcpOAuthAuthorizationError
-	if errors.As(cause, &protocolError) {
-		code = protocolError.code
-	}
-	query := callback.Query()
-	query.Set("error", code)
-	query.Set("error_description", cause.Error())
-	query.Set("iss", issuer)
-	if _, exists := values["state"]; exists {
-		query.Set("state", values.Get("state"))
-	}
-	callback.RawQuery = query.Encode()
-	return callback.String()
 }
 
 func mcpOAuthConsentInfo(c *gin.Context) (any, error) {

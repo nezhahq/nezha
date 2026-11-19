@@ -264,17 +264,12 @@ func TestMCPOAuthRejectsInvalidAuthorizationParameters(t *testing.T) {
 			s := setupMCPOAuthSession(t)
 			s.query.Set(scenario.field, scenario.value)
 			response := s.request(t, "GET", mcpOAuthPath+"/authorize?"+s.query.Encode(), nil, false)
+			require.Equal(t, 400, response.Code)
+			require.Empty(t, response.Header().Get("Location"))
 			if scenario.field == "redirect_uri" || scenario.field == "client_id" {
-				require.Equal(t, 400, response.Code)
-				require.Empty(t, response.Header().Get("Location"))
 				require.Contains(t, response.Body.String(), "invalid_request")
 			} else {
-				require.Equal(t, http.StatusFound, response.Code)
-				callback, err := url.Parse(response.Header().Get("Location"))
-				require.NoError(t, err)
-				require.Equal(t, "chatgpt.com", callback.Host)
-				require.NotEmpty(t, callback.Query().Get("error"))
-				require.Empty(t, callback.Query().Get("code"))
+				require.Contains(t, response.Body.String(), `"error":`)
 			}
 		})
 	}
@@ -768,22 +763,41 @@ func TestMCPOAuthBearerSchemeIsCaseInsensitive(t *testing.T) {
 	}
 }
 
-func TestMCPOAuthAuthorizationErrorsReturnToTrustedClient(t *testing.T) {
+// Anyone can register a client, so the authorization endpoint must not forward
+// a visitor to a registered callback before a logged-in user has reviewed it:
+// request errors are reported here, even for approved or disabled clients.
+func TestMCPOAuthAuthorizationErrorsDoNotRedirectToClient(t *testing.T) {
 	for _, scenario := range []struct{ field, value, code string }{{"scope", "unavailable:scope", "invalid_scope"}, {"response_type", "token", "unsupported_response_type"}, {"code_challenge_method", "plain", "invalid_request"}, {"resource", "https://other.example/mcp", "invalid_target"}} {
 		t.Run(scenario.field, func(t *testing.T) {
 			s := setupMCPOAuthSession(t)
-			s.query.Set(scenario.field, scenario.value)
-			response := s.request(t, "GET", mcpOAuthPath+"/authorize?"+s.query.Encode(), nil, false)
-			require.Equal(t, http.StatusFound, response.Code)
-			callback, err := url.Parse(response.Header().Get("Location"))
-			require.NoError(t, err)
-			require.Equal(t, "https://chatgpt.com/connector_platform_oauth_redirect", callback.Scheme+"://"+callback.Host+callback.Path)
-			require.Equal(t, scenario.code, callback.Query().Get("error"))
-			require.Equal(t, "client-state", callback.Query().Get("state"))
-			require.Equal(t, "https://example.com", callback.Query().Get("iss"))
-			require.Empty(t, callback.Query().Get("code"))
+			invalid := url.Values{}
+			for name, values := range s.query {
+				invalid[name] = values
+			}
+			invalid.Set(scenario.field, scenario.value)
+			check := func() {
+				t.Helper()
+				response := s.request(t, "GET", mcpOAuthPath+"/authorize?"+invalid.Encode(), nil, false)
+				require.Equal(t, http.StatusBadRequest, response.Code)
+				require.Empty(t, response.Header().Get("Location"))
+				var body map[string]string
+				require.NoError(t, json.Unmarshal(response.Body.Bytes(), &body))
+				require.Equal(t, scenario.code, body["error"])
+				require.NotEmpty(t, body["error_description"])
+			}
+			check()
+			s.tokens(t)
+			check()
 		})
 	}
+	s := setupMCPOAuthSession(t)
+	require.NoError(t, singleton.DB.Model(&model.User{}).Where("id = ?", s.userID).Update("role", model.RoleAdmin).Error)
+	disable := s.request(t, "PUT", "/api/v1/mcp/oauth/clients/"+s.clientID, map[string]any{"disabled": true}, true)
+	require.Contains(t, disable.Body.String(), `"success":true`)
+	response := s.request(t, "GET", mcpOAuthPath+"/authorize?"+s.query.Encode(), nil, false)
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Empty(t, response.Header().Get("Location"))
+	require.Contains(t, response.Body.String(), "unauthorized_client")
 }
 
 // Anonymous requests must not spend the rate budget of logged-in users or of
