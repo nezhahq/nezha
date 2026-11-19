@@ -368,6 +368,13 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 	return &resp, nil
 }
 
+// batchMoveServerMaxIDs caps the id list of one batch-move request. Every
+// listed id, including unknown, foreign and repeated ones, is answered with
+// its own BatchMoveServerResult, so an unbounded list lets a small request
+// hold a response many times its size in memory. Matches the server_ids cap
+// of an API token.
+const batchMoveServerMaxIDs = 1000
+
 // Batch move servers to other user
 // @Summary Batch move servers to other user
 // @Security BearerAuth
@@ -383,6 +390,7 @@ func setServerConfig(c *gin.Context) (*model.ServerTaskResponse, error) {
 // @Description agent reconnects under the new secret (MarkVerified clears the
 // @Description pending window) or the transfer Cancel/Fail/Timeout-out and
 // @Description reverts Server.UserID to the source owner.
+// @Description At most 1000 server ids are accepted per request.
 // @Tags auth required
 // @Accept json
 // @Param request body model.BatchMoveServerForm true "BatchMoveServerForm"
@@ -393,6 +401,10 @@ func batchMoveServer(c *gin.Context) ([]model.BatchMoveServerResult, error) {
 	var moveForm model.BatchMoveServerForm
 	if err := c.ShouldBindJSON(&moveForm); err != nil {
 		return nil, err
+	}
+
+	if len(moveForm.Ids) > batchMoveServerMaxIDs {
+		return nil, singleton.Localizer.ErrorT("too many server ids (max %d)", batchMoveServerMaxIDs)
 	}
 
 	if moveForm.ToUser == 0 {

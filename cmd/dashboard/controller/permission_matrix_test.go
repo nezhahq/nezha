@@ -507,6 +507,23 @@ func TestBatchMoveServerMasksForeignServerIDsForMembers(t *testing.T) {
 	assert.Equal(t, model.BatchMoveServerResultServerNotFound, got[1].Status)
 }
 
+func TestBatchMoveServerBoundsIDList(t *testing.T) {
+	for _, n := range []int{batchMoveServerMaxIDs, batchMoveServerMaxIDs + 1} {
+		ctx := newMemberValidationContext(t)
+		body := `{"ids":[0` + strings.Repeat(",0", n-1) + `],"to_user":200}`
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/batch-move/server", strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		got, err := batchMoveServer(ctx)
+		if n > batchMoveServerMaxIDs {
+			assert.Error(t, err)
+			assert.Empty(t, got)
+			continue
+		}
+		assert.NoError(t, err)
+		assert.Len(t, got, n)
+	}
+}
+
 func TestNATRejectsUnknownServerID(t *testing.T) {
 	ctx := newMemberValidationContext(t)
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/nat", strings.NewReader(`{"name":"x","domain":"x.example","host":"127.0.0.1:80","server_id":9999}`))
