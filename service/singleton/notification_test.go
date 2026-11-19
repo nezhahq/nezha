@@ -572,3 +572,48 @@ func TestNotificationClassGroupMutationsDoNotDeadlock(t *testing.T) {
 		}
 	}
 }
+
+func TestIPChangeNotificationQuotaBoundsServerAndMemberOwner(t *testing.T) {
+	oldCache := Cache
+	Cache = cache.New(time.Minute, time.Minute)
+	t.Cleanup(func() { Cache = oldCache })
+	UserLock.Lock()
+	oldUsers := UserInfoMap
+	UserInfoMap = map[uint64]model.UserInfo{100: {Role: model.RoleAdmin}, 200: {Role: model.RoleMember}}
+	UserLock.Unlock()
+	t.Cleanup(func() {
+		UserLock.Lock()
+		UserInfoMap = oldUsers
+		UserLock.Unlock()
+	})
+	allowed := func(id, ownerID uint64, reports int) (count int) {
+		server := &model.Server{Common: model.Common{ID: id, UserID: ownerID}}
+		for range reports {
+			if AllowIPChangeNotification(server) {
+				count++
+			}
+		}
+		return count
+	}
+
+	if got := allowed(1, 200, 100); got != ipChangeNotificationServerQuota {
+		t.Fatalf("flapping member server raised %d notifications, want %d", got, ipChangeNotificationServerQuota)
+	}
+	// Enrolling more servers must not buy the member more notifications.
+	total := ipChangeNotificationServerQuota
+	for id := uint64(2); id < 100; id++ {
+		total += allowed(id, 200, 1)
+	}
+	if total != ipChangeNotificationOwnerQuota {
+		t.Fatalf("member fleet raised %d notifications, want %d", total, ipChangeNotificationOwnerQuota)
+	}
+	// Admin-owned servers, including legacy owner 0, are only bounded per server.
+	for id := uint64(100); id < 200; id++ {
+		if got := allowed(id, (id%2)*100, 1); got != 1 {
+			t.Fatalf("admin server %d was suppressed by another server's changes", id)
+		}
+	}
+	if got := allowed(100, 0, 100); got != ipChangeNotificationServerQuota-1 {
+		t.Fatalf("flapping admin server raised %d more notifications, want %d", got, ipChangeNotificationServerQuota-1)
+	}
+}

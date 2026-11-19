@@ -15,6 +15,13 @@ import (
 
 const (
 	firstNotificationDelay = time.Minute * 15
+
+	// IP change notifications are not muted, so every genuine change is
+	// reported. Genuine changes are rare; these quotas only stop an Agent
+	// that reports a different address on every call.
+	ipChangeNotificationWindow      = time.Hour
+	ipChangeNotificationServerQuota = 5
+	ipChangeNotificationOwnerQuota  = 20
 )
 
 type NotificationClass struct {
@@ -540,6 +547,34 @@ func (c *NotificationClass) sendRecipient(ctx context.Context, n *model.Notifica
 	return true
 }
 
+// AllowIPChangeNotification reports whether server may raise another IP change
+// notification in the current window, and counts it if so. The address is the
+// Agent's own claim and any agent secret can enrol servers, so the quota is
+// kept per server and, unless an admin owns the server, per owner as well.
+func AllowIPChangeNotification(server *model.Server) bool {
+	if !consumeNotificationQuota(NotificationMuteLabel.IPChanged(server.ID), ipChangeNotificationServerQuota) {
+		return false
+	}
+	ownerID := server.GetUserID()
+	return userIsAdmin(ownerID) ||
+		consumeNotificationQuota(NotificationMuteLabel.IPChangedOwner(ownerID), ipChangeNotificationOwnerQuota)
+}
+
+func consumeNotificationQuota(key string, quota int) bool {
+	if Cache.Add(key, 1, ipChangeNotificationWindow) == nil {
+		return true
+	}
+	used, err := Cache.IncrementInt(key, 1)
+	if err != nil {
+		// The window expired between Add and IncrementInt.
+		return true
+	}
+	if used == quota+1 {
+		log.Printf("NEZHA>> IP change notification quota %s exhausted, suppressing further notifications", key)
+	}
+	return used <= quota
+}
+
 func notificationFailureSummary(err error) string {
 	// Even wrapped URL errors can include credentials in path/query. Log only
 	// the error type; the HTTP status path already returns a dedicated type.
@@ -552,6 +587,10 @@ var NotificationMuteLabel _NotificationMuteLabel
 
 func (_NotificationMuteLabel) IPChanged(serverId uint64) string {
 	return fmt.Sprintf("bf::ic-%d", serverId)
+}
+
+func (_NotificationMuteLabel) IPChangedOwner(userId uint64) string {
+	return fmt.Sprintf("bf::ico-%d", userId)
 }
 
 func (_NotificationMuteLabel) ServerIncident(alertId uint64, serverId uint64) string {

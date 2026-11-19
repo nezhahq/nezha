@@ -68,3 +68,8 @@ func (c *NotificationClass) InsertForTest(n *model.Notification) {
 	c.listMu.Unlock()
 	c.sortList()
 }
+
+// SetSendForTest 用 send 替换真实的通知投递，便于其他包的单测统计发送次数。
+func (c *NotificationClass) SetSendForTest(send func(*model.Notification, string, *model.Server) error) {
+	c.sendForTest = send
+}
