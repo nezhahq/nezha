@@ -25,6 +25,9 @@ import (
 
 const (
 	_CurrentStatusSize = 30 // initial capacity for the rolling service window
+
+	// serviceHistoryQueueSize bounds the history rows waiting for the database.
+	serviceHistoryQueueSize = 256
 )
 
 var serviceEventSequence atomic.Uint64
@@ -115,20 +118,81 @@ func (ss *ServiceSentinel) flushServiceHistory(serviceID uint64, status *service
 		return
 	}
 	if !TSDBEnabled() {
-		if err := DB.Create(&model.ServiceHistory{
+		if !ss.saveServiceHistory(&model.ServiceHistory{
 			CreatedAt: status.lastHistoryAt,
 			ServiceID: serviceID,
 			AvgDelay:  status.history.Delay,
 			Data:      status.lastData,
 			Up:        status.history.Up,
 			Down:      status.history.Down,
-		}).Error; err != nil {
-			log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+		}) {
 			return
 		}
 	}
 	status.history = serviceResponseData{}
 	status.lastHistoryAt = now
+}
+
+// saveServiceHistory hands a history row to historyWriter without waiting for
+// the database, and reports whether the row was taken. Its callers run on the
+// one worker that processes the probe results of every user, and hold the
+// locks that report processing, the service API and server changes all need;
+// an insert waits for a connection and for SQLite's single write lock, for as
+// long as busy_timeout allows.
+func (ss *ServiceSentinel) saveServiceHistory(row *model.ServiceHistory) bool {
+	// Without a writer (a sentinel not built by NewServiceSentinel, or one
+	// whose worker has exited) the row is stored in place.
+	if ss.historyQueue == nil || ss.historyClosed.Load() {
+		if err := DB.Create(row).Error; err != nil {
+			log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+			return false
+		}
+		return true
+	}
+	select {
+	case ss.historyQueue <- row:
+		return true
+	default:
+		// historyWriter logs the count, so a busy database is not answered
+		// with a log line per probe result.
+		ss.historyRefused.Add(1)
+		return false
+	}
+}
+
+// historyWriter stores the queued history rows. Everything that queued up
+// behind a slow insert goes into the next one, so the queue empties each time
+// the database is free.
+func (ss *ServiceSentinel) historyWriter() {
+	var rows []*model.ServiceHistory
+	for row := range ss.historyQueue {
+		rows = append(rows, row)
+		// This is the only receiver, so the rows counted here are there to take.
+		for queued := len(ss.historyQueue); queued > 0; queued-- {
+			rows = append(rows, <-ss.historyQueue)
+		}
+		rows = storeServiceHistory(rows)
+		if refused := ss.historyRefused.Swap(0); refused > 0 {
+			log.Printf("NEZHA>> Failed to save service monitor metrics: history queue was full %d times", refused)
+		}
+	}
+}
+
+// storeServiceHistory inserts the rows and returns those to insert again with
+// the next ones. As when each row was stored by the report that produced it, a
+// ping average that cannot be stored is lost, and a 15-minute summary
+// (server_id = 0) is tried again; the newest queue's worth of those is kept.
+func storeServiceHistory(rows []*model.ServiceHistory) []*model.ServiceHistory {
+	err := DB.Create(&rows).Error
+	if err == nil {
+		return nil
+	}
+	log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
+	rows = slices.DeleteFunc(rows, func(row *model.ServiceHistory) bool { return row.ServerID != 0 })
+	if excess := len(rows) - serviceHistoryQueueSize; excess > 0 {
+		rows = slices.Delete(rows, 0, excess)
+	}
+	return rows
 }
 
 func (status *serviceTaskStatus) responseData() serviceResponseData {
@@ -162,6 +226,11 @@ type pingStore struct {
 type ServiceSentinel struct {
 	// 服务监控任务上报通道
 	serviceReportChannel chan ReportData // 服务状态汇报管道
+	// historyQueue carries history rows from the worker to historyWriter. The
+	// worker closes it when it exits, after setting historyClosed.
+	historyQueue   chan *model.ServiceHistory
+	historyClosed  atomic.Bool
+	historyRefused atomic.Uint64 // times the full queue did not take a row
 	// 服务监控任务调度通道
 	dispatchBus chan<- *model.Service
 
@@ -200,6 +269,7 @@ type ServiceSentinel struct {
 func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service) (*ServiceSentinel, error) {
 	ss := &ServiceSentinel{
 		serviceReportChannel:     make(chan ReportData, 200),
+		historyQueue:             make(chan *model.ServiceHistory, serviceHistoryQueueSize),
 		serviceStatusToday:       make(map[uint64]*_TodayStatsOfService),
 		serviceCurrentStatusData: make(map[uint64]*serviceTaskStatus),
 		serviceResponseDataStore: make(map[uint64]serviceResponseData),
@@ -222,10 +292,17 @@ func NewServiceSentinel(serviceSentinelDispatchBus chan<- *model.Service) (*Serv
 	ss.loadTodayStats(today)
 
 	// 启动服务监控器
-	ss.workerWG.Add(1)
+	ss.workerWG.Add(2)
 	go func() {
 		defer ss.workerWG.Done()
 		ss.worker()
+		ss.historyClosed.Store(true)
+		close(ss.historyQueue)
+	}()
+	// 历史记录由独立协程写入数据库，worker 不等待数据库
+	go func() {
+		defer ss.workerWG.Done()
+		ss.historyWriter()
 	}()
 
 	// 每日将游标往后推一天
@@ -659,7 +736,8 @@ func serviceTrustsReporter(service *model.Service, reporter *model.Server) bool 
 }
 
 // Close shuts down the ServiceSentinel worker goroutine and waits for it to
-// exit. It is idempotent and safe to call more than once.
+// exit, and for the history rows it queued to be stored. It is idempotent and
+// safe to call more than once.
 //
 // Why this exists: the worker reads multiple package-level globals during
 // each report (Conf, CronShared via notifyCheck, NotificationShared via
@@ -755,14 +833,13 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 					log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
 				}
 			} else {
-				if err := DB.Create(&model.ServiceHistory{
+				ss.saveServiceHistory(&model.ServiceHistory{
+					CreatedAt: time.Now(), // the row is stored later
 					ServiceID: mh.GetId(),
 					AvgDelay:  ts.ping,
 					Data:      mh.Data,
 					ServerID:  r.Reporter,
-				}).Error; err != nil {
-					log.Printf("NEZHA>> Failed to save service monitor metrics: %v", err)
-				}
+				})
 			}
 			ts.count = 0
 			ts.ping = 0

@@ -79,6 +79,8 @@ func TestServiceSentinelReporterDeleteWaitsForSynchronousReportProcessing(t *tes
 		t.Fatal(ctx.Err())
 	}
 
+	// The history row is stored by the history writer, not by the report itself.
+	waitForServiceHistory(t, service.ID, 1)
 	var historyCount int64
 	if err := DB.Model(&model.ServiceHistory{}).
 		Where("service_id = ? AND server_id = ?", service.ID, 1).
@@ -134,6 +136,104 @@ func TestServiceSentinelWorkerRejectsReportAfterReporterDeletion(t *testing.T) {
 	}
 	if stats == nil || stats.Up != 0 || stats.Down != 0 {
 		t.Fatalf("expected no stats side effect after reporter deletion, got %+v", stats)
+	}
+}
+
+func TestServiceSentinelWorkerDoesNotWaitForDatabase(t *testing.T) {
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "reporter"},
+	)
+	service := &model.Service{
+		Common:      model.Common{ID: 10, UserID: 1},
+		Name:        "busy-database-service",
+		Type:        model.TaskTypeTCPPing,
+		Target:      "busy-database.example.invalid:443",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	addServiceMonitorSecurityService(t, ss, service)
+
+	// The harness database has a single connection. While a transaction owns
+	// it an insert has to wait, as it waits for SQLite's write lock in production.
+	tx := DB.Begin()
+	if tx.Error != nil {
+		t.Fatal(tx.Error)
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { tx.Rollback() }) }
+	t.Cleanup(release)
+
+	ss.Dispatch(serviceMonitorResult(1, service.ID, model.TaskTypeTCPPing, true))
+	deadline := time.Now().Add(time.Second)
+	for processed := false; !processed; time.Sleep(10 * time.Millisecond) {
+		// A worker that waits for the database does so holding this lock.
+		if ss.serviceResponseDataStoreLock.TryRLock() {
+			processed = ss.serviceStatusToday[service.ID].Up == 1
+			ss.serviceResponseDataStoreLock.RUnlock()
+		}
+		if !processed && time.Now().After(deadline) {
+			t.Fatal("the report was not processed while the database was busy")
+		}
+	}
+
+	release()
+	waitForServiceHistory(t, service.ID, 1)
+}
+
+func TestServiceSentinelKeepsSummaryTheHistoryQueueRefuses(t *testing.T) {
+	newServiceMonitorSecurityHarness(t)
+	// A queue of one row that nothing drains.
+	ss := &ServiceSentinel{historyQueue: make(chan *model.ServiceHistory, 1)}
+	start := time.Now().Add(-time.Hour)
+	queued := &serviceTaskStatus{lastHistoryAt: start, history: serviceResponseData{Up: 1}}
+	refused := &serviceTaskStatus{lastHistoryAt: start, history: serviceResponseData{Up: 2}}
+
+	ss.flushServiceHistory(10, queued, start.Add(15*time.Minute))
+	ss.flushServiceHistory(20, refused, start.Add(15*time.Minute))
+
+	if len(ss.historyQueue) != 1 || queued.history.Up != 0 {
+		t.Fatalf("expected the first summary to be queued, got %d rows and %+v", len(ss.historyQueue), queued.history)
+	}
+	if refused.history.Up != 2 || !refused.lastHistoryAt.Equal(start) {
+		t.Fatalf("expected the refused summary to be kept for the next report, got %+v", refused)
+	}
+	assertNoServiceHistory(t, 10, 0)
+}
+
+func TestServiceHistoryWriterRetriesSummaryAfterFailedInsert(t *testing.T) {
+	newServiceMonitorSecurityHarness(t)
+	if err := DB.Migrator().DropTable(&model.ServiceHistory{}); err != nil {
+		t.Fatal(err)
+	}
+
+	kept := storeServiceHistory([]*model.ServiceHistory{
+		{ServiceID: 10, ServerID: 1, AvgDelay: 12},
+		{ServiceID: 10, Up: 3, Down: 1},
+	})
+	if len(kept) != 1 || kept[0].ServerID != 0 || kept[0].Up != 3 {
+		t.Fatalf("expected only the summary to be kept after a failed insert, got %+v", kept)
+	}
+	backlog := make([]*model.ServiceHistory, serviceHistoryQueueSize+2)
+	for i := range backlog {
+		backlog[i] = &model.ServiceHistory{ServiceID: uint64(100 + i), Up: 1}
+	}
+	if backlog = storeServiceHistory(backlog); len(backlog) != serviceHistoryQueueSize || backlog[0].ServiceID != 102 {
+		t.Fatalf("expected the newest %d summaries to be kept, got %d", serviceHistoryQueueSize, len(backlog))
+	}
+
+	if err := DB.AutoMigrate(model.ServiceHistory{}); err != nil {
+		t.Fatal(err)
+	}
+	if kept = storeServiceHistory(append(kept, &model.ServiceHistory{ServiceID: 10, ServerID: 2})); kept != nil {
+		t.Fatalf("expected nothing to be kept after a successful insert, got %+v", kept)
+	}
+	var stored []model.ServiceHistory
+	if err := DB.Order("id").Find(&stored, "service_id = ?", 10).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(stored) != 2 || stored[0].ServerID != 0 || stored[0].Up != 3 || stored[1].ServerID != 2 {
+		t.Fatalf("expected the summary and the later row to be stored, got %+v", stored)
 	}
 }
 
