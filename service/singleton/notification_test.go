@@ -455,6 +455,67 @@ func TestServiceUpdateCancelsOldRecipientRetry(t *testing.T) {
 	}
 }
 
+func TestSendNotificationUsesCurrentRecipientsDuringDelivery(t *testing.T) {
+	newGroup := func() (*NotificationClass, *model.NotificationGroup, []*model.Notification) {
+		items := []*model.Notification{
+			{Common: model.Common{ID: 571}, Name: "a", URL: "https://old.example/a"},
+			{Common: model.Common{ID: 572}, Name: "b", URL: "https://old.example/b"},
+			{Common: model.Common{ID: 573}, Name: "c", URL: "https://old.example/c"},
+			{Common: model.Common{ID: 574}, Name: "d", URL: "https://old.example/d"},
+		}
+		nc := newNotificationClassWithItems(items...)
+		group := &model.NotificationGroup{Common: model.Common{ID: 575}, Name: "in-flight"}
+		nc.UpdateGroup(group, []uint64{571, 572, 573, 574})
+		return nc, group, items
+	}
+
+	t.Run("deleted, ungrouped and edited methods", func(t *testing.T) {
+		nc, group, items := newGroup()
+		var later []*model.Notification
+		var edited *model.Notification
+		calls := 0
+		nc.sendForTest = func(n *model.Notification, _ string, _ *model.Server) error {
+			if calls++; calls > 1 {
+				later = append(later, n)
+				return nil
+			}
+			// While the first recipient is being contacted, the owner deletes
+			// one of the others, takes one out of the group and edits the third.
+			var rest []*model.Notification
+			for _, item := range items {
+				if item.ID != n.ID {
+					rest = append(rest, item)
+				}
+			}
+			nc.Delete([]uint64{rest[0].ID})
+			nc.UpdateGroup(group, []uint64{n.ID, rest[2].ID})
+			edited = &model.Notification{Common: model.Common{ID: rest[2].ID}, Name: rest[2].Name, URL: "https://new.example/"}
+			nc.Update(edited)
+			return nil
+		}
+		if !nc.SendNotification(group.ID, "message", "") {
+			t.Fatal("recipients removed during the delivery must not count as failed")
+		}
+		if len(later) != 1 || later[0] != edited {
+			t.Fatalf("after the change %d deliveries were made, want one to the edited method only", len(later))
+		}
+	})
+
+	t.Run("deleted group", func(t *testing.T) {
+		nc, group, _ := newGroup()
+		calls := 0
+		nc.sendForTest = func(*model.Notification, string, *model.Server) error {
+			calls++
+			nc.DeleteGroup([]uint64{group.ID})
+			return nil
+		}
+		nc.SendNotification(group.ID, "message", "")
+		if calls != 1 {
+			t.Fatalf("%d deliveries were made although the group was deleted during the first", calls)
+		}
+	})
+}
+
 func newNotificationClassWithItems(items ...*model.Notification) *NotificationClass {
 	nc := NewEmptyNotificationClassForTest()
 	for _, item := range items {

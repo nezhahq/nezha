@@ -465,42 +465,54 @@ func (c *NotificationClass) sendNotification(ctx context.Context, notificationGr
 	}
 	// Copy the group under the lock. Webhook delivery can take minutes and must
 	// not block notification or notification-group updates while it is in flight.
+	// Only the IDs are kept: every recipient is resolved again right before its
+	// own delivery, so the copy cannot outlive a deletion or an edit.
 	c.listMu.RLock()
-	notifications := make([]*model.Notification, 0, len(c.groupToIDList[notificationGroupID]))
-	for _, n := range c.groupToIDList[notificationGroupID] {
-		notifications = append(notifications, n)
+	ids := make([]uint64, 0, len(c.groupToIDList[notificationGroupID]))
+	for id := range c.groupToIDList[notificationGroupID] {
+		ids = append(ids, id)
 	}
 	c.listMu.RUnlock()
 
-	if len(notifications) == 0 {
+	if len(ids) == 0 {
 		log.Printf("NEZHA>> Notification group %d has no recipients", notificationGroupID)
 		return false
 	}
 	allDelivered := true
-	for _, n := range notifications {
+	for _, id := range ids {
 		var server *model.Server
 		if len(ext) > 0 {
 			server = ext[0]
 		}
-		if !c.sendRecipient(ctx, n, desc, fullMuteLabel, server) {
+		if !c.sendRecipient(ctx, notificationGroupID, id, desc, fullMuteLabel, server) {
 			allDelivered = false
 		}
 	}
 	return allDelivered
 }
 
-func (c *NotificationClass) sendRecipient(ctx context.Context, n *model.Notification, desc, fullMuteLabel string, server *model.Server) bool {
-	if n == nil {
-		return false
-	}
+func (c *NotificationClass) sendRecipient(ctx context.Context, notificationGroupID, id uint64, desc, fullMuteLabel string, server *model.Server) bool {
 	cacheKey := ""
 	if fullMuteLabel != "" {
-		cacheKey = notificationMethodMuteLabel(fullMuteLabel, n.ID)
+		cacheKey = notificationMethodMuteLabel(fullMuteLabel, id)
 	}
 	unlock := c.lockDeliveryKey(cacheKey)
 	defer unlock()
 	if ctx.Err() != nil {
 		return false // canceled while waiting for the key, or before this recipient
+	}
+	// The deliveries to earlier recipients and the wait for the delivery key can
+	// each have taken minutes. Use the method as it is configured now: one that
+	// was deleted or removed from the group in the meantime must not be
+	// contacted, and an edited one must not be sent to its old URL or credential.
+	c.listMu.RLock()
+	n, ok := c.groupToIDList[notificationGroupID][id]
+	c.listMu.RUnlock()
+	if !ok {
+		return true // no longer a recipient, nothing left to deliver
+	}
+	if n == nil {
+		return false
 	}
 	var generation uint64
 	if cacheKey != "" {
