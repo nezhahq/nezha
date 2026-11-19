@@ -249,16 +249,8 @@ func batchDeleteServerGroup(c *gin.Context) (any, error) {
 		}
 	}
 
-	if pat := patAccessorFromContext(c); pat != nil && patHasServerWhitelist(c) {
-		var members []model.ServerGroupServer
-		if err := singleton.DB.Where("server_group_id in (?)", sgs).Find(&members).Error; err != nil {
-			return nil, err
-		}
-		for _, m := range members {
-			if !pat.CanAccessServer(m.ServerId) {
-				return nil, singleton.Localizer.ErrorT("permission denied")
-			}
-		}
+	if !patGroupMembershipAccessAllowed(c, sgs...) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {

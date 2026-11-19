@@ -203,3 +203,73 @@ func TestBatchDeleteServerGroupRejectsPATOutsideWhitelist(t *testing.T) {
 	require.NoError(t, singleton.DB.Model(&model.ServerGroup{}).Where("id = ?", 10).Count(&remaining).Error)
 	assert.Equal(t, int64(1), remaining, "group 10 must remain after refused PAT delete")
 }
+
+// A group without members has nothing that places it inside a PAT whitelist
+// (listServerGroup hides it from such a PAT), so the membership check must
+// not pass vacuously: otherwise a PAT scoped to {1} can delete any empty
+// group its issuer may manage — every user's, for an admin-issued PAT.
+func TestBatchDeleteServerGroupRejectsPATWhitelistOnEmptyGroup(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	tok := &model.APIToken{ID: 80, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+	admin := &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}
+
+	// 11 alone, and 11 batched with a group the whitelist does cover.
+	for _, ids := range [][]uint64{{11}, {10, 11}} {
+		c := newServerGroupCtxWithPAT(admin, tok)
+		body, _ := json.Marshal(ids)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/batch-delete/server-group", bytes.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		_, err := batchDeleteServerGroup(c)
+		require.Error(t, err, "PAT scoped to {1} must not delete %v: group 11 has no member inside the whitelist", ids)
+	}
+
+	var remaining int64
+	require.NoError(t, singleton.DB.Model(&model.ServerGroup{}).Where("id in (?)", []uint64{10, 11}).Count(&remaining).Error)
+	assert.Equal(t, int64(2), remaining, "groups 10 and 11 must remain after refused PAT deletes")
+
+	// The whitelist still covers group 10 on its own.
+	c := newServerGroupCtxWithPAT(admin, tok)
+	body, _ := json.Marshal([]uint64{10})
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/batch-delete/server-group", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	_, err := batchDeleteServerGroup(c)
+	require.NoError(t, err, "PAT scoped to {1} may delete group 10, whose only member is server 1")
+
+	// An unscoped PAT has no whitelist to escape.
+	c = newServerGroupCtxWithPAT(admin, &model.APIToken{ID: 81, UserID: 1})
+	body, _ = json.Marshal([]uint64{11})
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/batch-delete/server-group", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	_, err = batchDeleteServerGroup(c)
+	require.NoError(t, err, "PAT without server_ids must still delete an empty group")
+}
+
+// updateServerGroup shares the check: a PAT scoped to {1} must not rename an
+// empty group and move its own server into it.
+func TestUpdateServerGroupRejectsPATWhitelistOnEmptyGroup(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	tok := &model.APIToken{ID: 82, UserID: 1}
+	tok.SetServerIDs([]uint64{1})
+
+	c := newServerGroupCtxWithPAT(&model.User{
+		Common: model.Common{ID: 1}, Role: model.RoleAdmin,
+	}, tok)
+	body, _ := json.Marshal(model.ServerGroupForm{Name: "taken", Servers: []uint64{1}})
+	c.Request = httptest.NewRequest(http.MethodPatch, "/api/v1/server-group/11", bytes.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Params = gin.Params{{Key: "id", Value: "11"}}
+
+	_, err := updateServerGroup(c)
+	require.Error(t, err, "PAT scoped to {1} must not rewrite group 11, which has no member inside the whitelist")
+
+	var group model.ServerGroup
+	require.NoError(t, singleton.DB.First(&group, 11).Error)
+	assert.Equal(t, "Empty Group", group.Name, "group 11 must keep its name after the refused PAT update")
+	var members int64
+	require.NoError(t, singleton.DB.Model(&model.ServerGroupServer{}).Where("server_group_id = ?", 11).Count(&members).Error)
+	assert.Zero(t, members, "group 11 must stay empty after the refused PAT update")
+}

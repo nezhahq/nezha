@@ -279,20 +279,31 @@ const coverModeUnknown coverMode = 255
 
 // patGroupMembershipAccessAllowed returns false when the caller's PAT
 // carries a server_ids whitelist that does not cover every current member
-// of groupID. JWT requests and unscoped PATs always pass. Used by
-// updateServerGroup before the transactional DELETE+INSERT — otherwise a
-// PAT scoped to [X] could indirectly remove server Y from a shared group.
-func patGroupMembershipAccessAllowed(c *gin.Context, groupID uint64) bool {
+// of every group in groupIDs, or when one of those groups has no member at
+// all: the whitelist reaches a group only through its servers, so an empty
+// group is outside it (listServerGroup hides it from such a PAT for the
+// same reason) and must not pass vacuously. JWT requests and unscoped PATs
+// always pass. Used by updateServerGroup before the transactional
+// DELETE+INSERT — otherwise a PAT scoped to [X] could indirectly remove
+// server Y from a shared group — and by batchDeleteServerGroup.
+func patGroupMembershipAccessAllowed(c *gin.Context, groupIDs ...uint64) bool {
 	tok := patAccessorFromContext(c)
 	if tok == nil || !patHasServerWhitelist(c) {
 		return true
 	}
 	var members []model.ServerGroupServer
-	if err := singleton.DB.Where("server_group_id = ?", groupID).Find(&members).Error; err != nil {
+	if err := singleton.DB.Where("server_group_id in (?)", groupIDs).Find(&members).Error; err != nil {
 		return false
 	}
+	populated := make(map[uint64]struct{}, len(groupIDs))
 	for _, m := range members {
 		if !tok.CanAccessServer(m.ServerId) {
+			return false
+		}
+		populated[m.ServerGroupId] = struct{}{}
+	}
+	for _, id := range groupIDs {
+		if _, ok := populated[id]; !ok {
 			return false
 		}
 	}
