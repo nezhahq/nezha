@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"log"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 
 	"github.com/go-viper/mapstructure/v2"
 	kmaps "github.com/knadh/koanf/maps"
@@ -357,7 +359,7 @@ func (c *Config) patchYAMLField(key string, value any) error {
 		return err
 	}
 	c.restrictFileMode()
-	return os.WriteFile(c.filePath, out, 0600)
+	return writeFileAtomic(c.filePath, out)
 }
 
 // restrictFileMode drops group/other access from an existing config file.
@@ -435,7 +437,42 @@ func (c *Config) write(data []byte) error {
 	}
 
 	c.restrictFileMode()
-	return os.WriteFile(c.filePath, data, 0600)
+	return writeFileAtomic(c.filePath, data)
+}
+
+// writeFileAtomic replaces path through a temporary file in the same directory.
+// os.WriteFile truncates before it writes: a write that fails half-way (full
+// disk, crash) would leave a cut config.yaml, and the next start would silently
+// fill every lost key (listen_host, force_auth, https, ...) with its default.
+func writeFileAtomic(path string, data []byte) error {
+	// Replace the file a symlink points to, not the symlink itself.
+	if target, err := filepath.EvalSymlinks(path); err == nil {
+		path = target
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*") // created 0600
+	if err != nil {
+		return err
+	}
+	_, err = tmp.Write(data)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		if err = os.Rename(tmp.Name(), path); err == nil {
+			return nil
+		}
+		// A bind-mounted single file is a mount point and cannot be renamed over;
+		// it can only be rewritten in place.
+		if errors.Is(err, syscall.EBUSY) {
+			err = os.WriteFile(path, data, 0600)
+		}
+	}
+	_ = os.Remove(tmp.Name())
+	return err
 }
 
 func compareVersion(left, right string) int {
