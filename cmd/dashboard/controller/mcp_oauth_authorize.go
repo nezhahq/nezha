@@ -273,7 +273,7 @@ func mcpOAuthConsent(c *gin.Context) (any, error) {
 	permission := model.APIToken{}
 	permission.SetScopes(slices.Compact(request.Scopes))
 	permission.SetServerIDs(slices.Compact(request.ServerIDs))
-	code := mcpOAuthRandom()
+	code := mcpOAuthNewCode()
 	record := model.MCPOAuthCode{Hash: model.HashAPIToken(code), ClientID: ticket.Request.ClientID, RedirectURI: ticket.Request.RedirectURI, Resource: ticket.Request.Resource, Challenge: ticket.Request.Challenge, UserID: user.ID, UserVersion: user.TokenVersion, ScopesCSV: permission.ScopesCSV, ServersCSV: permission.ServersCSV, ExpiresAt: time.Now().Add(mcpOAuthCodeLifetime)}
 	err = mcpOAuthTransaction(func(tx *gorm.DB) error {
 		// Consent may have been opened before an administrator disabled the client.

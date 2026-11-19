@@ -54,9 +54,11 @@ func setupMCPOAuthSession(t *testing.T) *mcpOAuthTestSession {
 	// concurrent code exchanges. Exercise the same shared file as production.
 	cleanup, uid := setupMCPTestWithDatabase(t, filepath.Join(t.TempDir(), "mcp-oauth.sqlite"))
 	t.Cleanup(cleanup)
-	oldLimiter, oldRegistrationLimiter := mcpOAuthPublicLimiter, mcpOAuthRegistrationLimiter
-	mcpOAuthPublicLimiter, mcpOAuthRegistrationLimiter = newMCPRateLimiter(10000, 10000), newMCPRateLimiter(10000, 10000)
-	t.Cleanup(func() { mcpOAuthPublicLimiter, mcpOAuthRegistrationLimiter = oldLimiter, oldRegistrationLimiter })
+	oldLimiter, oldCallerLimiter, oldRegistrationLimiter := mcpOAuthPublicLimiter, mcpOAuthCallerLimiter, mcpOAuthRegistrationLimiter
+	mcpOAuthPublicLimiter, mcpOAuthCallerLimiter, mcpOAuthRegistrationLimiter = newMCPRateLimiter(10000, 10000), newMCPRateLimiter(10000, 10000), newMCPRateLimiter(10000, 10000)
+	t.Cleanup(func() {
+		mcpOAuthPublicLimiter, mcpOAuthCallerLimiter, mcpOAuthRegistrationLimiter = oldLimiter, oldCallerLimiter, oldRegistrationLimiter
+	})
 	singleton.Conf.JWTSecretKey = "mcp-oauth-integration-test-signing-key"
 	require.NoError(t, idcodec.Init([]byte(singleton.Conf.JWTSecretKey)))
 	require.NoError(t, singleton.DB.AutoMigrate(&model.MCPOAuthClient{}, &model.MCPOAuthCode{}, &model.MCPOAuthGrant{}, &model.JWTSession{}))
@@ -719,4 +721,64 @@ func TestMCPOAuthAuthorizationErrorsReturnToTrustedClient(t *testing.T) {
 			require.Empty(t, callback.Query().Get("code"))
 		})
 	}
+}
+
+// Anonymous requests must not spend the rate budget of logged-in users or of
+// clients presenting credentials that only a user's consent can produce.
+func TestMCPOAuthAnonymousTrafficDoesNotStarveIdentifiedCallers(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	tokens := s.tokens(t)
+	pendingCode := s.approve(t)
+	refresh := func(token string) url.Values {
+		return url.Values{"grant_type": {"refresh_token"}, "client_id": {s.clientID}, "resource": {"https://example.com/mcp"}, "refresh_token": {token}}
+	}
+
+	now := time.Now()
+	clock := func() time.Time { return now }
+	mcpOAuthPublicLimiter = newMCPRateLimiterWithClock(20, 300, clock)
+	mcpOAuthCallerLimiter = newMCPRateLimiterWithClock(20, 300, clock)
+	discovery := func() int {
+		return s.request(t, "GET", "/.well-known/oauth-authorization-server", nil, false).Code
+	}
+	for range 300 {
+		now = now.Add(50 * time.Millisecond)
+		require.Equal(t, 200, discovery())
+	}
+	now = now.Add(2 * time.Second)
+	require.Equal(t, 429, discovery(), "the anonymous minute budget is spent")
+	require.Equal(t, 429, s.request(t, "POST", mcpOAuthPath+"/token", refresh("nzr_forged.handle.signature"), false).Code, "a forged handle stays anonymous")
+	require.Equal(t, 429, s.request(t, "POST", mcpOAuthPath+"/token", s.exchangeForm("forged.code"), false).Code, "a forged code stays anonymous")
+	require.Equal(t, 429, s.request(t, "POST", mcpOAuthPath+"/token", url.Values{"client_id": {"%zz"}}, false).Code, "a malformed form stays anonymous")
+
+	consent := s.request(t, "GET", "/api/v1/mcp/oauth/consent?"+s.query.Encode(), nil, true)
+	require.Equal(t, 200, consent.Code)
+	require.Contains(t, consent.Body.String(), `"success":true`)
+	require.Equal(t, 200, s.request(t, "POST", mcpOAuthPath+"/token", s.exchangeForm(pendingCode), false).Code)
+	response := s.request(t, "POST", mcpOAuthPath+"/token", refresh(tokens.RefreshToken), false)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	var rotated mcpOAuthTokenResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rotated))
+	require.Equal(t, 200, s.request(t, "POST", mcpOAuthPath+"/revoke", url.Values{"client_id": {s.clientID}, "token": {rotated.RefreshToken}}, false).Code)
+	require.Equal(t, 401, s.rpc(t, rotated.AccessToken, "initialize", nil).Code)
+
+	// A caller's own bucket is still bounded and does not leak into others.
+	for range 20 {
+		s.request(t, "POST", mcpOAuthPath+"/token", refresh(rotated.RefreshToken), false)
+	}
+	require.Equal(t, 429, s.request(t, "POST", mcpOAuthPath+"/token", refresh(rotated.RefreshToken), false).Code)
+	require.Equal(t, 200, s.request(t, "GET", "/api/v1/mcp/oauth/consent?"+s.query.Encode(), nil, true).Code)
+}
+
+func TestMCPOAuthMalformedCredentialFormIsRejected(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	tokens := s.tokens(t)
+	for _, path := range []string{"/token", "/revoke"} {
+		request := httptest.NewRequest("POST", "https://example.com"+mcpOAuthPath+path, strings.NewReader("client_id="+s.clientID+"&token="+tokens.RefreshToken+"&bad=%zz"))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		response := httptest.NewRecorder()
+		s.router.ServeHTTP(response, request)
+		require.Equal(t, 401, response.Code, path)
+		require.Contains(t, response.Body.String(), "invalid_client", path)
+	}
+	require.Equal(t, 200, s.rpc(t, tokens.AccessToken, "initialize", nil).Code, "a malformed revocation must not be processed")
 }

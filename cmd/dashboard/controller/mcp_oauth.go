@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +37,10 @@ const (
 
 var mcpOAuthScopes = []string{model.ScopeInventoryRead, model.ScopeServerRead, model.ScopeServerWrite, model.ScopeServerDelete, model.ScopeServerExec}
 var mcpOAuthPublicLimiter = newMCPRateLimiter(20, 300)
+
+// Callers that prove an identity are charged to a bucket of their own, so the
+// shared anonymous bucket cannot be spent on their behalf by a stranger.
+var mcpOAuthCallerLimiter = newMCPRateLimiter(20, 300)
 var mcpOAuthRegistrationLimiter = newMCPRateLimiter(2, 20)
 var mcpOAuthMutationMu sync.Mutex
 
@@ -76,17 +82,66 @@ func mcpOAuthAvailable(c *gin.Context) {
 		mcpOAuthError(c, http.StatusServiceUnavailable, "temporarily_unavailable", err.Error())
 		return
 	}
+	if c.Request.Body != nil {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	}
 	// A single bounded global bucket also bounds anonymous registration and
 	// parsing work without allocating one map entry per attacker-controlled IP.
-	if !mcpOAuthPublicLimiter.Allow(1) {
+	// Only anonymous callers share it: a logged-in user or an authorized client
+	// must not be refused because of what a stranger sent.
+	limiter, bucket := mcpOAuthPublicLimiter, uint64(1)
+	caller, formErr := mcpOAuthCaller(c)
+	if caller != 0 {
+		limiter, bucket = mcpOAuthCallerLimiter, caller
+	}
+	if !limiter.Allow(bucket) {
 		c.Header("Retry-After", "60")
 		mcpOAuthError(c, http.StatusTooManyRequests, "temporarily_unavailable", "OAuth request rate exceeded")
 		return
 	}
-	if c.Request.Body != nil {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 32*1024)
+	if formErr != nil {
+		// ParseForm reports a malformed body only once, so mcpOAuthClientFromForm
+		// would no longer see it; answer as it does.
+		mcpOAuthError(c, http.StatusUnauthorized, "invalid_client", "client authentication failed")
+		return
 	}
 	c.Next()
+}
+
+// mcpOAuthCaller returns the rate bucket of a caller holding something only a
+// login or a user's consent can produce: a dashboard session, or a refresh
+// token or authorization code signed by this dashboard. Zero means anonymous.
+// Every check is an HMAC over a size-capped form, so no database work moves in
+// front of the limiter, and buckets exist only for users, grants and approved
+// codes, none of which an anonymous caller can create.
+func mcpOAuthCaller(c *gin.Context) (uint64, error) {
+	caller := ""
+	if value, exists := c.Get(model.CtxKeyAuthorizedUser); exists {
+		// The consent API runs behind the session middleware.
+		if user, ok := value.(*model.User); ok && user != nil {
+			caller = "user\x00" + strconv.FormatUint(user.ID, 10)
+		}
+	}
+	switch c.FullPath() {
+	case mcpOAuthPath + "/token", mcpOAuthPath + "/revoke":
+		if err := c.Request.ParseForm(); err != nil {
+			return 0, err
+		}
+		form := c.Request.PostForm
+		if grant := mcpOAuthRefreshGrantID(form.Get("refresh_token")); grant != "" {
+			caller = "grant\x00" + grant
+		} else if grant := mcpOAuthRefreshGrantID(form.Get("token")); grant != "" {
+			caller = "grant\x00" + grant
+		} else if code := form.Get("code"); mcpOAuthCodeSigned(code) {
+			caller = "code\x00" + code
+		}
+	}
+	if caller == "" {
+		return 0, nil
+	}
+	sum := fnv.New64a()
+	sum.Write([]byte(caller))
+	return sum.Sum64() | 1, nil
 }
 
 func registerMCPOAuthRoutes(r *gin.Engine) {
@@ -255,6 +310,18 @@ func mcpOAuthVerifierValid(verifier string) bool {
 func mcpOAuthNewRefresh(grantID string) string {
 	payload := grantID + "." + mcpOAuthRandom()
 	return mcpOAuthRefreshPrefix + payload + "." + mcpOAuthSign("mcp-refresh-v1", payload)
+}
+
+// Authorization codes are signed for the same reason: the rate limiter can tell
+// a code this dashboard issued from a guess without a database lookup.
+func mcpOAuthNewCode() string {
+	random := mcpOAuthRandom()
+	return random + "." + mcpOAuthSign("mcp-code-v1", random)
+}
+
+func mcpOAuthCodeSigned(code string) bool {
+	random, signature, found := strings.Cut(code, ".")
+	return found && len(code) <= 128 && mcpOAuthHashEqual(signature, mcpOAuthSign("mcp-code-v1", random))
 }
 
 func mcpOAuthRefreshGrantID(token string) string {
