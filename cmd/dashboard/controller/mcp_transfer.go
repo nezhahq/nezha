@@ -463,6 +463,15 @@ func transferDownloadHandler(c *gin.Context) {
 		return
 	}
 	c.Request = c.Request.WithContext(singleton.WithServerControlIdentity(c.Request.Context(), entry.UserID, transferUser.Role.IsAdmin()))
+	// Admit against the user's own share before the agent is contacted, so one
+	// user's parked downloads cannot take every process-wide spool slot.
+	releaseShare, ok := acquireDownloadSpoolShare(entry.UserID)
+	if !ok {
+		writeTransferFailureAudit(c, entry, "fs.download", model.MCPOutcomeRateLimited, errTooManyDownloadsForUser)
+		c.String(http.StatusTooManyRequests, errTooManyDownloadsForUser.Error())
+		return
+	}
+	defer releaseShare()
 	ctx, stop := transferRevokableContext(c, entry)
 	defer stop()
 
@@ -760,6 +769,40 @@ type frameReceiver interface {
 // frame is observed; but we MUST NOT pay 100MiB of heap per concurrent
 // download to do so.
 var downloadSpoolSlots = make(chan struct{}, 32)
+
+// maxDownloadSpoolsPerUser is one user's share of downloadSpoolSlots. A slot
+// stays taken until the agent has delivered the file and the HTTP client has
+// read it, or maxTransferDuration expires; without a share, one user parking
+// downloads on their own server would refuse every other user's download.
+const maxDownloadSpoolsPerUser = 4
+
+var (
+	downloadSpoolUsersMu sync.Mutex
+	downloadSpoolUsers   = make(map[uint64]int)
+)
+
+var errTooManyDownloadsForUser = errors.New("too many concurrent downloads for this user")
+
+// acquireDownloadSpoolShare counts an in-flight download against its user.
+// The returned release is safe to call more than once.
+func acquireDownloadSpoolShare(userID uint64) (func(), bool) {
+	downloadSpoolUsersMu.Lock()
+	defer downloadSpoolUsersMu.Unlock()
+	if downloadSpoolUsers[userID] >= maxDownloadSpoolsPerUser {
+		return nil, false
+	}
+	downloadSpoolUsers[userID]++
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			downloadSpoolUsersMu.Lock()
+			defer downloadSpoolUsersMu.Unlock()
+			if downloadSpoolUsers[userID]--; downloadSpoolUsers[userID] <= 0 {
+				delete(downloadSpoolUsers, userID)
+			}
+		})
+	}, true
+}
 
 func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) error {
 	// Bound disk occupancy independently of IOStream quotas and client reading speed.
