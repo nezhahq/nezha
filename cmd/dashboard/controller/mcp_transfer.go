@@ -520,7 +520,7 @@ func transferDownloadHandler(c *gin.Context) {
 	// once the agent's payload is complete and verified, before any of it is
 	// sent; a failure after that is the client's and adds no agent_error row.
 	recorded := false
-	err = relayDownloadFrames(c, stream, hdr.Size, func() {
+	err = relayDownloadFrames(ctx, c, stream, hdr.Size, func() {
 		recorded = true
 		_ = singleton.DB.Create(&model.MCPAuditLog{
 			UserID:   entry.UserID,
@@ -821,15 +821,16 @@ func acquireDownloadSpoolShare(userID uint64) (func(), bool) {
 
 // beforeBody, when not nil, is called once the payload is complete and
 // verified, before the first byte of it is written to the client.
-func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64, beforeBody func()) error {
+func relayDownloadFrames(ctx context.Context, c *gin.Context, stream io.ReadWriteCloser, size int64, beforeBody func()) error {
 	// Bound disk occupancy independently of IOStream quotas and client reading speed.
 	select {
 	case downloadSpoolSlots <- struct{}{}:
-		defer func() { <-downloadSpoolSlots }()
 	default:
 		c.String(http.StatusTooManyRequests, "download capacity exceeded")
 		return errors.New("download capacity exceeded")
 	}
+	releaseSlot := sync.OnceFunc(func() { <-downloadSpoolSlots })
+	defer releaseSlot()
 	responseControl := http.NewResponseController(c.Writer)
 	// The deployed net/http writer supports deadlines; in-memory recorders may not.
 	if err := responseControl.SetWriteDeadline(time.Now().Add(maxTransferDuration)); err != nil && !errors.Is(err, http.ErrNotSupported) {
@@ -842,6 +843,16 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64, 
 		return err
 	}
 	defer spool.Close()
+	// The slots are shared by every user, so the tmpfile and the slot also
+	// follow the transfer context (maxTransferDuration, PAT revocation, client
+	// disconnect) instead of only this function returning: the Read from the
+	// agent and the Write to the HTTP client below are in the peer's hands, and
+	// a stalled HTTP/2 connection does not fail a blocked Write at its deadline.
+	stopRelease := context.AfterFunc(ctx, func() {
+		spool.Close()
+		releaseSlot()
+	})
+	defer stopRelease()
 
 	// Hash the relayed bytes inline; we compare against the trailing
 	// NZTO declared sha256 in validateDownloadFinal so corrupt or

@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"runtime"
+	"sync"
 )
 
 // transferSpoolBuffer sizes the write buffer in front of the spool tmpfile.
@@ -15,7 +16,8 @@ type transferSpool struct {
 	// The agent chooses how the payload is cut into Write calls (one per NZTC
 	// frame), so writes are buffered: the number of write(2) calls must follow
 	// the payload size, not the agent's framing. Rewind flushes.
-	w *bufio.Writer
+	w         *bufio.Writer
+	closeOnce sync.Once
 }
 
 func newTransferSpool() (*transferSpool, error) {
@@ -42,14 +44,14 @@ func (s *transferSpool) Rewind() error {
 	return err
 }
 
+// Close may run while a Read or Write is in flight (relayDownloadFrames closes
+// the spool when the transfer context ends under a relay that is still
+// blocked), so it leaves s.f in place; later calls fail with os.ErrClosed.
 func (s *transferSpool) Close() {
-	if s.f == nil {
-		return
-	}
-	name := s.f.Name()
-	_ = s.f.Close()
-	if runtime.GOOS == "windows" {
-		_ = os.Remove(name)
-	}
-	s.f = nil
+	s.closeOnce.Do(func() {
+		_ = s.f.Close()
+		if runtime.GOOS == "windows" {
+			_ = os.Remove(s.f.Name())
+		}
+	})
 }

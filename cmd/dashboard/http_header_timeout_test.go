@@ -164,3 +164,61 @@ func TestDashboardHTTP2BoundsDecodedHeaderList(t *testing.T) {
 		})
 	}
 }
+
+// An HTTP/2 response write deadline is delivered as a RST_STREAM frame, which
+// cannot be written to a peer that stopped draining the TCP connection. The
+// write byte timeout has to close such a connection, or the handlers writing on
+// it (and whatever they hold) stay blocked for as long as the peer likes.
+func TestDashboardHTTP2ClosesConnectionThatStoppedReading(t *testing.T) {
+	handlerReturned := make(chan error, 1)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ProtoMajor != 2 {
+			t.Errorf("expected HTTP/2, got %s", r.Proto)
+		}
+		_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(250 * time.Millisecond))
+		chunk := make([]byte, 1<<20)
+		for {
+			if _, err := w.Write(chunk); err != nil {
+				handlerReturned <- err
+				return
+			}
+		}
+	})
+	server := httptest.NewUnstartedServer(handler)
+	server.Config = newDashboardHTTPServer(handler)
+	require.Positive(t, server.Config.HTTP2.WriteByteTimeout)
+	server.Config.HTTP2.WriteByteTimeout = 250 * time.Millisecond
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetHTTP1(true)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Start()
+	defer server.Close()
+
+	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	// Open HTTP/2 flow control all the way, so that what stops the server's
+	// writes is the full TCP socket and not a stream window; then never read.
+	const largestWindow = 1<<31 - 1
+	_, err = io.WriteString(conn, http2.ClientPreface)
+	require.NoError(t, err)
+	framer := http2.NewFramer(conn, conn)
+	require.NoError(t, framer.WriteSettings(http2.Setting{ID: http2.SettingInitialWindowSize, Val: largestWindow}))
+	require.NoError(t, framer.WriteWindowUpdate(0, largestWindow-65535))
+	var request bytes.Buffer
+	encoder := hpack.NewEncoder(&request)
+	for _, field := range []hpack.HeaderField{
+		{Name: ":method", Value: http.MethodGet}, {Name: ":scheme", Value: "http"},
+		{Name: ":path", Value: "/"}, {Name: ":authority", Value: "dashboard"},
+	} {
+		require.NoError(t, encoder.WriteField(field))
+	}
+	require.NoError(t, framer.WriteHeaders(http2.HeadersFrameParam{StreamID: 1, BlockFragment: request.Bytes(), EndStream: true, EndHeaders: true}))
+
+	select {
+	case err := <-handlerReturned:
+		require.Error(t, err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("handler is still blocked writing to a peer that stopped reading")
+	}
+}

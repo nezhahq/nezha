@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -44,7 +45,7 @@ func TestRelayDownloadFrames_RecordsBeforeBodyIsWritten(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(client)
 
-	err := relayDownloadFrames(c, &fixedSizeFrameStream{buf: src}, int64(len(payload)), func() { recorded++ })
+	err := relayDownloadFrames(context.Background(), c, &fixedSizeFrameStream{buf: src}, int64(len(payload)), func() { recorded++ })
 	require.Error(t, err, "the client write error must still be returned")
 	require.Equal(t, 1, recorded)
 }
@@ -58,7 +59,7 @@ func TestRelayDownloadFrames_DoesNotRecordIncompletePayload(t *testing.T) {
 
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
-	err := relayDownloadFrames(c, &fixedSizeFrameStream{buf: src}, int64(len(payload)), func() {
+	err := relayDownloadFrames(context.Background(), c, &fixedSizeFrameStream{buf: src}, int64(len(payload)), func() {
 		t.Error("an unverified payload was recorded as a download")
 	})
 	require.Error(t, err)

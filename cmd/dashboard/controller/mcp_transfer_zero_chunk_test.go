@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"testing"
 
@@ -47,7 +48,7 @@ func TestRelayDownloadFrames_RejectsZeroLengthDataFrames(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(sink)
 
-	err := relayDownloadFrames(c, stream, size, nil)
+	err := relayDownloadFrames(context.Background(), c, stream, size, nil)
 	if err == nil {
 		t.Fatalf("relayDownloadFrames accepted a stream of zero-length NZTC frames; a zero-length data frame while remaining>0 must be rejected to avoid an unbounded relay loop")
 	}
@@ -71,7 +72,7 @@ func TestRelayDownloadFrames_SingleZeroLengthFrameRejected(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(sink)
 
-	if err := relayDownloadFrames(c, stream, size, nil); err == nil {
+	if err := relayDownloadFrames(context.Background(), c, stream, size, nil); err == nil {
 		t.Fatalf("relayDownloadFrames must reject a zero-length data frame while remaining>0")
 	}
 	_ = model.MCPFsXferMagicChunk

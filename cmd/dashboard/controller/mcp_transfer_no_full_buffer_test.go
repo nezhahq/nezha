@@ -3,6 +3,7 @@ package controller
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/binary"
 	"errors"
 	"net"
@@ -94,7 +95,7 @@ func TestRelayDownloadFrames_DoesNotBufferEntirePayloadInMemory(t *testing.T) {
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	if err := relayDownloadFrames(c, stream, size, nil); err != nil {
+	if err := relayDownloadFrames(context.Background(), c, stream, size, nil); err != nil {
 		t.Fatalf("relayDownloadFrames returned err: %v", err)
 	}
 
