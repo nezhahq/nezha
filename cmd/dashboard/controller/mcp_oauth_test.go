@@ -596,6 +596,28 @@ func TestMCPOAuthMetadataCanonicalOriginAndBrowserHeaders(t *testing.T) {
 	require.Equal(t, 200, s.rpc(t, pat, "initialize", nil).Code, "OAuth configuration must not break existing PAT clients")
 }
 
+func TestMCPOAuthConsentDocumentIsNeverFrameable(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	// Only GET on the exact path is a registered route; everything else reaches
+	// the same admin frontend document through NoRoute.
+	for _, target := range []struct{ method, path string }{
+		{"GET", mcpOAuthFrontendPath},
+		{"POST", mcpOAuthFrontendPath},
+		{"PUT", mcpOAuthFrontendPath},
+		{"GET", "/dashboard/mcp/Authorize"},
+		{"GET", mcpOAuthFrontendPath + "//"},
+		{"GET", "/dashboard//mcp/authorize"},
+		{"GET", "/dashboard/index.html"},
+		{"GET", "/dashboard/"},
+	} {
+		page := s.request(t, target.method, target.path+"?"+s.query.Encode(), nil, false)
+		require.Contains(t, page.Body.String(), "independent admin frontend", "%s %s", target.method, target.path)
+		require.Equal(t, "DENY", page.Header().Get("X-Frame-Options"), "%s %s", target.method, target.path)
+		require.Equal(t, "frame-ancestors 'none'", page.Header().Get("Content-Security-Policy"), "%s %s", target.method, target.path)
+	}
+	require.Equal(t, "no-referrer", s.request(t, "GET", mcpOAuthFrontendPath, nil, false).Header().Get("Referrer-Policy"))
+}
+
 func TestMCPOAuthToolAnnotationsPreserveWriteConfirmation(t *testing.T) {
 	seen := make(map[string]bool)
 	for _, tool := range buildToolDescriptors() {

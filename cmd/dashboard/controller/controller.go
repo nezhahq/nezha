@@ -69,9 +69,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	// mcpOriginGuard 防止 DNS rebinding / 浏览器跨站调用。
 	registerMCPOAuthRoutes(r)
 	r.GET(mcpOAuthFrontendPath, func(c *gin.Context) {
-		// OAuth consent must not be embedded by another site for clickjacking.
-		c.Header("X-Frame-Options", "DENY")
-		c.Header("Content-Security-Policy", "frame-ancestors 'none'")
+		// The authorization request in the query must not leak through Referer.
+		// Framing is forbidden by fallbackToFrontend for the whole admin frontend.
 		c.Header("Referrer-Policy", "no-referrer")
 		c.Next()
 	}, fallbackToFrontend(frontendDist))
@@ -516,6 +515,11 @@ func fallbackToFrontend(frontendDist fs.FS) func(*gin.Context) {
 		userTemplate, adminTemplate := singleton.Conf.FrontendSelection()
 		// Only /dashboard/ belongs to the admin frontend; /dashboard.. must not be trimmed into ../.
 		if strings.HasPrefix(c.Request.URL.Path, "/dashboard/") {
+			// The admin frontend routes on the client, so index.html served for any
+			// method or path spelling under /dashboard/ can render the OAuth consent
+			// view. It must not be embedded by another site for clickjacking.
+			c.Header("X-Frame-Options", "DENY")
+			c.Header("Content-Security-Policy", "frame-ancestors 'none'")
 			stripPath := strings.TrimPrefix(c.Request.URL.Path, "/dashboard/")
 			if checkLocalFileOrFs(c, frontendDist, adminTemplate, stripPath, http.StatusOK) {
 				return
