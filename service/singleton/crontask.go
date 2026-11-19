@@ -19,11 +19,21 @@ import (
 
 const alertTriggerCronResultAuthorizationTTL = 24 * time.Hour
 
+// Result authorizations are reserved for every cover, once per server on every
+// run of a scheduled cron. An agent that never answers must not grow its list
+// without bound, and the sweep over all lists must not run for each dispatched
+// task or reported result.
+const (
+	cronResultAuthorizationLimit         = 64
+	cronResultAuthorizationSweepInterval = time.Minute
+)
+
 type CronClass struct {
 	class[uint64, *model.Cron]
 	*cron.Cron
 	pendingAlertTriggerTasksMu sync.Mutex
 	pendingAlertTriggerTasks   map[uint64]map[uint64][]time.Time
+	pendingAlertTriggerSweptAt time.Time
 	closeOnce                  sync.Once
 }
 
@@ -155,16 +165,15 @@ func CanReportCronResult(cr *model.Cron, reporter *model.Server) bool {
 	if cr == nil || reporter == nil || !cronCanSendToServer(cr, reporter) {
 		return false
 	}
-	if cr.Cover == model.CronCoverAll {
-		return !slices.Contains(cr.Servers, reporter.ID)
+	if cr.Cover == model.CronCoverAll && slices.Contains(cr.Servers, reporter.ID) {
+		return false
 	}
-	if cr.Cover == model.CronCoverIgnoreAll {
-		return slices.Contains(cr.Servers, reporter.ID)
+	if cr.Cover == model.CronCoverIgnoreAll && !slices.Contains(cr.Servers, reporter.ID) {
+		return false
 	}
-	if cr.Cover == model.CronCoverAlertTrigger {
-		return CronShared != nil && CronShared.consumeAlertTriggerCronResult(cr.ID, reporter.ID)
-	}
-	return false
+	// Cover only says the cron may be sent to this reporter. Whatever the cover,
+	// one result is accepted for each task CronTrigger dispatched to it.
+	return CronShared != nil && CronShared.consumeAlertTriggerCronResult(cr.ID, reporter.ID)
 }
 
 func (c *CronClass) reserveAlertTriggerCronResult(cronID uint64, serverID uint64) {
@@ -179,7 +188,11 @@ func (c *CronClass) reserveAlertTriggerCronResult(cronID uint64, serverID uint64
 	if c.pendingAlertTriggerTasks[cronID] == nil {
 		c.pendingAlertTriggerTasks[cronID] = make(map[uint64][]time.Time)
 	}
-	c.pendingAlertTriggerTasks[cronID][serverID] = append(c.pendingAlertTriggerTasks[cronID][serverID], now.Add(alertTriggerCronResultAuthorizationTTL))
+	expiresAtList := append(c.pendingAlertTriggerTasks[cronID][serverID], now.Add(alertTriggerCronResultAuthorizationTTL))
+	if len(expiresAtList) > cronResultAuthorizationLimit {
+		expiresAtList = expiresAtList[len(expiresAtList)-cronResultAuthorizationLimit:]
+	}
+	c.pendingAlertTriggerTasks[cronID][serverID] = expiresAtList
 }
 
 func (c *CronClass) revokeAlertTriggerCronResult(cronID uint64, serverID uint64) {
@@ -206,17 +219,22 @@ func (c *CronClass) consumeAlertTriggerCronResult(cronID uint64, serverID uint64
 	c.pendingAlertTriggerTasksMu.Lock()
 	defer c.pendingAlertTriggerTasksMu.Unlock()
 
-	c.pruneExpiredAlertTriggerCronResultsLocked(time.Now())
-	return c.consumeAlertTriggerCronResultLocked(cronID, serverID)
+	now := time.Now()
+	c.pruneExpiredAlertTriggerCronResultsLocked(now)
+	return c.consumeAlertTriggerCronResultLocked(cronID, serverID, now)
 }
 
-func (c *CronClass) consumeAlertTriggerCronResultLocked(cronID uint64, serverID uint64) bool {
+func (c *CronClass) consumeAlertTriggerCronResultLocked(cronID uint64, serverID uint64, now time.Time) bool {
 	serverTasks := c.pendingAlertTriggerTasks[cronID]
 	expiresAtList := serverTasks[serverID]
-	if len(expiresAtList) == 0 {
-		return false
+	// The sweep may not have run since these expired; the oldest come first.
+	for len(expiresAtList) > 0 && !expiresAtList[0].After(now) {
+		expiresAtList = expiresAtList[1:]
 	}
-	expiresAtList = expiresAtList[1:]
+	consumed := len(expiresAtList) > 0
+	if consumed {
+		expiresAtList = expiresAtList[1:]
+	}
 	if len(expiresAtList) == 0 {
 		delete(serverTasks, serverID)
 	} else {
@@ -225,10 +243,14 @@ func (c *CronClass) consumeAlertTriggerCronResultLocked(cronID uint64, serverID 
 	if len(serverTasks) == 0 {
 		delete(c.pendingAlertTriggerTasks, cronID)
 	}
-	return true
+	return consumed
 }
 
 func (c *CronClass) pruneExpiredAlertTriggerCronResultsLocked(now time.Time) {
+	if now.Sub(c.pendingAlertTriggerSweptAt) < cronResultAuthorizationSweepInterval {
+		return
+	}
+	c.pendingAlertTriggerSweptAt = now
 	for cronID, serverTasks := range c.pendingAlertTriggerTasks {
 		for serverID, expiresAtList := range serverTasks {
 			validExpiresAtList := expiresAtList[:0]
@@ -317,11 +339,19 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 				continue
 			}
 			if s.GetTaskStream() != nil {
-				_ = s.QueueTaskGuarded(&pb.Task{
+				cronShared := CronShared
+				if cronShared != nil {
+					cronShared.reserveAlertTriggerCronResult(cr.ID, s.ID)
+				}
+				// The agent can answer as soon as the queued task is sent, so
+				// reserve first and roll back when the task was never queued.
+				if err := s.QueueTaskGuarded(&pb.Task{
 					Id:   cr.ID,
 					Data: cr.Command,
 					Type: model.TaskTypeCommand,
-				}, ServerTaskAdmission(s.ID, cr.UserID))
+				}, ServerTaskAdmission(s.ID, cr.UserID)); err != nil && cronShared != nil {
+					cronShared.revokeAlertTriggerCronResult(cr.ID, s.ID)
+				}
 			} else {
 				// 保存当前服务器状态信息
 				curServer := model.Server{}

@@ -106,6 +106,7 @@ func TestRequestTaskAllowsCronCoverAllReporter(t *testing.T) {
 	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
 
@@ -120,6 +121,7 @@ func TestRequestTaskAllowsCronResultForCoveredOwnerServer(t *testing.T) {
 	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
 
@@ -135,11 +137,49 @@ func TestRequestTaskAllowsCronResultForCoveredAdminOwnedCron(t *testing.T) {
 		1:   {Role: model.RoleAdmin},
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
 
 	if !cronLastResult(t, cronTask.ID) {
 		t.Fatal("covered admin-owned cron result must update cron status")
+	}
+}
+
+// An admin's cover-all cron covers every member's server. Without a dispatched
+// task the member's agent must not be able to report a run of it, and one
+// dispatched task must not authorize more than one result.
+func TestRequestTaskSkipsScheduledCronResultWithoutDispatch(t *testing.T) {
+	for name, cronTask := range map[string]*model.Cron{
+		"CronCoverAll":       requestTaskSecurityCron(42, 1, model.CronCoverAll, nil),
+		"CronCoverIgnoreAll": requestTaskSecurityCron(42, 1, model.CronCoverIgnoreAll, []uint64{7}),
+	} {
+		t.Run(name, func(t *testing.T) {
+			reporter := requestTaskSecurityServer(7, 200, "abababab-abab-abab-abab-abababababab")
+			setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
+				1:   {Role: model.RoleAdmin},
+				200: {Role: model.RoleMember},
+			}, map[string]uint64{"reporter-secret": 200})
+
+			runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
+			if cronLastResult(t, cronTask.ID) {
+				t.Fatal("result without a dispatched task must not update cron status")
+			}
+
+			dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
+			runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
+			if !cronLastResult(t, cronTask.ID) {
+				t.Fatal("result for the dispatched task must update cron status")
+			}
+
+			if err := singleton.DB.Model(&model.Cron{}).Where("id = ?", cronTask.ID).Update("last_result", false).Error; err != nil {
+				t.Fatal(err)
+			}
+			runRequestTaskSecurityResult(t, "reporter-secret", reporter.UUID, cronTaskResult(cronTask.ID, true))
+			if cronLastResult(t, cronTask.ID) {
+				t.Fatal("a second result for one dispatched task must not update cron status")
+			}
+		})
 	}
 }
 
@@ -369,6 +409,27 @@ func connectRequestTaskSecurityTaskStreamWithSendHook(t *testing.T, serverID uin
 		t.Fatalf("server %d not found", serverID)
 	}
 	server.SetTaskStream(&requestTaskSecurityStream{ctx: context.Background(), sendErr: sendErr, onSend: onSend})
+}
+
+// dispatchRequestTaskSecurityCron runs a scheduled cron with the server online
+// and waits until its task is sent, as a result is only accepted for a
+// dispatched task.
+func dispatchRequestTaskSecurityCron(t *testing.T, cronTask *model.Cron, serverID uint64) {
+	t.Helper()
+
+	sent := make(chan struct{}, 1)
+	connectRequestTaskSecurityTaskStreamWithSendHook(t, serverID, nil, func(task *pb.Task) {
+		if task.GetId() == cronTask.ID && task.GetType() == model.TaskTypeCommand {
+			sent <- struct{}{}
+		}
+	})
+	singleton.CronTrigger(cronTask)()
+
+	select {
+	case <-sent:
+	case <-time.After(time.Second):
+		t.Fatalf("expected cron task %d to be dispatched to server %d", cronTask.ID, serverID)
+	}
 }
 
 func runRequestTaskSecurityResult(t *testing.T, secret string, uuid string, result *pb.TaskResult) {

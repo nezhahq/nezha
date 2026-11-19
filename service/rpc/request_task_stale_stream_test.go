@@ -52,6 +52,7 @@ func TestRequestTaskRejectsResultWhenServerDeletedAfterRecv(t *testing.T) {
 	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	stream := requestTaskSecurityAuthedStream("reporter-secret", reporter.UUID)
 	stream.results = []*pb.TaskResult{cronTaskResult(cronTask.ID, true)}
@@ -72,6 +73,7 @@ func TestRequestTaskRejectsResultWhenNewerStreamSupersedesOld(t *testing.T) {
 	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	current, ok := singleton.ServerShared.Get(reporter.ID)
 	if !ok {
@@ -100,6 +102,7 @@ func TestRequestTaskAcceptsResultAfterServerPointerReplacementWithSameStream(t *
 	setupRequestTaskSecurityFixture(t, []*model.Server{reporter}, []*model.Cron{cronTask}, map[uint64]model.UserInfo{
 		200: {Role: model.RoleMember},
 	}, map[string]uint64{"reporter-secret": 200})
+	dispatchRequestTaskSecurityCron(t, cronTask, reporter.ID)
 
 	old, ok := singleton.ServerShared.Get(reporter.ID)
 	if !ok {

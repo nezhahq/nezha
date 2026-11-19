@@ -487,6 +487,29 @@ func TestCanReportCronResultCronCoverAllRejectsReporterInDenyList(t *testing.T) 
 	}
 }
 
+// dispatchCronForSecurityTest runs cr through CronTrigger with reporter online
+// and waits for the task to reach its stream, leaving behind exactly the result
+// authorization a real run leaves.
+func dispatchCronForSecurityTest(t *testing.T, cr *model.Cron, reporter *model.Server) {
+	t.Helper()
+
+	stream := newCapturedTaskStream()
+	replaceServerSharedForSecurityTest(t, withTaskStream(reporter, stream))
+	originalCronShared := CronShared
+	t.Cleanup(func() { CronShared = originalCronShared })
+	CronShared = &CronClass{
+		class: class[uint64, *model.Cron]{list: map[uint64]*model.Cron{cr.ID: cr}},
+	}
+
+	CronTrigger(cr)()
+
+	select {
+	case <-stream.tasks:
+	case <-time.After(time.Second):
+		t.Fatal("expected CronTrigger to dispatch the cron task to the reporter")
+	}
+}
+
 func TestCanReportCronResultCronCoverAllAcceptsReporterNotInDenyList(t *testing.T) {
 	cr := &model.Cron{
 		Common:  model.Common{ID: 7, UserID: 100},
@@ -494,6 +517,7 @@ func TestCanReportCronResultCronCoverAllAcceptsReporterNotInDenyList(t *testing.
 		Servers: []uint64{99},
 	}
 	reporter := &model.Server{Common: model.Common{ID: 1, UserID: 100}}
+	dispatchCronForSecurityTest(t, cr, reporter)
 
 	if !CanReportCronResult(cr, reporter) {
 		t.Fatal("CronCoverAll with reporter NOT in Servers must accept — CronTrigger dispatches to it")
@@ -507,9 +531,128 @@ func TestCanReportCronResultCronCoverIgnoreAllAcceptsReporterInAllowList(t *test
 		Servers: []uint64{1},
 	}
 	reporter := &model.Server{Common: model.Common{ID: 1, UserID: 100}}
+	dispatchCronForSecurityTest(t, cr, reporter)
 
 	if !CanReportCronResult(cr, reporter) {
 		t.Fatal("CronCoverIgnoreAll treats Servers as allow-list; reporter in the list must be accepted")
+	}
+}
+
+// Being inside a scheduled cron's cover is not enough: an admin's cover-all
+// cron covers every member's server, whose agent could otherwise report runs
+// that never happened, at any time and any number of times.
+func TestCanReportCronResultRequiresDispatchForScheduledCovers(t *testing.T) {
+	for name, cr := range map[string]*model.Cron{
+		"CronCoverAll":       {Common: model.Common{ID: 42, UserID: 1}, Command: "backup", Cover: model.CronCoverAll},
+		"CronCoverIgnoreAll": {Common: model.Common{ID: 42, UserID: 1}, Command: "backup", Cover: model.CronCoverIgnoreAll, Servers: []uint64{7}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
+				1:   {Role: model.RoleAdmin},
+				200: {Role: model.RoleMember},
+			})
+			reporter := &model.Server{Common: model.Common{ID: 7, UserID: 200}, Name: "member-server"}
+			originalCronShared := CronShared
+			t.Cleanup(func() { CronShared = originalCronShared })
+			CronShared = &CronClass{}
+
+			if CanReportCronResult(cr, reporter) {
+				t.Fatal("result must be rejected while the cron was never dispatched to the reporter")
+			}
+
+			dispatchCronForSecurityTest(t, cr, reporter)
+
+			if !CanReportCronResult(cr, reporter) {
+				t.Fatal("result for a dispatched task must be accepted")
+			}
+			if CanReportCronResult(cr, reporter) {
+				t.Fatal("one dispatched task must authorize only one result")
+			}
+		})
+	}
+}
+
+// blockedTaskStream keeps the first Send in flight so later tasks pile up in
+// the per-stream queue until QueueTaskGuarded refuses them.
+type blockedTaskStream struct {
+	capturedTaskStream
+	release chan struct{}
+}
+
+func (s *blockedTaskStream) Send(task *pb.Task) error {
+	<-s.release
+	s.tasks <- task
+	return nil
+}
+
+func TestCronTriggerRevokesScheduledAuthorizationWhenTaskIsNotQueued(t *testing.T) {
+	const runs = 32
+	blocked := &blockedTaskStream{
+		capturedTaskStream: capturedTaskStream{tasks: make(chan *pb.Task, runs)},
+		release:            make(chan struct{}),
+	}
+	reporter := withTaskStream(&model.Server{Common: model.Common{ID: 7, UserID: 100}, Name: "stalled-server"}, blocked)
+	replaceServerSharedForSecurityTest(t, reporter)
+
+	originalCronShared := CronShared
+	t.Cleanup(func() { CronShared = originalCronShared })
+	CronShared = &CronClass{}
+
+	cr := &model.Cron{Common: model.Common{ID: 42, UserID: 100}, Cover: model.CronCoverAll}
+	for range runs {
+		CronTrigger(cr)()
+	}
+
+	accepted := 0
+	for accepted < runs && CanReportCronResult(cr, reporter) {
+		accepted++
+	}
+	if accepted == 0 {
+		t.Fatal("queued tasks must leave a result authorization")
+	}
+	if accepted >= runs {
+		t.Fatalf("tasks refused by the full queue must not leave a result authorization, got %d for %d runs", accepted, runs)
+	}
+
+	// Every authorization belongs to a task that is still delivered once the stream moves again.
+	close(blocked.release)
+	for range accepted {
+		select {
+		case <-blocked.tasks:
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected every queued cron task to be sent")
+		}
+	}
+}
+
+func TestCronResultAuthorizationIsBoundedPerServer(t *testing.T) {
+	cronClass := &CronClass{}
+	for range cronResultAuthorizationLimit + 8 {
+		cronClass.reserveAlertTriggerCronResult(42, 7)
+	}
+
+	if pending := len(cronClass.pendingAlertTriggerTasks[42][7]); pending != cronResultAuthorizationLimit {
+		t.Fatalf("expected at most %d pending authorizations for one cron/server pair, got %d", cronResultAuthorizationLimit, pending)
+	}
+}
+
+func TestCronResultAuthorizationExpiresBetweenSweeps(t *testing.T) {
+	now := time.Now()
+	cronClass := &CronClass{
+		pendingAlertTriggerTasks: map[uint64]map[uint64][]time.Time{
+			42: {7: {now.Add(-time.Second), now.Add(time.Hour)}},
+		},
+		pendingAlertTriggerSweptAt: now,
+	}
+
+	if !cronClass.consumeAlertTriggerCronResult(42, 7) {
+		t.Fatal("expected the unexpired authorization to be consumed")
+	}
+	if cronClass.consumeAlertTriggerCronResult(42, 7) {
+		t.Fatal("an expired authorization must not be accepted before the next sweep")
+	}
+	if len(cronClass.pendingAlertTriggerTasks) != 0 {
+		t.Fatal("expired authorization must be dropped when its pair is consumed")
 	}
 }
 
