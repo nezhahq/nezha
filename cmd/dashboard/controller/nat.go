@@ -69,7 +69,7 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
-	if !singleton.NATDomainAllowed(nf.Domain, c.MustGet(model.CtxKeyAuthorizedUser).(*model.User).Role.IsAdmin()) {
+	if !singleton.NATDomainAllowed(nf.Domain, callerIsNATDomainAdmin(c)) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -131,7 +131,7 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
-	if !singleton.NATDomainAllowed(nf.Domain, c.MustGet(model.CtxKeyAuthorizedUser).(*model.User).Role.IsAdmin()) {
+	if !singleton.NATDomainAllowed(nf.Domain, callerIsNATDomainAdmin(c)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -76,6 +77,59 @@ func TestSecurityBoundaryNATCurrentHostAndLateReservation(t *testing.T) {
 	require.Error(t, err)
 	require.Zero(t, id)
 	require.Nil(t, singleton.NATShared.GetNATConfigByDomain("panel.example.invalid"))
+}
+
+func TestSecurityBoundaryNATScopedAdminTokenDomainPolicy(t *testing.T) {
+	defer setupTenancyTest(t)()
+	oldConf, oldNAT, oldUsers := singleton.Conf, singleton.NATShared, singleton.UserInfoMap
+	defer func() { singleton.Conf, singleton.NATShared, singleton.UserInfoMap = oldConf, oldNAT, oldUsers }()
+	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{ConfigDashboard: model.ConfigDashboard{DashboardHost: "declared.example.invalid"}, NATMemberDomains: []string{"tunnel.example.invalid"}}}
+	singleton.UserInfoMap = map[uint64]model.UserInfo{1: {Role: model.RoleAdmin}}
+	require.NoError(t, singleton.DB.AutoMigrate(&model.NAT{}))
+	singleton.NATShared = singleton.NewNATClass()
+	singleton.ServerShared.InsertForTest(&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "admin-server"})
+	request := func(domain string, scopes []string) *gin.Context {
+		c := ctxAsMemberWithBody(1, map[string]any{"name": "tunnel", "enabled": true, "server_id": 1, "host": "203.0.113.7:80", "domain": domain})
+		c.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin})
+		if scopes != nil {
+			tok := &model.APIToken{ID: 7, UserID: 1}
+			tok.SetScopes(scopes)
+			tok.SetServerIDs([]uint64{1})
+			c.Set(model.CtxKeyAPIToken, tok)
+			c.Set(apiTokenCtxKey, tok)
+		}
+		return c
+	}
+	create := func(domain string, scopes []string) (uint64, error) { return createNAT(request(domain, scopes)) }
+	update := func(id uint64, domain string, scopes []string) error {
+		c := request(domain, scopes)
+		c.Params = gin.Params{{Key: "id", Value: strconv.FormatUint(id, 10)}}
+		_, err := updateNAT(c)
+		return err
+	}
+
+	// The panel is reached under a hostname the operator never declared.
+	_, err := create("undeclared-panel.example.invalid", []string{model.ScopeNATWrite})
+	require.Error(t, err, "nat:write alone must not inherit the administrator's domain exemption")
+	_, err = create("undeclared-panel.example.invalid", []string{"nezha:nat:*"})
+	require.Error(t, err)
+	require.Nil(t, singleton.NATShared.GetNATConfigByDomain("undeclared-panel.example.invalid"))
+	id, err := create("tunnel.example.invalid", []string{model.ScopeNATWrite})
+	require.NoError(t, err, "operator-assigned member domains stay available to scoped tokens")
+	require.Error(t, update(id, "undeclared-panel.example.invalid", []string{model.ScopeNATWrite}), "an update must not move a profile onto an unassigned hostname")
+	require.Nil(t, singleton.NATShared.GetNATConfigByDomain("undeclared-panel.example.invalid"))
+	require.NotNil(t, singleton.NATShared.GetNATConfigByDomain("tunnel.example.invalid"))
+
+	// Administrator sessions and tokens carrying the admin scope keep the exemption.
+	_, err = create("admin-token.example.invalid", []string{model.ScopeNATWrite, model.ScopeAdminAll})
+	require.NoError(t, err)
+	_, err = create("superuser-token.example.invalid", []string{model.ScopeNezhaAll})
+	require.NoError(t, err)
+	_, err = create("admin-session.example.invalid", nil)
+	require.NoError(t, err)
+	require.NoError(t, update(id, "moved-by-session.example.invalid", nil))
+	_, err = create("declared.example.invalid", nil)
+	require.Error(t, err, "reserved dashboard hosts stay refused for everyone")
 }
 
 func TestSecurityBoundaryOAuthBindAndReusableState(t *testing.T) {

@@ -478,6 +478,23 @@ func enforcePATTriggerTaskScope(c *gin.Context, failTasks, recoverTasks []uint64
 	return nil
 }
 
+// callerIsNATDomainAdmin reports whether the request may use the administrator
+// exemption of the NAT domain policy (any hostname that is not reserved). A PAT
+// carries its owner's role, so an administrator's token limited to
+// nezha:nat:write would otherwise be free to claim every hostname the panel is
+// reached under but never declared, and newHTTPandGRPCMux would then tunnel
+// that traffic, logins included, to a backend of the token holder's choosing.
+// Only JWT sessions and PATs that also carry nezha:admin:* keep the exemption;
+// every other PAT is held to nat_member_domains like a member. The runtime
+// checks only know the profile owner, so this must be enforced at write time.
+func callerIsNATDomainAdmin(c *gin.Context) bool {
+	if !callerIsAdmin(c) {
+		return false
+	}
+	tok := APITokenFromContext(c)
+	return tok == nil || tok.HasScope(model.ScopeAdminAll)
+}
+
 func userCanViewServer(c *gin.Context, server *model.Server) bool {
 	if server == nil {
 		return false
