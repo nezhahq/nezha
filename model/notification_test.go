@@ -476,3 +476,60 @@ func TestJSONTemplateEscape(t *testing.T) {
 		}
 	}
 }
+
+func TestNotificationZeroTotalsRenderFiniteUsage(t *testing.T) {
+	const body = `{"mem": #SERVER.MEM#, "swap": #SERVER.SWAP#, "disk": #SERVER.DISK#}`
+	cases := []struct {
+		name   string
+		host   Host
+		state  HostState
+		expect string
+	}{
+		{
+			name:   "no host report yet",
+			expect: `{"mem": 0.000000, "swap": 0.000000, "disk": 0.000000}`,
+		},
+		{
+			name:   "zero totals with non-zero usage",
+			state:  HostState{MemUsed: 1, SwapUsed: 1, DiskUsed: 1},
+			expect: `{"mem": 0.000000, "swap": 0.000000, "disk": 0.000000}`,
+		},
+		{
+			name:   "host without swap",
+			host:   Host{MemTotal: 4, DiskTotal: 4},
+			state:  HostState{MemUsed: 1, DiskUsed: 1},
+			expect: `{"mem": 0.250000, "swap": 0.000000, "disk": 0.250000}`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ns := NotificationServerBundle{
+				Notification: &Notification{
+					RequestMethod: NotificationRequestMethodPOST,
+					RequestType:   NotificationRequestTypeJSON,
+					RequestBody:   body,
+				},
+				Server: &Server{Host: &c.host, State: &c.state},
+				Loc:    time.UTC,
+			}
+			got, err := ns.reqBody(msg)
+			if err != nil {
+				t.Fatalf("Error: %s", err)
+			}
+			if !json.Valid([]byte(got)) {
+				t.Fatalf("zero totals rendered an invalid JSON body: %s", got)
+			}
+			if got != c.expect {
+				t.Fatalf("Expected %s, but got %s", c.expect, got)
+			}
+
+			formatMetricUnits := true
+			ns.Notification.FormatMetricUnits = &formatMetricUnits
+			got = ns.replaceParamsInString("#SERVER.MEM# #SERVER.SWAP# #SERVER.DISK#", msg, nil)
+			if strings.Contains(got, "NaN") || strings.Contains(got, "Inf") {
+				t.Fatalf("zero totals rendered a non-finite usage: %s", got)
+			}
+		})
+	}
+}

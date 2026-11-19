@@ -244,9 +244,9 @@ func (ns *NotificationServerBundle) replaceParamsInString(str string, message st
 			replacements = append(replacements,
 				// Converted metrics
 				"#SERVER.CPU#", mod(ns.formatUsage(false, state.CPU)),
-				"#SERVER.MEM#", mod(ns.formatUsage(true, float64(state.MemUsed)/float64(host.MemTotal))),
-				"#SERVER.SWAP#", mod(ns.formatUsage(true, float64(state.SwapUsed)/float64(host.SwapTotal))),
-				"#SERVER.DISK#", mod(ns.formatUsage(true, float64(state.DiskUsed)/float64(host.DiskTotal))),
+				"#SERVER.MEM#", mod(ns.formatUsage(true, usageRatio(state.MemUsed, host.MemTotal))),
+				"#SERVER.SWAP#", mod(ns.formatUsage(true, usageRatio(state.SwapUsed, host.SwapTotal))),
+				"#SERVER.DISK#", mod(ns.formatUsage(true, usageRatio(state.DiskUsed, host.DiskTotal))),
 				"#SERVER.SPEEDIN#", mod(fmt.Sprintf("%s/s", ns.formatSize(state.NetInSpeed))),
 				"#SERVER.SPEEDOUT#", mod(fmt.Sprintf("%s/s", ns.formatSize(state.NetOutSpeed))),
 				"#SERVER.TRANSFERIN#", mod(ns.formatSize(state.NetInTransfer)),
@@ -297,6 +297,15 @@ func (ns *NotificationServerBundle) replaceParamsInString(str string, message st
 
 	replacer := strings.NewReplacer(replacements...)
 	return replacer.Replace(str)
+}
+
+// usageRatio returns used/total, or 0 when the agent reports no total (e.g. no
+// swap, or no host report yet), so templates never render NaN or Inf.
+func usageRatio(used, total uint64) float64 {
+	if total == 0 {
+		return 0
+	}
+	return float64(used) / float64(total)
 }
 
 func (ns *NotificationServerBundle) formatUsage(toPercentage bool, usage float64) string {
