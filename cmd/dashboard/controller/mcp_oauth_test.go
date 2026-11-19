@@ -923,3 +923,30 @@ func TestMCPOAuthMalformedCredentialFormIsRejected(t *testing.T) {
 	}
 	require.Equal(t, 200, s.rpc(t, tokens.AccessToken, "initialize", nil).Code, "a malformed revocation must not be processed")
 }
+
+func TestMCPOAuthUnknownAccessTokenIsCountedByWAF(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	tokens := s.tokens(t)
+	// routers() does not install waf.RealIp, and BlockIP ignores an empty address.
+	s.router = gin.New()
+	s.router.Use(func(c *gin.Context) { c.Set(model.CtxKeyRealIPStr, "198.51.100.8") })
+	routers(s.router, fstest.MapFS{})
+	counted := func() uint64 {
+		var entry model.WAF
+		require.NoError(t, singleton.DB.Where("block_identifier = ?", model.BlockIDToken).Find(&entry).Error)
+		return entry.Count
+	}
+
+	require.Equal(t, 401, s.rpc(t, mcpOAuthAccessPrefix+"made-up", "initialize", nil).Code)
+	require.EqualValues(t, 1, counted())
+	require.Equal(t, 401, s.rpc(t, mcpOAuthAccessPrefix+strings.Repeat("x", 128), "initialize", nil).Code)
+	require.EqualValues(t, 2, counted())
+
+	require.Equal(t, 200, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
+	require.Zero(t, counted(), "a valid token clears the counter")
+
+	// An issued token that merely expired must not block its holder's refresh.
+	require.NoError(t, singleton.DB.Model(&model.MCPOAuthGrant{}).Where("1 = 1").Update("access_expires_at", time.Now().Add(-time.Second)).Error)
+	require.Equal(t, 401, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
+	require.Zero(t, counted())
+}

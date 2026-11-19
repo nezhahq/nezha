@@ -326,7 +326,18 @@ func mcpOAuthAccessAuth(c *gin.Context) {
 		return
 	}
 	var grant model.MCPOAuthGrant
-	if len(plain) > 128 || singleton.DB.First(&grant, "access_hash = ?", model.HashAPIToken(plain)).Error != nil || !time.Now().Before(grant.AccessExpiresAt) || grant.Resource != issuer+"/mcp" {
+	err = gorm.ErrRecordNotFound
+	if len(plain) <= 128 {
+		err = singleton.DB.First(&grant, "access_hash = ?", model.HashAPIToken(plain)).Error
+	}
+	// A token that matches no grant is a guess: count it on the same WAF
+	// counter as an unknown PAT, which this request never reaches. An issued
+	// token that merely expired is not counted, so that the client is not
+	// blocked right before it refreshes.
+	if errors.Is(err, gorm.ErrRecordNotFound) && !apiTokenAuthReadOnly(c) {
+		model.BlockIP(singleton.DB, c.GetString(model.CtxKeyRealIPStr), model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
+	}
+	if err != nil || !time.Now().Before(grant.AccessExpiresAt) || grant.Resource != issuer+"/mcp" {
 		abortAPITokenUnauthorized(c, "invalid or expired MCP OAuth token")
 		return
 	}
