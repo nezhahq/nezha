@@ -95,6 +95,7 @@ func allocateMCPTaskID() uint64 {
 //   - 超时 → ctx.Err 或 ErrAgentTimeout
 //   - agent 回包 successful=false → 把 result.Data 当错误字符串返回
 //   - CancelAllMCPInflight 期间被中断 → ErrMCPDisabled
+//   - 等待回包期间 server 被转移，或调用方已失去控制权 → 控制权校验错误（回包丢弃）
 //   - 任何 send 失败、序列化失败 → 原始 error
 //
 // 返回的 raw JSON 是 agent 端 TaskResult.Data 的原文。
@@ -103,6 +104,9 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 	if controlErr != nil {
 		return nil, controlErr
 	}
+	// Bind the call to the ownership generation it was admitted under. The owner
+	// check alone misses an admin caller and a server moved away and back.
+	ctx = singleton.WithServerControlEpoch(ctx, singleton.ServerControlEpoch(serverID))
 	releaseControl()
 	if !model.IsMCPRPCResult(taskType) {
 		return nil, errors.New("CallAgent: task type is not registered as MCP RPC")
@@ -195,6 +199,14 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 		if !entry.claimResult() {
 			return nil, ErrMCPDisabled
 		}
+		// No lease is held while waiting, and the reporter check only knows the
+		// server ID, which a transfer keeps. Admit the caller again, or the next
+		// owner's agent session could complete a call sent under the previous one.
+		releaseControl, controlErr = singleton.BeginServerControlFromContext(ctx, serverID)
+		if controlErr != nil {
+			return nil, controlErr
+		}
+		releaseControl()
 		notifyMCPTaskResultAccepted(entry.serverID, res.GetId(), res.GetType())
 		if hook := testMCPResultAfterCancellationCheck.Load(); hook != nil {
 			(*hook)()

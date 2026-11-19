@@ -161,3 +161,60 @@ func TestRequestTaskCancelsStalledSendDuringTransferRollback(t *testing.T) {
 	release()
 	require.Equal(t, uint64(200), server.GetUserID())
 }
+
+// A call that is still waiting when its server is transferred must not be
+// completed afterwards: the reply is matched by server ID, and whoever reports
+// as that ID now is the next owner's agent session.
+func TestCallAgentDropsResultAfterServerTransfer(t *testing.T) {
+	for name, tc := range map[string]struct {
+		caller   singleton.ServerControlIdentity
+		moveBack bool
+	}{
+		"previous owner":                   {caller: singleton.ServerControlIdentity{UserID: 200}},
+		"admin":                            {caller: singleton.ServerControlIdentity{UserID: 1, Admin: true}},
+		"owner after a move away and back": {caller: singleton.ServerControlIdentity{UserID: 200}, moveBack: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			server := &model.Server{Common: model.Common{ID: 9, UserID: 200}, UUID: "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", Name: "transfer-subject"}
+			setupApplyConfigAuthzFixture(t, []*model.Server{server}, map[uint64]model.UserInfo{
+				200: {Role: model.RoleMember, AgentSecret: "source-secret"}, 300: {Role: model.RoleMember, AgentSecret: "destination-secret"},
+			}, map[string]uint64{"source-secret": 200, "destination-secret": 300})
+			stream := newFakeStream()
+			server.SetTaskStream(stream)
+
+			type outcome struct {
+				data string
+				err  error
+			}
+			callDone := make(chan outcome, 1)
+			go func() {
+				ctx := singleton.WithServerControlIdentity(context.Background(), tc.caller.UserID, tc.caller.Admin)
+				data, err := CallAgent(ctx, server.ID, model.TaskTypeExec, model.ExecRequest{Cmd: "local simulation only"}, 5*time.Second)
+				callDone <- outcome{string(data), err}
+			}()
+			var task *pb.Task
+			select {
+			case task = <-stream.sent:
+			case <-time.After(time.Second):
+				t.Fatal("MCP task was not dispatched")
+			}
+
+			transfer := func(from, to uint64) {
+				pending := initiateAndRegisterPendingTransfer(t, server.ID, from, to, 1)
+				verified, _, err := singleton.ServerTransferShared.MarkVerified(server.ID, pending.ID)
+				require.NoError(t, err)
+				require.True(t, verified)
+			}
+			transfer(200, 300)
+			if tc.moveBack {
+				transfer(300, 200)
+			}
+
+			deliverMCPResultFromReporter(&pb.TaskResult{Id: task.Id, Type: task.Type, Successful: true, Data: `{"stdout":"from the next owner"}`}, server.ID)
+			got := <-callDone
+			require.Error(t, got.err, "the call was completed after the transfer")
+			require.NotErrorIs(t, got.err, ErrAgentTimeout)
+			require.Empty(t, got.data)
+		})
+	}
+}
