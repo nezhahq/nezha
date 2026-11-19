@@ -43,3 +43,46 @@ func TestSecurityBoundaryNATDispatchBeforeHTTP2Rejection(t *testing.T) {
 	require.Empty(t, fixture.taskStream.sent)
 	require.Equal(t, http.StatusHTTPVersionNotSupported, writer.Code)
 }
+
+func TestSecurityBoundaryNATMemberCannotExhaustProcessWideSlots(t *testing.T) {
+	fixture := newServeNATFixture(t)
+	originalConf := singleton.Conf
+	singleton.Conf = &singleton.ConfigClass{Config: &model.Config{ConfigDashboard: model.ConfigDashboard{DashboardHost: "panel.example"}, NATMemberDomains: []string{"nat.example.invalid"}}}
+	t.Cleanup(func() { singleton.Conf = originalConf })
+	fixture.server.SetUserID(100)
+	fixture.taskStream.sendErr = errors.New("stop at simulated NAT task delivery")
+	memberProfile := &model.NAT{Common: model.Common{UserID: 100}, ServerID: fixture.server.ID, Domain: "nat.example.invalid", Host: "backend.example.invalid:80"}
+	adminProfile := &model.NAT{Common: model.Common{UserID: 1}, ServerID: fixture.server.ID, Domain: "intranet.example.invalid", Host: "backend.example.invalid:80"}
+
+	// Stand in for the member's idle tunnels: each one keeps its slot until it ends.
+	var held []func()
+	releaseHeld := func() {
+		for _, release := range held {
+			release()
+		}
+		held = nil
+	}
+	t.Cleanup(releaseHeld)
+	for range natMaxActiveRequests {
+		release, admitted := natActiveRequests.acquire(memberProfile.UserID, false)
+		if !admitted {
+			break
+		}
+		held = append(held, release)
+	}
+	require.Len(t, held, natMaxActiveRequestsPerMember, "one member must not hold the whole process-wide budget")
+
+	writer := &serveNATResponseWriter{conn: newServeNATConn()}
+	ServeNAT(writer, httptest.NewRequest(http.MethodGet, "http://nat.example.invalid/", nil), memberProfile)
+	require.Equal(t, http.StatusTooManyRequests, writer.status)
+	require.Empty(t, fixture.taskStream.sent, "a member over their share must not task the agent")
+
+	writer = &serveNATResponseWriter{conn: newServeNATConn()}
+	ServeNAT(writer, httptest.NewRequest(http.MethodGet, "http://intranet.example.invalid/", nil), adminProfile)
+	require.Len(t, fixture.taskStream.sent, 1, "another owner's NAT domain must still be served")
+	require.Equal(t, http.StatusServiceUnavailable, writer.status)
+
+	releaseHeld()
+	require.Zero(t, natActiveRequests.total, "finished requests must return their slots")
+	require.Empty(t, natActiveRequests.byMember)
+}

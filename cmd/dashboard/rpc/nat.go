@@ -18,7 +18,45 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
-var natActiveRequests = make(chan struct{}, 128)
+const (
+	natMaxActiveRequests = 128
+	// The budget is process-wide, so a member-owned profile may hold at most a
+	// quarter of it; otherwise one tenant's tunnels starve every other NAT domain.
+	natMaxActiveRequestsPerMember = natMaxActiveRequests / 4
+)
+
+var natActiveRequests = natRequestSlots{byMember: make(map[uint64]int)}
+
+type natRequestSlots struct {
+	mu       sync.Mutex
+	total    int
+	byMember map[uint64]int
+}
+
+// acquire charges one request to the profile owner. Admin-owned profiles are
+// bounded only by the process-wide budget.
+func (s *natRequestSlots) acquire(ownerID uint64, admin bool) (func(), bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.total >= natMaxActiveRequests || (!admin && s.byMember[ownerID] >= natMaxActiveRequestsPerMember) {
+		return nil, false
+	}
+	s.total++
+	if !admin {
+		s.byMember[ownerID]++
+	}
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.total--
+		if admin {
+			return
+		}
+		if s.byMember[ownerID]--; s.byMember[ownerID] == 0 {
+			delete(s.byMember, ownerID)
+		}
+	}, true
+}
 
 func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	// Reject unsupported protocols before allocating streams or tasking the agent.
@@ -45,13 +83,12 @@ func ServeNAT(w http.ResponseWriter, r *http.Request, natConfig *model.NAT) {
 	var releaseOnce sync.Once
 	releaseControl := func() { releaseOnce.Do(release) }
 	defer releaseControl()
-	select {
-	case natActiveRequests <- struct{}{}:
-		defer func() { <-natActiveRequests }()
-	default:
+	releaseSlot, admitted := natActiveRequests.acquire(natConfig.UserID, admin)
+	if !admitted {
 		http.Error(w, "NAT capacity exceeded", http.StatusTooManyRequests)
 		return
 	}
+	defer releaseSlot()
 
 	capabilityLease, capabilityErr := prepareNATCapability(r, natConfig)
 	if capabilityErr != nil {
