@@ -4,9 +4,16 @@ on:
   push:
     branches: [master]
 
+permissions:
+  contents: read
+
 jobs:
+  # The @main action runs in a job of its own, with a read-only token and no
+  # secrets; only its htmlList output reaches the job that holds NAIBA_PAT.
   contributors:
     runs-on: ubuntu-latest
+    outputs:
+      htmlList: ${{ steps.contributors.outputs.htmlList }}
     steps:
       - name: Generate Contributors Images
         uses: jaywcjlove/github-action-contributors@main
@@ -18,12 +25,30 @@ jobs:
           truncate: 6
           avatarMargin: 8
 
-      - name: Modify htmlTable README.md
-        uses: jaywcjlove/github-action-modify-file-content@main
+  update-readme:
+    needs: contributors
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
         with:
-          message: update contributors[no ci]
-          token: ${{ secrets.NAIBA_PAT }}
-          openDelimiter: '<!--GAMFC_DELIMITER-->'
-          closeDelimiter: '<!--GAMFC_DELIMITER_END-->'
-          path: README.md
-          body: '${{steps.contributors.outputs.htmlList}}'
+          ref: ${{ github.ref_name }}
+          persist-credentials: false
+
+      - name: Modify htmlTable README.md
+        env:
+          HTML_LIST: ${{ needs.contributors.outputs.htmlList }}
+          NAIBA_PAT: ${{ secrets.NAIBA_PAT }}
+        run: |
+          if [ -z "$HTML_LIST" ]; then
+            echo "::error::empty contributors list, README.md left untouched"
+            exit 1
+          fi
+          perl -0pi -e 's/(<!--GAMFC_DELIMITER-->).*?(<!--GAMFC_DELIMITER_END-->)/$1$ENV{HTML_LIST}$2/gs' README.md
+          if git diff --quiet -- README.md; then
+            echo "README.md is up to date"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git commit -m "update contributors[no ci]" -- README.md
+          git push "https://x-access-token:${NAIBA_PAT}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
