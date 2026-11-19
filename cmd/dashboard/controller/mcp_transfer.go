@@ -338,6 +338,9 @@ func handleFsUploadURL(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := decodeToolArgs(raw, &args); err != nil {
 		return nil, err
 	}
+	if len(args.Mode) > maxFsOptionLen {
+		return nil, errMCPInvalidArgs("mode too long")
+	}
 	if args.IfMatchSHA256 != "" {
 		if _, decErr := hex.DecodeString(args.IfMatchSHA256); decErr != nil || len(args.IfMatchSHA256) != 64 {
 			return nil, errMCPInvalidArgs("if_match_sha256 must be 64 hex chars")

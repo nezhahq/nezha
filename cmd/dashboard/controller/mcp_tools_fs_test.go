@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -165,4 +166,56 @@ func TestMCPFs_PATServerWhitelistFiltersFs(t *testing.T) {
 	_, tcr := decodeRPC(w)
 	require.True(t, tcr.IsError)
 	require.Contains(t, tcr.Content[0].Text, "permission denied")
+}
+
+// fs.* and server.exec arguments are re-encoded into Task.Data, so their size
+// must be bounded before CallAgent, like fs.download_url / fs.upload_url already
+// bound the path (fs.upload_url keeps its mode in the transfer entry and forwards
+// it the same way). Server 7 has no task stream: a call that got past the bounds
+// would answer "agent offline" instead.
+func TestMCPAgentCall_OversizedArgumentsRejectedBeforeDispatch(t *testing.T) {
+	cleanup, uid := setupMCPTest(t)
+	defer cleanup()
+
+	longPath := strings.Repeat("<", maxTransferPathLen+1)
+	longOption := strings.Repeat("<", maxFsOptionLen+1)
+	bulk := strings.Repeat("<", mcpMaxInlineArgBytes+1)
+	emptyArgs := make([]string, mcpMaxInlineArgBytes+1)
+	cases := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"fs.list", map[string]any{"server_id": 7, "path": longPath}, "path too long"},
+		{"fs.read", map[string]any{"server_id": 7, "path": longPath}, "path too long"},
+		{"fs.read", map[string]any{"server_id": 7, "path": "/tmp/x", "encoding": longOption}, "encoding too long"},
+		{"fs.write", map[string]any{"server_id": 7, "path": longPath, "content": "x"}, "path too long"},
+		{"fs.write", map[string]any{"server_id": 7, "path": "/tmp/x", "content": bulk}, "content too large"},
+		{"fs.write", map[string]any{"server_id": 7, "path": "/tmp/x", "content": "x", "encoding": longOption}, "encoding too long"},
+		{"fs.write", map[string]any{"server_id": 7, "path": "/tmp/x", "content": "x", "mode": longOption}, "mode too long"},
+		{"fs.delete", map[string]any{"server_id": 7, "path": longPath}, "path too long"},
+		{"fs.upload_url", map[string]any{"server_id": 7, "path": "/tmp/x", "mode": longOption}, "mode too long"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": bulk}, "too large"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "cwd": bulk}, "too large"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "stdin": bulk}, "too large"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "args": []string{bulk}}, "too large"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "args": emptyArgs}, "too large"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "env": map[string]string{"K": bulk}}, "too large"},
+		// Arguments within the bounds still reach the agent call.
+		{"fs.list", map[string]any{"server_id": 7, "path": strings.Repeat("a", maxTransferPathLen)}, "agent offline"},
+		{"fs.write", map[string]any{"server_id": 7, "path": "/tmp/x", "content": bulk[1:]}, "agent offline"},
+		{"server.exec", map[string]any{"server_id": 7, "cmd": "sh", "stdin": bulk[3:]}, "agent offline"},
+	}
+	tok, _ := mkToken(t, uid, []string{"nezha:server:*"}, nil)
+	for _, tc := range cases {
+		c, w := mcpCallCtx(t, tok, uid, jsonRPCRequest{
+			JSONRPC: "2.0", ID: json.RawMessage("1"), Method: "tools/call",
+			Params: jsonObj(t, toolCallParams{Name: tc.tool, Arguments: jsonRaw(tc.args)}),
+		})
+		mcpEndpoint(c)
+		_, tcr := decodeRPC(w)
+		require.NotNil(t, tcr, tc.tool)
+		require.True(t, tcr.IsError, tc.tool)
+		require.Contains(t, tcr.Content[0].Text, tc.want, tc.tool)
+	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,6 +110,25 @@ func TestCallAgent_HappyPath_DelivlersResultByTaskID(t *testing.T) {
 	}
 	if got.Stdout != "hello" {
 		t.Fatalf("payload not propagated, got %+v", got)
+	}
+}
+
+// A Task larger than the agent's gRPC receive limit must not be sent: escaping
+// alone can grow accepted arguments past it.
+func TestCallAgent_RejectsOversizedTaskBeforeSend(t *testing.T) {
+	stream := newFakeStream()
+	cleanup := installFakeServer(t, 4500, stream)
+	defer cleanup()
+
+	content := strings.Repeat("<", maxMCPTaskDataBytes/6+1)
+	_, err := CallAgent(context.Background(), 4500, model.TaskTypeFsWrite, model.FsWriteRequest{Path: "/x", Content: content}, time.Second)
+	if !errors.Is(err, ErrMCPTaskTooLarge) {
+		t.Fatalf("expected ErrMCPTaskTooLarge, got %v", err)
+	}
+	select {
+	case <-stream.sent:
+		t.Fatal("oversized task must not reach the agent stream")
+	default:
 	}
 }
 

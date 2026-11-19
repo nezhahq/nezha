@@ -90,6 +90,9 @@ func handleServerExec(c *gin.Context, raw json.RawMessage) (any, error) {
 	if args.Cmd == "" {
 		return nil, errMCPInvalidArgs("cmd required")
 	}
+	if execInputSize(&args) > mcpMaxInlineArgBytes {
+		return nil, errMCPInvalidArgs("exec input too large: cmd, args, cwd, env and stdin are limited to 1MiB in total")
+	}
 
 	req := model.ExecRequest{
 		Cmd:            args.Cmd,
@@ -118,6 +121,20 @@ func handleServerExec(c *gin.Context, raw json.RawMessage) (any, error) {
 		return nil, &execToolError{mcpError: mcpError{Code: model.MCPOutcomeAgentError, Msg: res.Error}, result: res}
 	}
 	return res, nil
+}
+
+// execInputSize is the size of everything server.exec forwards to the agent.
+// Each args / env element counts at least one byte so that a long list of
+// empty strings is bounded as well.
+func execInputSize(args *execArgs) int {
+	size := len(args.Cmd) + len(args.Cwd) + len(args.Stdin)
+	for _, arg := range args.Args {
+		size += len(arg) + 1
+	}
+	for key, value := range args.Env {
+		size += len(key) + len(value) + 1
+	}
+	return size
 }
 
 type execToolError struct {

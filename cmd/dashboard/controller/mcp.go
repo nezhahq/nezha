@@ -82,6 +82,14 @@ const (
 	mcpMaxEchoBytes      = 256
 )
 
+// mcpMaxInlineArgBytes bounds the bulk arguments a tool forwards to an agent
+// inline (fs.write content; server.exec cmd, args, cwd, env and stdin). The
+// envelope cap above is not enough for them: rpc.CallAgent re-encodes the
+// arguments into Task.Data (json.Marshal writes <, > and & as six bytes each)
+// and the gRPC layer copies the Task again, so every byte accepted here is
+// held many times over. Larger payloads go through fs.upload_url, which streams.
+const mcpMaxInlineArgBytes = 1024 * 1024
+
 // --- MCP types ---
 
 // mcpServerInfo MCP initialize 响应的 serverInfo 字段。
@@ -463,6 +471,9 @@ func classifyToolError(err error) (code, msg string) {
 		// kill switch 触发的中断必须独立成 outcome，避免审计/SIEM 把
 		// “管理员关了 MCP”误报成 agent 故障；错误文本透传原始原因。
 		return model.MCPOutcomeMCPDisabled, err.Error()
+	}
+	if errors.Is(err, rpc.ErrMCPTaskTooLarge) {
+		return model.MCPOutcomeInvalidArgs, err.Error()
 	}
 	return model.MCPOutcomeAgentError, err.Error()
 }

@@ -76,6 +76,17 @@ func mcpKillSwitchObserver() func() bool {
 	return disarmedKillSwitch
 }
 
+// maxMCPTaskDataBytes keeps an MCP Task below the 4 MiB gRPC message limit
+// (grpc-go's default receive limit). json.Marshal can grow the params up to
+// six-fold (HTML and control character escapes), and a peer with that limit
+// fails its whole task stream on a larger message instead of answering it, so
+// such a Task is never sent.
+const maxMCPTaskDataBytes = 4*1024*1024 - 64*1024
+
+// ErrMCPTaskTooLarge is returned by CallAgent when the encoded params exceed
+// maxMCPTaskDataBytes.
+var ErrMCPTaskTooLarge = errors.New("arguments too large to send to the agent")
+
 // allocateMCPTaskID 分配下一个 MCP 用的 task ID。
 // 取 1<<32 起步以与可能存在的 cron/transfer 等已有 ID 空间错开（cron.id 由
 // DB 自增，常量级，不会触及 1<<32）。
@@ -96,6 +107,7 @@ func allocateMCPTaskID() uint64 {
 //   - agent 回包 successful=false → 把 result.Data 当错误字符串返回
 //   - CancelAllMCPInflight 期间被中断 → ErrMCPDisabled
 //   - 等待回包期间 server 被转移，或调用方已失去控制权 → 控制权校验错误（回包丢弃）
+//   - 编码后的 params 超过 maxMCPTaskDataBytes → ErrMCPTaskTooLarge（不下发）
 //   - 任何 send 失败、序列化失败 → 原始 error
 //
 // 返回的 raw JSON 是 agent 端 TaskResult.Data 的原文。
@@ -128,6 +140,9 @@ func CallAgent(ctx context.Context, serverID uint64, taskType uint64, params any
 	body, err := json.Marshal(params)
 	if err != nil {
 		return nil, err
+	}
+	if len(body) > maxMCPTaskDataBytes {
+		return nil, ErrMCPTaskTooLarge
 	}
 
 	taskID := allocateMCPTaskID()

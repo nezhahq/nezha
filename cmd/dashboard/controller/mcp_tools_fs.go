@@ -14,6 +14,11 @@ import (
 
 const fsCallTimeout = 30 * time.Second
 
+// maxFsOptionLen bounds the short option strings of fs.read / fs.write /
+// fs.upload_url (encoding name, octal mode), which are forwarded to the agent
+// like the path.
+const maxFsOptionLen = 16
+
 func fsEntrySchema() map[string]any {
 	return map[string]any{
 		"type": "object",
@@ -87,7 +92,7 @@ func init() {
 
 	registerMCPTool(&mcpTool{
 		Name:        "fs.write",
-		Description: "Atomic write to a file. Supports utf8 / base64 content, optional sha256 optimistic lock, create_dirs.",
+		Description: "Atomic write to a file. Supports utf8 / base64 content (max 1MiB inline; use fs.upload_url for larger files), optional sha256 optimistic lock, create_dirs.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -155,8 +160,8 @@ func handleFsList(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := requireAgentSupportsMCP(srv); err != nil {
 		return nil, err
 	}
-	if args.Path == "" {
-		return nil, errMCPInvalidArgs("path required")
+	if err := validateTransferPath(args.Path); err != nil {
+		return nil, err
 	}
 	out, err := rpc.CallAgent(c.Request.Context(), args.ServerID, model.TaskTypeFsList,
 		model.FsListRequest{Path: args.Path, ShowHidden: args.ShowHidden}, fsCallTimeout)
@@ -193,14 +198,17 @@ func handleFsRead(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := requireAgentSupportsMCP(srv); err != nil {
 		return nil, err
 	}
-	if args.Path == "" {
-		return nil, errMCPInvalidArgs("path required")
+	if err := validateTransferPath(args.Path); err != nil {
+		return nil, err
 	}
 	if args.Offset < 0 {
 		return nil, errMCPInvalidArgs("offset must be >= 0")
 	}
 	if args.Length < 0 {
 		return nil, errMCPInvalidArgs("length must be >= 0")
+	}
+	if len(args.Encoding) > maxFsOptionLen {
+		return nil, errMCPInvalidArgs("encoding too long")
 	}
 	out, err := rpc.CallAgent(c.Request.Context(), args.ServerID, model.TaskTypeFsRead,
 		model.FsReadRequest{
@@ -244,8 +252,17 @@ func handleFsWrite(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := requireAgentSupportsMCP(srv); err != nil {
 		return nil, err
 	}
-	if args.Path == "" {
-		return nil, errMCPInvalidArgs("path required")
+	if err := validateTransferPath(args.Path); err != nil {
+		return nil, err
+	}
+	if len(args.Content) > mcpMaxInlineArgBytes {
+		return nil, errMCPInvalidArgs("content too large; use fs.upload_url")
+	}
+	if len(args.Encoding) > maxFsOptionLen {
+		return nil, errMCPInvalidArgs("encoding too long")
+	}
+	if len(args.Mode) > maxFsOptionLen {
+		return nil, errMCPInvalidArgs("mode too long")
 	}
 	if args.IfMatchSHA256 != "" {
 		if _, decErr := hex.DecodeString(args.IfMatchSHA256); decErr != nil || len(args.IfMatchSHA256) != 64 {
@@ -292,8 +309,8 @@ func handleFsDelete(c *gin.Context, raw json.RawMessage) (any, error) {
 	if err := requireAgentSupportsMCP(srv); err != nil {
 		return nil, err
 	}
-	if args.Path == "" {
-		return nil, errMCPInvalidArgs("path required")
+	if err := validateTransferPath(args.Path); err != nil {
+		return nil, err
 	}
 	out, err := rpc.CallAgent(c.Request.Context(), args.ServerID, model.TaskTypeFsDelete,
 		model.FsDeleteRequest{Path: args.Path, Recursive: args.Recursive}, fsCallTimeout)
