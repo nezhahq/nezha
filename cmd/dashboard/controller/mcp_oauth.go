@@ -32,6 +32,7 @@ const (
 	mcpOAuthCodeLifetime    = 5 * time.Minute
 	mcpOAuthGrantLifetime   = 30 * 24 * time.Hour
 	mcpOAuthAccessLifetime  = time.Hour
+	mcpOAuthClientLimit     = 4096
 	mcpOAuthGrantContextKey = "mcp_oauth_grant"
 )
 
@@ -269,12 +270,29 @@ func mcpOAuthRegister(c *gin.Context) {
 		if err := tx.Where("disabled = ? AND last_used_at < ?", false, time.Now().Add(-90*24*time.Hour)).Delete(&model.MCPOAuthClient{}).Error; err != nil {
 			return err
 		}
+		// Disabled records are administrator decisions that are never pruned;
+		// counting them would let each one consume anonymous capacity forever.
 		var count int64
-		if err := tx.Model(&model.MCPOAuthClient{}).Count(&count).Error; err != nil {
+		if err := tx.Model(&model.MCPOAuthClient{}).Where("disabled = ?", false).Count(&count).Error; err != nil {
 			return err
 		}
-		if count >= 4096 {
-			return errors.New("client capacity reached")
+		if excess := int(count-mcpOAuthClientLimit) + 1; excess > 0 {
+			// Refusing at capacity would let throwaway registrations lock every new
+			// client out until the prune above. Recycle the least recently used
+			// registrations instead, never one that still has a grant or code.
+			var idle []string
+			if err := tx.Model(&model.MCPOAuthClient{}).Where("disabled = ?", false).
+				Where("id NOT IN (?)", tx.Model(&model.MCPOAuthGrant{}).Select("client_id")).
+				Where("id NOT IN (?)", tx.Model(&model.MCPOAuthCode{}).Select("client_id")).
+				Order("last_used_at ASC, id ASC").Limit(excess).Pluck("id", &idle).Error; err != nil {
+				return err
+			}
+			if len(idle) < excess {
+				return errors.New("client capacity reached")
+			}
+			if err := tx.Where("id IN ?", idle).Delete(&model.MCPOAuthClient{}).Error; err != nil {
+				return err
+			}
 		}
 		return tx.Create(&client).Error
 	})

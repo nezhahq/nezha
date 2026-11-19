@@ -508,6 +508,70 @@ func TestMCPOAuthClientRegistrationAndAuthentication(t *testing.T) {
 	}
 }
 
+// Registrations that are never used, or that an administrator disabled, must
+// not close registration to new clients once the client table is full.
+func TestMCPOAuthRegistrationRecyclesIdleClientsAtCapacity(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	s.tokens(t) // the client registered by the setup now owns a grant
+	register := func(name string) int {
+		return s.request(t, "POST", mcpOAuthPath+"/register", map[string]any{"client_name": name, "redirect_uris": []string{"https://client.example/callback"}, "token_endpoint_auth_method": "none"}, false).Code
+	}
+	stored := func(id string) bool {
+		var count int64
+		require.NoError(t, singleton.DB.Model(&model.MCPOAuthClient{}).Where("id = ?", id).Count(&count).Error)
+		return count == 1
+	}
+	enabled := func() int64 {
+		var count int64
+		require.NoError(t, singleton.DB.Model(&model.MCPOAuthClient{}).Where("disabled = ?", false).Count(&count).Error)
+		return count
+	}
+	now := time.Now()
+	// The protected clients are the least recently used ones, so only their
+	// grant, code or disabled state keeps them from being recycled first.
+	require.NoError(t, singleton.DB.Model(&model.MCPOAuthClient{}).Where("id = ?", s.clientID).Update("last_used_at", now.Add(-80*24*time.Hour)).Error)
+	clients := []model.MCPOAuthClient{
+		{ID: "pending", RedirectURIs: "[]", AuthMethod: "none", LastUsedAt: now.Add(-80 * 24 * time.Hour)},
+		{ID: "disabled", RedirectURIs: "[]", AuthMethod: "none", LastUsedAt: now.Add(-80 * 24 * time.Hour), Disabled: true},
+	}
+	for i := len(clients); i < mcpOAuthClientLimit-1; i++ {
+		clients = append(clients, model.MCPOAuthClient{ID: "idle-" + strconv.Itoa(i), RedirectURIs: "[]", AuthMethod: "none", LastUsedAt: now.Add(-time.Duration(i) * time.Minute)})
+	}
+	oldest, secondOldest := clients[len(clients)-1].ID, clients[len(clients)-2].ID
+	require.NoError(t, singleton.DB.CreateInBatches(clients, 500).Error)
+	require.NoError(t, singleton.DB.Create(&model.MCPOAuthCode{Hash: "pending-code", ClientID: "pending", ExpiresAt: now.Add(mcpOAuthCodeLifetime)}).Error)
+
+	// The disabled record does not take up capacity, so the last free slot is used.
+	require.EqualValues(t, mcpOAuthClientLimit-1, enabled())
+	require.Equal(t, http.StatusCreated, register("fills the last slot"))
+	require.True(t, stored(oldest))
+
+	for _, evicted := range []string{oldest, secondOldest} {
+		require.Equal(t, http.StatusCreated, register("new client while the table is full"))
+		require.False(t, stored(evicted), "the least recently used idle registration is recycled")
+		require.EqualValues(t, mcpOAuthClientLimit, enabled())
+	}
+	for _, kept := range []string{s.clientID, "pending", "disabled"} {
+		require.True(t, stored(kept), kept)
+	}
+
+	// Re-enabling a client must not raise the bound for good.
+	require.NoError(t, singleton.DB.Model(&model.MCPOAuthClient{}).Where("id = ?", "disabled").Update("disabled", false).Error)
+	require.Equal(t, http.StatusCreated, register("new client after a client was re-enabled"))
+	require.EqualValues(t, mcpOAuthClientLimit, enabled())
+
+	// Capacity is still a hard bound when every registration is in use.
+	var idle []string
+	require.NoError(t, singleton.DB.Model(&model.MCPOAuthClient{}).Where("disabled = ? AND id NOT IN ?", false, []string{s.clientID, "pending"}).Pluck("id", &idle).Error)
+	grants := make([]model.MCPOAuthGrant, 0, len(idle))
+	for i, id := range idle {
+		grants = append(grants, model.MCPOAuthGrant{ID: "grant-" + strconv.Itoa(i), APITokenID: uint64(1000000 + i), ClientID: id, AccessHash: "access-" + strconv.Itoa(i), ExpiresAt: now.Add(mcpOAuthGrantLifetime)})
+	}
+	require.NoError(t, singleton.DB.CreateInBatches(grants, 500).Error)
+	require.Equal(t, http.StatusServiceUnavailable, register("no registration can be recycled"))
+	require.EqualValues(t, mcpOAuthClientLimit, enabled())
+}
+
 func TestMCPOAuthExpiredAndCrossClientGrants(t *testing.T) {
 	s := setupMCPOAuthSession(t)
 	var user model.User
