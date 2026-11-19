@@ -273,3 +273,80 @@ func TestUpdateServerGroupRejectsPATWhitelistOnEmptyGroup(t *testing.T) {
 	require.NoError(t, singleton.DB.Model(&model.ServerGroupServer{}).Where("server_group_id = ?", 11).Count(&members).Error)
 	assert.Zero(t, members, "group 11 must stay empty after the refused PAT update")
 }
+
+func serversOfGroup(items []*model.ServerGroupResponseItem, groupID uint64) ([]uint64, bool) {
+	for _, it := range items {
+		if it.Group.ID == groupID {
+			return it.Servers, true
+		}
+	}
+	return nil, false
+}
+
+// A membership row is written under the writer's authority over the server
+// (CheckPermission). Once the server is transferred away the row must stop
+// counting: otherwise the former owner keeps the server under their own group
+// label, which the new owner can neither see in the dashboard nor edit.
+func TestListServerGroupDropsMembershipAfterServerChangedOwner(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	singleton.UserLock.Lock()
+	singleton.UserInfoMap[201] = model.UserInfo{Role: model.RoleMember}
+	singleton.UserLock.Unlock()
+
+	// server 3 was grouped by member 200 and by the admin, then moved to member 201.
+	require.NoError(t, singleton.DB.Create(&model.Server{Common: model.Common{ID: 3, UserID: 201}, Name: "moved", UUID: "moved"}).Error)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroup{Common: model.Common{ID: 12, UserID: 200}, Name: "former owner group"}).Error)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{Common: model.Common{UserID: 200}, ServerGroupId: 12, ServerId: 3}).Error)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{Common: model.Common{UserID: 1}, ServerGroupId: 10, ServerId: 3}).Error)
+	singleton.ServerShared = singleton.NewServerClass()
+
+	guestItems, err := listServerGroup(newServerGroupCtx(nil))
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"Public Group"}, collectGroupNames(guestItems),
+		"guests must not see the server under its former owner's group")
+	adminGroupServers, _ := serversOfGroup(guestItems, 10)
+	assert.ElementsMatch(t, []uint64{1, 3}, adminGroupServers, "a membership written by an admin stays in force")
+
+	for _, viewer := range []*model.User{
+		{Common: model.Common{ID: 200}, Role: model.RoleMember},
+		{Common: model.Common{ID: 1}, Role: model.RoleAdmin},
+	} {
+		items, err := listServerGroup(newServerGroupCtx(viewer))
+		require.NoError(t, err)
+		servers, found := serversOfGroup(items, 12)
+		assert.True(t, found, "the group itself stays listed for its owner and for admins")
+		assert.Empty(t, servers, "viewer %d must not get the transferred server in the former owner's group", viewer.ID)
+	}
+
+	// Handing the server back (cancelled transfer) puts the membership in force again.
+	moved, _ := singleton.ServerShared.Get(3)
+	moved.SetUserID(200)
+	items, err := listServerGroup(newServerGroupCtx(&model.User{Common: model.Common{ID: 200}, Role: model.RoleMember}))
+	require.NoError(t, err)
+	servers, _ := serversOfGroup(items, 12)
+	assert.ElementsMatch(t, []uint64{3}, servers)
+}
+
+// The HideForGuest check must not be guest-only: a member who does not own a
+// hidden server may not view it anywhere else (userCanViewServer), so their
+// own group listing must not name it either.
+func TestListServerGroupMemberDoesNotSeeHiddenForeignServer(t *testing.T) {
+	setupServerGroupVisibilityFixture(t)
+
+	// The admin put their own servers 1 (public) and 2 (hidden) into member 200's group.
+	require.NoError(t, singleton.DB.Create(&model.ServerGroup{Common: model.Common{ID: 12, UserID: 200}, Name: "member group"}).Error)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{Common: model.Common{UserID: 1}, ServerGroupId: 12, ServerId: 1}).Error)
+	require.NoError(t, singleton.DB.Create(&model.ServerGroupServer{Common: model.Common{UserID: 1}, ServerGroupId: 12, ServerId: 2}).Error)
+
+	items, err := listServerGroup(newServerGroupCtx(&model.User{Common: model.Common{ID: 200}, Role: model.RoleMember}))
+	require.NoError(t, err)
+	servers, found := serversOfGroup(items, 12)
+	require.True(t, found)
+	assert.ElementsMatch(t, []uint64{1}, servers, "a hidden server of another user must be withheld from a member")
+
+	items, err = listServerGroup(newServerGroupCtx(&model.User{Common: model.Common{ID: 1}, Role: model.RoleAdmin}))
+	require.NoError(t, err)
+	servers, _ = serversOfGroup(items, 12)
+	assert.ElementsMatch(t, []uint64{1, 2}, servers, "admin keeps full visibility")
+}
