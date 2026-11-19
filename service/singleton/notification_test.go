@@ -352,6 +352,61 @@ func TestServiceStateCancelStopsOldConfiguration(t *testing.T) {
 	}
 }
 
+func TestServiceStateCancelStopsWorkerWaitingForDeliveryKey(t *testing.T) {
+	oldCache := Cache
+	Cache = cache.New(time.Minute, time.Minute)
+	t.Cleanup(func() { Cache = oldCache })
+	n := &model.Notification{Common: model.Common{ID: 545}, Name: "hook"}
+	nc := newNotificationClassWithItems(n)
+	nc.UpdateGroup(&model.NotificationGroup{Common: model.Common{ID: 546}, Name: "stalled-group"}, []uint64{n.ID})
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	nc.sendForTest = func(*model.Notification, string, *model.Server) error {
+		if calls.Add(1) == 1 {
+			close(entered)
+			<-release
+		}
+		return errors.New("stalled webhook gave up")
+	}
+	worker := func() *orderedServiceDelivery {
+		nc.deliveryMu.Lock()
+		defer nc.deliveryMu.Unlock()
+		return nc.serviceDelivery[547]
+	}
+	nc.SendServiceState(547, 546, "down", "same-event")
+	<-entered
+	first := worker()
+	nc.CancelServiceState(547)
+	// The monitor is still down after the edit, so the next report starts a
+	// second worker that queues behind the first one's delivery key.
+	nc.SendServiceState(547, 546, "still down", "same-event")
+	second := worker()
+	deadline := time.Now().Add(time.Second)
+	for waiting := false; !waiting; {
+		if time.Now().After(deadline) {
+			t.Fatal("second worker did not reach the delivery key")
+		}
+		nc.deliveryMu.Lock()
+		for _, key := range nc.deliveryKeys {
+			waiting = key.refs == 2
+		}
+		nc.deliveryMu.Unlock()
+	}
+	nc.CancelServiceState(547)
+	close(release)
+	for _, state := range []*orderedServiceDelivery{first, second} {
+		select {
+		case <-state.done:
+		case <-time.After(time.Second):
+			t.Fatal("canceled worker did not exit")
+		}
+	}
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("canceled worker still delivered: %d requests, want 1", got)
+	}
+}
+
 func TestServiceUpdateCancelsOldRecipientRetry(t *testing.T) {
 	ss := newServiceMonitorSecurityHarness(t)
 	service := &model.Service{

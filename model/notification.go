@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -111,6 +112,12 @@ func (n *Notification) setRequestHeader(req *http.Request) error {
 }
 
 func (ns *NotificationServerBundle) Send(message string) error {
+	return ns.SendContext(context.Background(), message)
+}
+
+// SendContext is Send with a context that aborts the delivery, including a
+// request that is already waiting for the webhook, as soon as it is canceled.
+func (ns *NotificationServerBundle) SendContext(ctx context.Context, message string) error {
 	n := ns.Notification
 	verifyTLS := n.VerifyTLS != nil && *n.VerifyTLS
 
@@ -125,12 +132,12 @@ func (ns *NotificationServerBundle) Send(message string) error {
 	}
 
 	reqURL := ns.reqURL(message)
-	client, err := newNotificationHTTPClient(reqURL, verifyTLS)
+	client, err := newNotificationHTTPClient(ctx, reqURL, verifyTLS)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequest(reqMethod, reqURL, strings.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, reqMethod, reqURL, strings.NewReader(reqBody))
 	if err != nil {
 		return err
 	}
@@ -163,8 +170,8 @@ func notificationResponseError(resp *http.Response) error {
 	return fmt.Errorf("%d@%s", resp.StatusCode, resp.Status)
 }
 
-func newNotificationHTTPClient(rawURL string, verifyTLS bool) (*http.Client, error) {
-	return utils.NewRestrictedHTTPClient(rawURL, !verifyTLS)
+func newNotificationHTTPClient(ctx context.Context, rawURL string, verifyTLS bool) (*http.Client, error) {
+	return utils.NewRestrictedHTTPClientContext(ctx, rawURL, !verifyTLS)
 }
 
 // replaceParamInString 替换字符串中的占位符

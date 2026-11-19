@@ -88,7 +88,13 @@ func httpClient(conf _httpClient) *http.Client {
 }
 
 func NewRestrictedHTTPClient(rawURL string, skipVerifyTLS bool) (*http.Client, error) {
-	parsedURL, ip, err := ResolveAllowedHTTPURL(rawURL)
+	return NewRestrictedHTTPClientContext(context.Background(), rawURL, skipVerifyTLS)
+}
+
+// NewRestrictedHTTPClientContext is NewRestrictedHTTPClient with a context
+// that bounds the DNS lookup made while vetting the target.
+func NewRestrictedHTTPClientContext(ctx context.Context, rawURL string, skipVerifyTLS bool) (*http.Client, error) {
+	parsedURL, ip, err := resolveAllowedHTTPURL(ctx, rawURL)
 	if err != nil {
 		return nil, err
 	}
@@ -126,6 +132,10 @@ func buildRestrictedHTTPClient(parsedURL *url.URL, ip net.IP, skipVerifyTLS bool
 }
 
 func ResolveAllowedHTTPURL(rawURL string) (*url.URL, net.IP, error) {
+	return resolveAllowedHTTPURL(context.Background(), rawURL)
+}
+
+func resolveAllowedHTTPURL(ctx context.Context, rawURL string) (*url.URL, net.IP, error) {
 	parsedURL, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, nil, err
@@ -145,7 +155,7 @@ func ResolveAllowedHTTPURL(rawURL string) (*url.URL, net.IP, error) {
 		return parsedURL, ip, nil
 	}
 
-	ips, err := net.LookupIP(host)
+	ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 	if err != nil {
 		return nil, nil, err
 	}

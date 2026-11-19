@@ -1,6 +1,8 @@
 package model
 
 import (
+	"context"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -274,6 +276,18 @@ func TestNotificationSendRejectsLoopbackTarget(t *testing.T) {
 	}
 }
 
+func TestNotificationSendContextStopsWhenCanceled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	bundle := NotificationServerBundle{
+		Notification: &Notification{URL: "http://1.1.1.1/", RequestMethod: NotificationRequestMethodGET},
+		Loc:          time.Local,
+	}
+	if err := bundle.SendContext(ctx, "probe"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected the canceled context to end the request, got %v", err)
+	}
+}
+
 func TestNotificationTargetRejectsBlockedRanges(t *testing.T) {
 	cases := []string{
 		"http://0.0.0.0/",
@@ -350,7 +364,7 @@ func TestNotificationHTTPClientInvertsVerifyTLSFlag(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			client, err := newNotificationHTTPClient("https://1.1.1.1/webhook", tc.verifyTLS)
+			client, err := newNotificationHTTPClient(context.Background(), "https://1.1.1.1/webhook", tc.verifyTLS)
 			if err != nil {
 				t.Fatalf("expected client construction: %v", err)
 			}

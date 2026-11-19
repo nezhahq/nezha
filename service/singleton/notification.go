@@ -2,6 +2,7 @@ package singleton
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"log"
 	"slices"
@@ -44,7 +45,8 @@ type orderedServiceDelivery struct {
 	current serviceDeliveryRequest
 	pending *serviceDeliveryRequest
 	update  chan struct{}
-	cancel  chan struct{}
+	ctx     context.Context
+	cancel  context.CancelFunc
 	done    chan struct{}
 }
 
@@ -59,7 +61,8 @@ func (c *NotificationClass) SendServiceState(serviceID, groupID uint64, desc, la
 	}
 	state := c.serviceDelivery[serviceID]
 	if state == nil {
-		state = &orderedServiceDelivery{current: req, update: make(chan struct{}, 1), cancel: make(chan struct{}), done: make(chan struct{})}
+		ctx, cancel := context.WithCancel(context.Background())
+		state = &orderedServiceDelivery{current: req, update: make(chan struct{}, 1), ctx: ctx, cancel: cancel, done: make(chan struct{})}
 		c.serviceDelivery[serviceID] = state
 		c.deliveryMu.Unlock()
 		go c.runServiceDelivery(serviceID, state)
@@ -81,14 +84,13 @@ func (c *NotificationClass) SendServiceState(serviceID, groupID uint64, desc, la
 
 func (c *NotificationClass) runServiceDelivery(serviceID uint64, state *orderedServiceDelivery) {
 	defer close(state.done)
+	defer state.cancel()
 	delay := 30 * time.Second
 	for {
-		select {
-		case <-state.cancel:
+		if state.ctx.Err() != nil {
 			return
-		default:
 		}
-		delivered := c.SendNotification(state.current.groupID, state.current.desc, state.current.label)
+		delivered := c.sendNotification(state.ctx, state.current.groupID, state.current.desc, state.current.label)
 		c.deliveryMu.Lock()
 		// Do not advance to a later phase until every recipient has received the
 		// current one. Otherwise a failed incident can be discarded as soon as a
@@ -115,7 +117,7 @@ func (c *NotificationClass) runServiceDelivery(serviceID uint64, state *orderedS
 		c.deliveryMu.Unlock()
 		timer := time.NewTimer(delay)
 		select {
-		case <-state.cancel:
+		case <-state.ctx.Done():
 			timer.Stop()
 			return
 		case <-state.update:
@@ -126,13 +128,17 @@ func (c *NotificationClass) runServiceDelivery(serviceID uint64, state *orderedS
 	}
 }
 
+// CancelServiceState stops the delivery worker of a service. Canceling the
+// context also ends a webhook request in flight and a wait for a delivery key:
+// the entry is removed here, so a worker left running would no longer be
+// counted and the next report would start another one beside it.
 func (c *NotificationClass) CancelServiceState(serviceID uint64) {
 	if c == nil {
 		return
 	}
 	c.deliveryMu.Lock()
 	if state := c.serviceDelivery[serviceID]; state != nil {
-		close(state.cancel)
+		state.cancel()
 		delete(c.serviceDelivery, serviceID)
 	}
 	c.deliveryMu.Unlock()
@@ -442,6 +448,10 @@ func notificationMethodMuteLabel(label string, id uint64) string {
 
 // SendNotification 向指定的通知方式组的所有通知方式发送通知
 func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc string, muteLabel string, ext ...*model.Server) bool {
+	return c.sendNotification(context.Background(), notificationGroupID, desc, muteLabel, ext...)
+}
+
+func (c *NotificationClass) sendNotification(ctx context.Context, notificationGroupID uint64, desc string, muteLabel string, ext ...*model.Server) bool {
 	fullMuteLabel := ""
 	if muteLabel != "" {
 		fullMuteLabel = NotificationMuteLabel.AppendNotificationGroupName(muteLabel, c.GetGroupName(notificationGroupID))
@@ -465,14 +475,14 @@ func (c *NotificationClass) SendNotification(notificationGroupID uint64, desc st
 		if len(ext) > 0 {
 			server = ext[0]
 		}
-		if !c.sendRecipient(n, desc, fullMuteLabel, server) {
+		if !c.sendRecipient(ctx, n, desc, fullMuteLabel, server) {
 			allDelivered = false
 		}
 	}
 	return allDelivered
 }
 
-func (c *NotificationClass) sendRecipient(n *model.Notification, desc, fullMuteLabel string, server *model.Server) bool {
+func (c *NotificationClass) sendRecipient(ctx context.Context, n *model.Notification, desc, fullMuteLabel string, server *model.Server) bool {
 	if n == nil {
 		return false
 	}
@@ -482,6 +492,9 @@ func (c *NotificationClass) sendRecipient(n *model.Notification, desc, fullMuteL
 	}
 	unlock := c.lockDeliveryKey(cacheKey)
 	defer unlock()
+	if ctx.Err() != nil {
+		return false // canceled while waiting for the key, or before this recipient
+	}
 	var generation uint64
 	if cacheKey != "" {
 		c.deliveryMu.Lock()
@@ -502,7 +515,7 @@ func (c *NotificationClass) sendRecipient(n *model.Notification, desc, fullMuteL
 	if c.sendForTest != nil {
 		err = c.sendForTest(n, desc, server)
 	} else {
-		err = (&model.NotificationServerBundle{Notification: n, Server: server, Loc: Loc}).Send(desc)
+		err = (&model.NotificationServerBundle{Notification: n, Server: server, Loc: Loc}).SendContext(ctx, desc)
 	}
 	if err != nil {
 		// Webhook errors can contain a credential-bearing request URL. Keep
