@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -572,6 +573,52 @@ func TestServiceSentinelWorkerHoldsResponseLockDuringTLSSideEffects(t *testing.T
 	ss.serviceResponseDataStoreLock.RUnlock()
 	if cachedCertificate != report.Data.Data {
 		t.Fatalf("expected TLS cache %q, got %q", report.Data.Data, cachedCertificate)
+	}
+}
+
+// The certificate text of an HTTPS probe result is Agent-controlled and only
+// its issuer and expiry are read. Neither the result nor the cached text it is
+// compared with may be split into one field per separator.
+func TestServiceSentinelTLSCertificateTextSplitIsBounded(t *testing.T) {
+	// Given
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "reporter"},
+	)
+	service := &model.Service{
+		Common:      model.Common{ID: 10, UserID: 1},
+		Name:        "tls-service",
+		Type:        model.TaskTypeHTTPGet,
+		Target:      "https://tls.example.invalid",
+		Duration:    3600,
+		Cover:       model.ServiceCoverIgnoreAll,
+		SkipServers: map[uint64]bool{1: true},
+	}
+	addServiceMonitorSecurityService(t, ss, service)
+	t.Cleanup(ss.Close)
+	const certificate = "issuer|2030-01-02 15:04:05 +0000 UTC"
+	long := serviceMonitorResult(1, service.ID, model.TaskTypeHTTPGet, true)
+	long.Data.Data = certificate + strings.Repeat("|", 1<<20)
+	short := serviceMonitorResult(1, service.ID, model.TaskTypeHTTPGet, true)
+	short.Data.Data = certificate
+
+	// When
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	ss.Dispatch(long)
+	ss.Dispatch(short)
+	ss.Close()
+	runtime.ReadMemStats(&after)
+
+	// Then
+	ss.serviceResponseDataStoreLock.RLock()
+	cachedCertificate := ss.tlsCertCache[service.ID]
+	ss.serviceResponseDataStoreLock.RUnlock()
+	if cachedCertificate != long.Data.Data {
+		t.Fatalf("expected the first certificate text to stay cached, got %d bytes", len(cachedCertificate))
+	}
+	// One string header per separator is 16 times the text, for each split.
+	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > uint64(len(long.Data.Data)) {
+		t.Fatalf("processing two results allocated %d bytes for a certificate text of %d bytes", allocated, len(long.Data.Data))
 	}
 }
 

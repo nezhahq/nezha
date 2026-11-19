@@ -947,7 +947,9 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 			// 清除网络错误静音缓存
 			NotificationShared.UnMuteNotification(cs.NotificationGroupID, NotificationMuteLabel.ServiceTLS(mh.GetId(), "network"))
 
-			var newCert = strings.Split(mh.Data, "|")
+			// 证书资料来自 Agent，只读取 "签发者|过期时间" 两个字段；
+			// 限制切分数量，避免为超长文本中的每个分隔符分配字段。
+			var newCert = strings.SplitN(mh.Data, "|", 3)
 			if len(newCert) > 1 {
 				enableNotify := cs.Notify
 				expiresNew, newErr := time.Parse("2006-01-02 15:04:05 -0700 MST", newCert[1])
@@ -961,7 +963,7 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 					ss.tlsCertCache[mh.GetId()] = mh.Data
 				}
 
-				oldCert := strings.Split(ss.tlsCertCache[mh.GetId()], "|")
+				oldCert := strings.SplitN(ss.tlsCertCache[mh.GetId()], "|", 3)
 				isCertChanged := false
 				expiresOld, oldErr := time.Parse("2006-01-02 15:04:05 -0700 MST", oldCert[1])
 				if oldErr != nil {
