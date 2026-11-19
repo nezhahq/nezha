@@ -37,6 +37,8 @@ var requestTypes = map[uint8]string{
 	methodPUT:    "PUT",
 }
 
+var errInvalidURL = errors.New("invalid webhook URL")
+
 // Internal use
 type Provider struct {
 	ipAddr     string
@@ -63,11 +65,11 @@ func (provider *Provider) SetRecords(ctx context.Context, zone string,
 			// by a single DNS resolution. Do not swap the client for utils.HttpClient.
 			req, client, err := provider.prepareRequest(ctx)
 			if err != nil {
-				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
+				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, withoutRequestURL(err))
 			}
 			resp, err := client.Do(req)
 			if err != nil {
-				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, err)
+				return nil, fmt.Errorf("failed to update a domain: %s. Cause by: %v", provider.domain, withoutRequestURL(err))
 			}
 			_, _ = io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
@@ -77,6 +79,23 @@ func (provider *Provider) SetRecords(ctx context.Context, zone string,
 	}
 
 	return recs, nil
+}
+
+// withoutRequestURL strips the request URL from net/url and net/http errors.
+// The webhook URL is a stored credential (tokens in path or query, with
+// #access_id# / #access_secret# already expanded) and the DDNS worker writes
+// the error returned by SetRecords to the dashboard log.
+func withoutRequestURL(err error) error {
+	var urlErr *url.Error
+	if !errors.As(err, &urlErr) {
+		return err
+	}
+	if urlErr.Op == "parse" {
+		// The cause quotes pieces of the URL as well (a bad escape, or part
+		// of an unescaped password taken for a port).
+		return errInvalidURL
+	}
+	return fmt.Errorf("%s: %w", urlErr.Op, urlErr.Err)
 }
 
 func (provider *Provider) prepareRequest(ctx context.Context) (*http.Request, *http.Client, error) {
