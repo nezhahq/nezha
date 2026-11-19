@@ -4,10 +4,13 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"iter"
 	"log"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/gin-gonic/gin"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
@@ -311,6 +314,22 @@ func NewNotificationClass() *NotificationClass {
 		groupList:     groupList,
 	}
 	return nc
+}
+
+// CheckBindPermission is strict for notification group bindings: unlike the
+// generic CheckPermission it refuses IDs the registry does not hold. A row that
+// is committed but not registered yet has no owner to compare against, and a
+// later database existence check must not turn it into an authorized binding.
+func (c *NotificationClass) CheckBindPermission(ctx *gin.Context, ids iter.Seq[uint64]) bool {
+	c.listMu.RLock()
+	defer c.listMu.RUnlock()
+	for id := range ids {
+		n, ok := c.list[id]
+		if !ok || !n.HasPermission(ctx) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *NotificationClass) Update(n *model.Notification) {

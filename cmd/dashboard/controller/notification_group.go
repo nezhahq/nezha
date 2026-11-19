@@ -74,7 +74,7 @@ func createNotificationGroup(c *gin.Context) (uint64, error) {
 	slices.Sort(ngf.Notifications)
 	ngf.Notifications = slices.Compact(ngf.Notifications)
 
-	if !singleton.NotificationShared.CheckPermission(c, slices.Values(ngf.Notifications)) {
+	if !singleton.NotificationShared.CheckBindPermission(c, slices.Values(ngf.Notifications)) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -143,7 +143,11 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 		return nil, err
 	}
 
-	if !singleton.NotificationShared.CheckPermission(c, slices.Values(ngf.Notifications)) {
+	// Compact removes adjacent duplicates only.
+	slices.Sort(ngf.Notifications)
+	ngf.Notifications = slices.Compact(ngf.Notifications)
+
+	if !singleton.NotificationShared.CheckBindPermission(c, slices.Values(ngf.Notifications)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -157,9 +161,6 @@ func updateNotificationGroup(c *gin.Context) (any, error) {
 	}
 
 	ngDB.Name = ngf.Name
-	// Compact removes adjacent duplicates only.
-	slices.Sort(ngf.Notifications)
-	ngf.Notifications = slices.Compact(ngf.Notifications)
 
 	var count int64
 	if err := singleton.DB.Model(&model.Notification{}).Where("id in (?)", ngf.Notifications).Count(&count).Error; err != nil {
