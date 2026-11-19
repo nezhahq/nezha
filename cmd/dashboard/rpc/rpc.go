@@ -2,6 +2,7 @@ package rpc
 
 import (
 	"net"
+	"net/http"
 
 	"google.golang.org/grpc"
 
@@ -25,7 +26,7 @@ func SetMCPKillSwitchObserver(fn func() bool) {
 	rpcService.SetMCPKillSwitchObserver(fn)
 }
 
-func ServeRPC() *grpc.Server {
+func ServeRPC() http.Handler {
 	// Streaming RPCs (RequestTask, IOStream) need the same real-IP + WAF
 	// gate as unary calls; without the stream interceptors authHandler.check
 	// sees an empty real IP, so brute-force BlockIP counters never key on a
@@ -40,5 +41,7 @@ func ServeRPC() *grpc.Server {
 	// ownership rotation (Register/revertTransition/OnServersDeleted).
 	singleton.ServerTransferStreamRevocationHook = rpcService.NezhaHandlerSingleton.RevokeStreamsForServer
 	proto.RegisterNezhaServiceServer(server, rpcService.NezhaHandlerSingleton)
-	return server
+	// Unary interceptors and handlers run only after the request message has
+	// arrived; gate unary calls at their headers like the streaming ones.
+	return admitUnaryAtHeaders(server, rpcService.NezhaHandlerSingleton.Auth.Check, unaryMessageTimeout)
 }

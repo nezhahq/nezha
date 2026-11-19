@@ -4,14 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
 	"net/netip"
+	"strconv"
+	"strings"
+	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
+	"google.golang.org/grpc/status"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/nezhahq/nezha/proto"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -91,4 +98,83 @@ func wafStream(srv any, ss grpc.ServerStream, info *grpc.StreamServerInfo, handl
 		return err
 	}
 	return handler(srv, ss)
+}
+
+// unaryMessageTimeout is how long an admitted unary call may take to deliver
+// its request message. An agent sends it right behind the headers.
+const unaryMessageTimeout = 30 * time.Second
+
+// admitUnaryAtHeaders applies the real-IP, WAF and agent-secret checks to a
+// unary call when its HTTP/2 headers arrive, which is when the stream
+// interceptors and stream handlers apply them to a streaming call.
+//
+// grpc-go runs unary interceptors and handlers only once it has received and
+// decoded the whole request message, and grpc.Server.ServeHTTP does not limit
+// how long a peer may take to send it. getRealIp, waf and the handlers' auth
+// check alone therefore never refuse a call whose message is withheld: it
+// stays parked, with its goroutines and read buffer, for as long as the peer
+// keeps the connection, whether or not the peer has a secret or is blocked.
+// Everything those checks look at is in the headers, so the call is decided
+// here; the interceptors still run afterwards and give the handler its real IP.
+func admitUnaryAtHeaders(next http.Handler, auth func(context.Context) (uint64, error), messageTimeout time.Duration) http.Handler {
+	unary := make(map[string]struct{}, len(proto.NezhaService_ServiceDesc.Methods))
+	for _, method := range proto.NezhaService_ServiceDesc.Methods {
+		unary["/"+proto.NezhaService_ServiceDesc.ServiceName+"/"+method.MethodName] = struct{}{}
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := unary[r.URL.Path]; !ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		ctx, err := ctxWithRealIP(headerContext(r))
+		if err == nil {
+			realip, _ := ctx.Value(model.CtxKeyRealIP{}).(string)
+			err = model.CheckIP(singleton.DB, realip)
+		}
+		if err == nil {
+			_, err = auth(ctx)
+		}
+		if err != nil {
+			refuseCall(w, err)
+			return
+		}
+		// Only reads of the request body are bound; a message that is
+		// complete by then is not affected.
+		_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(messageTimeout))
+		next.ServeHTTP(w, r)
+	})
+}
+
+// headerContext is the context grpc.Server.ServeHTTP will derive for r, as far
+// as ctxWithRealIP and the auth check read it: the peer address and the
+// request headers as incoming metadata.
+func headerContext(r *http.Request) context.Context {
+	md := make(metadata.MD, len(r.Header))
+	for name, values := range r.Header {
+		md[strings.ToLower(name)] = values
+	}
+	ctx := metadata.NewIncomingContext(r.Context(), md)
+	if addrPort, err := netip.ParseAddrPort(r.RemoteAddr); err == nil {
+		ctx = peer.NewContext(ctx, &peer.Peer{Addr: net.TCPAddrFromAddrPort(addrPort)})
+	}
+	return ctx
+}
+
+// refuseCall ends a call that is not handed to grpc.Server with the status of
+// err, as a gRPC Trailers-Only response.
+func refuseCall(w http.ResponseWriter, err error) {
+	st := status.Convert(err)
+	var message strings.Builder
+	for _, b := range []byte(st.Message()) {
+		// grpc-message is percent-encoded outside printable ASCII.
+		if b < ' ' || b > '~' || b == '%' {
+			fmt.Fprintf(&message, "%%%02X", b)
+		} else {
+			message.WriteByte(b)
+		}
+	}
+	w.Header().Set("Content-Type", "application/grpc")
+	w.Header().Set("Grpc-Status", strconv.Itoa(int(st.Code())))
+	w.Header().Set("Grpc-Message", message.String())
+	w.WriteHeader(http.StatusOK)
 }
