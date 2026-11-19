@@ -195,15 +195,19 @@ func mcpEndpoint(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, mcpJSONRPCMaxBodyBytes)
 	}
 
+	var req jsonRPCRequest
+	err := c.ShouldBindJSON(&req)
+
 	// Consume the per-token budget before validating the request so malformed
 	// envelopes and malformed tools/call params cannot flood the dashboard
-	// without counting against the limiter. The outcome is applied after the
-	// method is known so tools/call still surfaces the rate limit as a tool
-	// error rather than a transport-level error.
+	// without counting against the limiter, but only once the body is in: the
+	// client decides when the body arrives, so a verdict taken at the request
+	// head could be collected over many windows and spent in one instant. The
+	// outcome is applied after the method is known so tools/call still surfaces
+	// the rate limit as a tool error rather than a transport-level error.
 	rateLimited := !mcpRateLimiterShared.Allow(tok.ID)
 
-	var req jsonRPCRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
+	if err != nil {
 		if errors.Is(err, errors.New("http: request body too large")) || strings.Contains(err.Error(), "http: request body too large") {
 			writeJSONRPCErrorWithStatus(c, nil, rpcErrInvalidRequest, "request body exceeds MCP envelope size limit", http.StatusRequestEntityTooLarge)
 			return
