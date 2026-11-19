@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -192,6 +194,27 @@ func TestDistributionRejectsSymlinks(t *testing.T) {
 	store, _ := installationStore(t, data.Bytes(), "")
 	if _, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false); err == nil {
 		t.Fatal("symlink accepted")
+	}
+}
+
+func TestDistributionBoundsCentralDirectoryBeforeListingIt(t *testing.T) {
+	// archive/zip lists every record it finds, whatever count the archive states,
+	// so the entry limit must not be the first thing that stops this archive.
+	record := make([]byte, 46)
+	copy(record, "PK\x01\x02")
+	count := int(maxArchiveDirectory)/len(record) + 1
+	end := make([]byte, 22)
+	copy(end, "PK\x05\x06")
+	binary.LittleEndian.PutUint16(end[8:], uint16(count))
+	binary.LittleEndian.PutUint16(end[10:], uint16(count))
+	binary.LittleEndian.PutUint32(end[12:], uint32(count*len(record)))
+	store, _ := installationStore(t, append(bytes.Repeat(record, count), end...), "")
+	_, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false)
+	if !errors.Is(err, errArchiveDirectory) {
+		t.Fatalf("archive with %d entries was listed: %v", count, err)
+	}
+	if len(store.Templates()) != 1 {
+		t.Fatal("oversized archive became selectable")
 	}
 }
 
