@@ -1317,6 +1317,39 @@ func (c *ServerTransferClass) OnServersDeleted(serverIDs []uint64) {
 	}
 }
 
+// ReturnPendingToSource rolls back, exactly as Cancel does, every Pending
+// transfer INTO one of userIDs whose source user is not being deleted as
+// well. Register has already written ToUserID into Server.UserID, but until
+// the agent rotates the server is still the source user's: Cancel/Fail/
+// Timeout hand it back, and deleting the destination user must do the same.
+// Otherwise singleton.OnUserDelete, which picks the servers to delete by
+// Server.UserID, would delete the source user's server and free its UUID for
+// whoever enrols it next.
+//
+// Must run BEFORE OnUsersDeleted and without UserLock held: the rollback
+// waits for the server control lock and pushes the revert to an online agent.
+func (c *ServerTransferClass) ReturnPendingToSource(userIDs []uint64) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+
+	var pending []model.ServerTransfer
+	if err := DB.Where("status = ? AND to_user_id IN ? AND from_user_id NOT IN ?",
+		model.ServerTransferStatusPending, userIDs, userIDs).Find(&pending).Error; err != nil {
+		return err
+	}
+	for i := range pending {
+		if _, ok := ServerShared.Get(pending[i].ServerID); !ok {
+			// Nothing to hand back; OnUsersDeleted settles the row.
+			continue
+		}
+		if _, err := c.revertTransition(pending[i].ID, model.ServerTransferStatusCancelled, "destination user deleted"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // OnUsersDeleted terminates any Pending transfer whose FromUserID or
 // ToUserID is in userIDs, BEFORE the caller drops the corresponding User
 // rows. revertTransition's Cancel/Fail/Timeout paths blindly write
@@ -1330,7 +1363,9 @@ func (c *ServerTransferClass) OnServersDeleted(serverIDs []uint64) {
 // We deliberately do NOT touch model.Server here — the live owner may be
 // a third party (chained transfers) or the surviving counterparty, and the
 // caller's own delete loop (singleton.OnUserDelete) is responsible for any
-// servers still attributed to the deleted user.
+// servers still attributed to the deleted user. A server that is only on its
+// way to the deleted user is not one of those: the caller returns it to its
+// surviving source with ReturnPendingToSource first.
 func (c *ServerTransferClass) OnUsersDeleted(userIDs []uint64) {
 	if len(userIDs) == 0 {
 		return
