@@ -48,8 +48,39 @@ func (c *CronClass) Close() {
 	})
 }
 
+// cronSpecParser is the cron.WithSeconds() grammar without the specs that
+// robfig/cron mishandles. A field made only of commas parses to an empty bit
+// mask without an error, and SpecSchedule.Next then steps through five years
+// of candidate times on the scheduler goroutine shared by every job. A TZ=
+// prefix that is not followed by any field panics inside Parser.Parse.
+type cronSpecParser struct {
+	cron.Parser
+}
+
+func newCronSpecParser() cronSpecParser {
+	return cronSpecParser{cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)}
+}
+
+func (p cronSpecParser) Parse(spec string) (cron.Schedule, error) {
+	if (strings.HasPrefix(spec, "TZ=") || strings.HasPrefix(spec, "CRON_TZ=")) && !strings.Contains(spec, " ") {
+		return nil, fmt.Errorf("missing fields in spec %q", spec)
+	}
+	schedule, err := p.Parser.Parse(spec)
+	if err != nil {
+		return nil, err
+	}
+	if s, ok := schedule.(*cron.SpecSchedule); ok {
+		for _, bits := range []uint64{s.Second, s.Minute, s.Hour, s.Dom, s.Month, s.Dow} {
+			if bits == 0 {
+				return nil, fmt.Errorf("empty field in spec %q", spec)
+			}
+		}
+	}
+	return schedule, nil
+}
+
 func NewCronClass() *CronClass {
-	cronx := cron.New(cron.WithSeconds(), cron.WithLocation(Loc))
+	cronx := cron.New(cron.WithParser(newCronSpecParser()), cron.WithLocation(Loc))
 	list := make(map[uint64]*model.Cron)
 
 	var sortedList []*model.Cron
