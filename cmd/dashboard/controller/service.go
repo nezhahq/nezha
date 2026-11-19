@@ -487,6 +487,9 @@ func createService(c *gin.Context) (uint64, error) {
 	if err := model.ValidateServiceMonitorType(uint64(mf.Type)); err != nil {
 		return 0, err
 	}
+	if err := model.ValidateServiceLatency(mf.MinLatency, mf.MaxLatency); err != nil {
+		return 0, err
+	}
 
 	if !isValidServiceCover(mf.Cover) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
@@ -553,6 +556,9 @@ func updateService(c *gin.Context) (any, error) {
 		return nil, err
 	}
 	if err := model.ValidateServiceMonitorType(uint64(mf.Type)); err != nil {
+		return nil, err
+	}
+	if err := model.ValidateServiceLatency(mf.MinLatency, mf.MaxLatency); err != nil {
 		return nil, err
 	}
 

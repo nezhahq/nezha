@@ -3,6 +3,7 @@ package model
 import (
 	"fmt"
 	"log"
+	"math"
 
 	"github.com/gin-gonic/gin"
 	"github.com/goccy/go-json"
@@ -329,12 +330,27 @@ func (m *Service) CronSpec() string {
 // MaxServiceDuration is the largest supported probe interval, in seconds.
 const MaxServiceDuration uint64 = 30 * 24 * 60 * 60
 
+// ValidateServiceLatency rejects thresholds that cannot be rendered as JSON.
+// With the go_json build tag a request number beyond the float32 range binds
+// as an infinity, which would poison the service list for every viewer.
+func ValidateServiceLatency(minLatency, maxLatency float32) error {
+	for _, latency := range [...]float32{minLatency, maxLatency} {
+		if math.IsNaN(float64(latency)) || math.IsInf(float64(latency), 0) {
+			return fmt.Errorf("service latency threshold must be a finite number")
+		}
+	}
+	return nil
+}
+
 func (m *Service) BeforeSave(tx *gorm.DB) error {
 	// Reject before persistence; a row that only fails cron registration can prevent restart.
 	if m.Duration > MaxServiceDuration {
 		return fmt.Errorf("service duration exceeds 30 days")
 	}
 	if err := ValidateServiceMonitorType(uint64(m.Type)); err != nil {
+		return err
+	}
+	if err := ValidateServiceLatency(m.MinLatency, m.MaxLatency); err != nil {
 		return err
 	}
 	if data, err := json.Marshal(m.SkipServers); err != nil {

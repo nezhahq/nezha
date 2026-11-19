@@ -1,6 +1,7 @@
 package singleton
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -10,7 +11,7 @@ import (
 )
 
 func TestServiceSentinelStartupWithRetainedHistory(t *testing.T) {
-	for _, serviceState := range []string{"retained", "deleted", "quarantined", "invalid_duration"} {
+	for _, serviceState := range []string{"retained", "deleted", "quarantined", "invalid_duration", "invalid_latency"} {
 		t.Run(serviceState, func(t *testing.T) {
 			initial := newServiceMonitorSecurityHarness(t)
 			initial.Close()
@@ -54,6 +55,9 @@ func TestServiceSentinelStartupWithRetainedHistory(t *testing.T) {
 				require.EqualValues(t, 1, result.RowsAffected)
 			case "invalid_duration":
 				require.NoError(t, DB.Model(historicalService).UpdateColumn("duration", model.MaxServiceDuration+1).Error)
+			case "invalid_latency":
+				// Thresholds stored as an infinity before they were validated.
+				require.NoError(t, DB.Model(historicalService).UpdateColumn("max_latency", math.Inf(1)).Error)
 			case "quarantined":
 				// Legacy invalid service types are deliberately excluded at startup.
 				result := DB.Model(historicalService).UpdateColumn("type", model.TaskTypeCommand)

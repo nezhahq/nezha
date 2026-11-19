@@ -395,6 +395,12 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 			log.Printf("NEZHA>> quarantining service %d: duration exceeds 30 days", service.ID)
 			continue
 		}
+		if err := model.ValidateServiceLatency(service.MinLatency, service.MaxLatency); err != nil {
+			// A row stored before thresholds were validated would make the whole
+			// service list unparsable for its owner and for every admin.
+			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
+			continue
+		}
 		task := service
 		// 通过cron定时将服务监控任务传递给任务调度管道
 		service.CronJobID, err = CronShared.AddFunc(task.CronSpec(), func() {
