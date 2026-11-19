@@ -85,6 +85,19 @@ func UnblockIP(db *gorm.DB, ip string, uid int64) error {
 	if err != nil {
 		return err
 	}
+
+	// This runs on every successful authentication and there is almost never
+	// a record to remove. SQLite takes its write lock for a DELETE before it
+	// knows whether a row matches, so look first: like CheckIP this is a read
+	// and does not queue behind other writers.
+	var blockTimestamp uint64
+	result := db.Model(&WAF{}).Select("block_timestamp").Where("ip = ? and block_identifier = ?", ipBinary, uid).Limit(1).Find(&blockTimestamp)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected < 1 {
+		return nil
+	}
 	return db.Unscoped().Delete(&WAF{}, "ip = ? and block_identifier = ?", ipBinary, uid).Error
 }
 
