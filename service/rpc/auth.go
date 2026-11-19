@@ -227,7 +227,15 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 		// credential-rotation migration or legacy Agents will be locked out.
 		return cid, true, nil
 	}
-	if server.GetUserID() == userId {
+	// Owner and pending transfer are taken as one snapshot. Read separately,
+	// a transfer that starts or rolls back in between shows the destination
+	// user as owner with no pending entry, and the check below admits them.
+	ownerID := server.GetUserID()
+	var pending *model.ServerTransfer
+	if singleton.ServerTransferShared != nil {
+		ownerID, pending = singleton.ServerTransferShared.LookupOwnerAndPending(server)
+	}
+	if ownerID == userId {
 		// SECURITY: while a transfer is Pending, Server.UserID has already
 		// been flipped to ToUserID by Register, so userId==Server.UserID
 		// here also matches the destination user's user-global AgentSecret.
@@ -239,10 +247,13 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 		// during the Pending window. Reject the user-global secret until
 		// the transfer settles; the HandshakeSecret path in check() is
 		// the only valid promotion route.
-		if singleton.ServerTransferShared != nil {
-			if _, ok := singleton.ServerTransferShared.LookupPending(cid); ok {
-				return 0, false, fmt.Errorf("destination user's global AgentSecret cannot authenticate during a pending transfer; agent must rotate to per-transfer HandshakeSecret")
-			}
+		//
+		// The previous owner can match here as well: Register publishes the
+		// pending entry before it flips Server.UserID, and a rollback
+		// restores Server.UserID before it drops the entry. That secret is
+		// tolerated while pending, so only a non-FromUserID match is refused.
+		if pending != nil && pending.FromUserID != userId {
+			return 0, false, fmt.Errorf("destination user's global AgentSecret cannot authenticate during a pending transfer; agent must rotate to per-transfer HandshakeSecret")
 		}
 		return cid, true, nil
 	}
@@ -269,7 +280,7 @@ func authorizeAgentForUUID(userId uint64, clientUUID string) (clientID uint64, h
 		if t, ok := singleton.ServerTransferShared.LookupRevertDelivery(cid); ok && t.FromUserID == userId {
 			return cid, true, nil
 		}
-		if t, ok := singleton.ServerTransferShared.LookupPending(cid); ok && t.FromUserID == userId {
+		if pending != nil && pending.FromUserID == userId {
 			return cid, true, nil
 		}
 	}

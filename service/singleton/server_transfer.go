@@ -405,13 +405,26 @@ func (c *ServerTransferClass) Stop() {
 }
 
 // LookupPending returns the pending transfer for a server if one exists.
-// Hot path: called from authorizeAgentForUUID on every agent RPC, so it
-// uses an RWMutex and a map lookup only.
 func (c *ServerTransferClass) LookupPending(serverID uint64) (*model.ServerTransfer, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	t, ok := c.pending[serverID]
 	return t, ok
+}
+
+// LookupOwnerAndPending returns s's in-memory owner together with its pending
+// transfer (nil if none) as one snapshot under c.mu. authorizeAgentForUUID
+// must not read the two separately: Register publishes the entry before it
+// flips Server.UserID, a rollback restores Server.UserID before it drops the
+// entry, and only MarkVerified drops it while ToUserID stays the owner. A
+// reader holding c.mu therefore never sees ToUserID as the owner of an
+// unsettled transfer without the entry; two independent reads can.
+// Hot path: called on every agent RPC, so it uses an RWMutex, an atomic
+// load and a map lookup only.
+func (c *ServerTransferClass) LookupOwnerAndPending(s *model.Server) (uint64, *model.ServerTransfer) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return s.GetUserID(), c.pending[s.ID]
 }
 
 // HasPending reports whether the given server has an in-flight transfer.
@@ -674,17 +687,18 @@ func (c *ServerTransferClass) Initiate(tx *gorm.DB, serverID, fromUserID, toUser
 // committed, otherwise authorizeAgentForUUID could observe a transfer that
 // doesn't yet exist in the DB.
 //
-// Ordering invariant: the in-memory Server.UserID is updated BEFORE the
-// pending entry is published. Inverting these two would leave a window
-// where authorizeAgentForUUID still sees the old owner via ServerShared
-// and admits the old AgentSecret on the happy "owner match" path —
-// bypassing the bounded pending-tolerance contract.
+// Ordering invariant: the pending entry is published BEFORE the in-memory
+// Server.UserID is updated, mirroring revertTransition, which restores
+// Server.UserID before it drops the entry. authorizeAgentForUUID refuses the
+// destination user's global AgentSecret only while it finds the entry; in
+// the opposite order that secret matches the owner while nothing marks the
+// transfer as pending, and c.mu contention (every agent sign-in takes it)
+// stretches that window. In this order the previous owner still matches for
+// a moment with the entry already published; that secret is within the
+// pending tolerance anyway.
 func (c *ServerTransferClass) Register(t *model.ServerTransfer) {
 	releaseControl := lockServerControlTransition(t.ServerID)
 	defer releaseControl()
-	// SetUserID uses an atomic write because auth.go reads this hot-path field
-	// concurrently; ServerClass also serializes it with service reports.
-	ServerShared.setUserID(t.ServerID, t.ToUserID)
 
 	c.mu.Lock()
 	if c.controlEpoch == nil {
@@ -711,6 +725,10 @@ func (c *ServerTransferClass) Register(t *model.ServerTransfer) {
 	// Cancel/Fail/Timeout leave it in place so the agent stays online while
 	// ownership rolls back.
 	c.mu.Unlock()
+
+	// SetUserID uses an atomic write because auth.go reads this hot-path field
+	// concurrently; ServerClass also serializes it with service reports.
+	ServerShared.setUserID(t.ServerID, t.ToUserID)
 
 	// Ownership has rotated to ToUserID — tear down any IOStream the
 	// previous owner had open against this server so it cannot survive
@@ -1007,10 +1025,12 @@ func (c *ServerTransferClass) MarkVerified(serverID, transferID uint64) (verifie
 		return false, nil, res.Error
 	}
 	if res.RowsAffected == 0 {
-		// Concurrent caller settled the row to a terminal status. The
-		// in-memory pending entry is now stale; drop it so the next auth
-		// call cannot read it. Do NOT promote any handshake secret.
-		delete(c.pending, t.ServerID)
+		// Concurrent caller settled the row to a terminal status. Leave the
+		// stale in-memory pending entry to that caller: revertTransition
+		// drops it only after it has restored Server.UserID, and dropping
+		// it here first would expose ToUserID as owner with no pending
+		// entry (see LookupOwnerAndPending). Do NOT promote any handshake
+		// secret.
 		c.mu.Unlock()
 		return false, nil, nil
 	}

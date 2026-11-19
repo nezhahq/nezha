@@ -3,6 +3,8 @@ package rpc
 import (
 	"context"
 	"errors"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"google.golang.org/grpc/metadata"
@@ -320,6 +322,106 @@ func TestAuthorizeAgentForUUIDRejectsToUserGlobalSecretDuringPendingTransfer(t *
 
 	if _, _, err := authorizeAgentForUUID(100, "uuid-alice"); err != nil {
 		t.Fatalf("FromUser tolerance window must remain open while transfer is still Pending, got %v", err)
+	}
+}
+
+// Register publishes the pending entry before it flips Server.UserID, and a
+// rollback restores Server.UserID before it drops the entry. In both moments
+// the previous owner matches as owner while the entry exists; its secret is
+// the one the agent holds and must keep working, and the destination user's
+// must stay refused.
+func TestAuthorizeAgentForUUIDAcceptsFromUserAsOwnerWithPendingEntry(t *testing.T) {
+	defer setupAuthAgentFixture(t)()
+	initiatePendingTransfer(t, 1, 100, 200)
+	server, _ := singleton.ServerShared.Get(1)
+	server.SetUserID(100)
+
+	cid, hasID, err := authorizeAgentForUUID(100, "uuid-alice")
+	if err != nil || !hasID || cid != 1 {
+		t.Fatalf("FromUserID secret must be accepted while it matches as owner with the pending entry published, got (cid=%d, hasID=%v, err=%v)", cid, hasID, err)
+	}
+	if _, _, err := authorizeAgentForUUID(200, "uuid-alice"); err == nil {
+		t.Fatal("destination user's global AgentSecret must NOT authenticate before Server.UserID is flipped")
+	}
+}
+
+// SECURITY: a handshake reconnect that loses the MarkVerified CAS to a
+// rollback must not drop the pending entry itself. Between the rollback's
+// commit and its in-memory Server.UserID revert the destination user is still
+// the owner, and the entry is the only thing refusing their global
+// AgentSecret; the rollback drops it once the owner is restored.
+func TestAuthorizeAgentForUUIDRejectsToUserAfterMarkVerifiedLosesCAS(t *testing.T) {
+	defer setupAuthAgentFixture(t)()
+	initiatePendingTransfer(t, 1, 100, 200)
+	pending, ok := singleton.ServerTransferShared.LookupPending(1)
+	if !ok {
+		t.Fatal("expected pending transfer")
+	}
+
+	// revertTransition has committed the terminal status but has not yet
+	// reverted the in-memory owner or dropped the pending entry.
+	if err := singleton.DB.Model(&model.ServerTransfer{}).
+		Where("id = ?", pending.ID).
+		Update("status", model.ServerTransferStatusCancelled).Error; err != nil {
+		t.Fatalf("simulate concurrent cancel: %v", err)
+	}
+	if verified, _, err := singleton.ServerTransferShared.MarkVerified(1, pending.ID); err != nil || verified {
+		t.Fatalf("MarkVerified must lose the CAS silently, got (verified=%v, err=%v)", verified, err)
+	}
+
+	if _, _, err := authorizeAgentForUUID(200, "uuid-alice"); err == nil {
+		t.Fatal("destination user's global AgentSecret must NOT authenticate while a rollback is still restoring ownership")
+	}
+	if _, _, err := authorizeAgentForUUID(100, "uuid-alice"); err != nil {
+		t.Fatalf("FromUser tolerance must hold until the rollback restores ownership, got %v", err)
+	}
+}
+
+// SECURITY: a transfer that is only ever cancelled never makes the destination
+// user the owner, so their global AgentSecret must not authenticate at any
+// point of it. Register and the rollback each publish Server.UserID and the
+// pending entry one after the other, so authorizeAgentForUUID has to read the
+// two as one snapshot; the sign-ins here contend on the transfer lock the way
+// real ones do (LookupByTerminalSecretRecovery), which is what held Register
+// between its two writes.
+func TestAuthorizeAgentForUUIDNeverAdmitsToUserWhileTransfersStartAndRollBack(t *testing.T) {
+	defer setupAuthAgentFixture(t)()
+	// One connection: ":memory:" is a separate database per connection.
+	if sqlDB, err := singleton.DB.DB(); err == nil {
+		sqlDB.SetMaxOpenConns(1)
+	}
+
+	var stop atomic.Bool
+	var admitted atomic.Int64
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for !stop.Load() {
+				singleton.ServerTransferShared.LookupByTerminalSecretRecovery("bob-global")
+				if _, _, err := authorizeAgentForUUID(200, "uuid-alice"); err == nil {
+					admitted.Add(1)
+				}
+			}
+		}()
+	}
+	defer wg.Wait()
+	defer stop.Store(true)
+	for i := 0; i < 500; i++ {
+		transfer, err := singleton.ServerTransferShared.InitiateExclusive(1, 100, 200, 1)
+		if err != nil {
+			t.Fatalf("initiate transfer %d: %v", i, err)
+		}
+		if _, err := singleton.ServerTransferShared.Cancel(transfer.ID); err != nil {
+			t.Fatalf("cancel transfer %d: %v", i, err)
+		}
+	}
+	stop.Store(true)
+	wg.Wait()
+
+	if n := admitted.Load(); n != 0 {
+		t.Fatalf("destination user's global AgentSecret authenticated %d times although no transfer was ever verified", n)
 	}
 }
 

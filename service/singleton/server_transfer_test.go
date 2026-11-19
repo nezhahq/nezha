@@ -2252,3 +2252,32 @@ func (*fakeTaskStream) Context() context.Context { return context.Background() }
 func (*cancelRaceApplyConfigStream) Context() context.Context { return context.Background() }
 
 func (*neverReturningTaskStream) Context() context.Context { return context.Background() }
+
+// SECURITY: authorizeAgentForUUID refuses the destination user's global
+// AgentSecret only when it finds the pending entry. Register must therefore
+// not make the destination user the owner while the entry is still unpublished:
+// c.mu is taken by every agent sign-in, so the destination user can hold
+// Register in exactly that state by flooding sign-ins for the server's UUID.
+func TestServerTransferRegisterPublishesPendingBeforeOwner(t *testing.T) {
+	c, cleanup := setupTransferFixture(t)
+	defer cleanup()
+	seedServerForTransfer(t, 1, 100)
+	server, ok := ServerShared.Get(1)
+	require.True(t, ok)
+	tr := &model.ServerTransfer{Common: model.Common{ID: 7}, ServerID: 1, FromUserID: 100, ToUserID: 200}
+
+	c.mu.Lock() // Register cannot publish the pending entry
+	registered := make(chan struct{})
+	go func() {
+		c.Register(tr)
+		close(registered)
+	}()
+	require.Never(t, func() bool { return server.GetUserID() == 200 }, 100*time.Millisecond, time.Millisecond,
+		"the destination user became the owner before the pending entry was published")
+	c.mu.Unlock()
+
+	<-registered
+	owner, pending := c.LookupOwnerAndPending(server)
+	require.EqualValues(t, 200, owner)
+	require.Same(t, tr, pending)
+}
