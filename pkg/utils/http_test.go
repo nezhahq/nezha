@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"testing"
 	"time"
@@ -103,6 +104,45 @@ func TestBuildRestrictedHTTPClientHonorsSkipVerifyTLS(t *testing.T) {
 	transport := client.Transport.(*http.Transport)
 	if !transport.TLSClientConfig.InsecureSkipVerify {
 		t.Fatalf("expected InsecureSkipVerify=true when skipVerifyTLS=true")
+	}
+}
+
+// Client.Timeout does not end a TLS handshake that net/http has detached from
+// the request, so the transport itself has to bound it.
+func TestBuildRestrictedHTTPClientBoundsTLSHandshake(t *testing.T) {
+	parsed, _ := url.Parse("https://example.com/webhook")
+	client := buildRestrictedHTTPClient(parsed, net.ParseIP("1.1.1.1"), false)
+	transport := client.Transport.(*http.Transport)
+	if got := transport.TLSHandshakeTimeout; got <= 0 || got >= client.Timeout {
+		t.Fatalf("expected a TLS handshake timeout below the client timeout %v, got %v", client.Timeout, got)
+	}
+}
+
+// The client is built for a single request and then dropped, so nothing would
+// ever reuse or close a connection it left in the idle pool.
+func TestBuildRestrictedHTTPClientClosesConnectionAfterResponse(t *testing.T) {
+	closed := make(chan struct{}, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	server.Start()
+	defer server.Close()
+
+	parsed, _ := url.Parse(server.URL)
+	client := buildRestrictedHTTPClient(parsed, net.ParseIP("127.0.0.1"), false)
+	resp, err := client.Get(server.URL)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	resp.Body.Close()
+
+	select {
+	case <-closed:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected the connection to be closed once the response was consumed")
 	}
 }
 

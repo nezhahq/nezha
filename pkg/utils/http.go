@@ -132,6 +132,12 @@ func buildRestrictedHTTPClient(parsedURL *url.URL, ip net.IP, skipVerifyTLS bool
 				return dialer.DialContext(ctx, network, targetAddress)
 			},
 			TLSClientConfig: &tls.Config{InsecureSkipVerify: skipVerifyTLS, ServerName: parsedURL.Hostname()},
+			// Client.Timeout does not cover the handshake: net/http lets a dial and
+			// handshake run on after the request that started them was given up.
+			TLSHandshakeTimeout: time.Second * 10,
+			// Each client serves a single request, so a kept-alive connection
+			// would never be reused, only held open for as long as the peer likes.
+			DisableKeepAlives: true,
 		},
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
