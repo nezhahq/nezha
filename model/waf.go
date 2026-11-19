@@ -148,6 +148,31 @@ func BlockIP(db *gorm.DB, ip string, reason uint8, uid int64) error {
 	})
 }
 
+// PruneExpiredBlocks deletes the records of every address whose block has
+// ended. BlockIP keeps one record per address and identifier, and only a later
+// success from the same address or an administrator removes it, so without
+// this the records of addresses that never come back stay forever. The
+// condition mirrors CheckIP: all records of an address count together, and
+// manual blocks (count 99999) never end.
+func PruneExpiredBlocks(db *gorm.DB) error {
+	// Delete in batches so that a large table does not hold the sqlite write lock for long.
+	const batchSize = 10000
+	for {
+		// TOTAL is SUM in floating point: like powAdd, a huge count saturates instead of overflowing.
+		result := db.Exec(`DELETE FROM nz_waf WHERE ip IN (
+			SELECT ip FROM nz_waf GROUP BY ip
+			HAVING MAX(block_timestamp) + MAX(3, TOTAL(count) * TOTAL(count) * TOTAL(count) * TOTAL(count)) <= ?
+			LIMIT ?)`, time.Now().Unix(), batchSize)
+		if result.Error != nil {
+			return result.Error
+		}
+		// Every address has at least one record, so a short batch was the last one.
+		if result.RowsAffected < batchSize {
+			return nil
+		}
+	}
+}
+
 func powAdd(x, y, z uint64) uint64 {
 	base := big.NewInt(0).SetUint64(x)
 	exp := big.NewInt(0).SetUint64(y)

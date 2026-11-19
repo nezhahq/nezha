@@ -190,6 +190,16 @@ func PersistTransfer(transfer model.Transfer) error {
 	return DB.Create(&transfer).Error
 }
 
+// PruneExpiredWAFBlocks 清理封禁已到期的 WAF 记录
+func PruneExpiredWAFBlocks() {
+	if DB == nil {
+		return
+	}
+	if err := model.PruneExpiredBlocks(DB); err != nil {
+		log.Printf("NEZHA>> Failed to prune expired WAF records: %v", err)
+	}
+}
+
 // CleanMonitorHistory 清理流量记录（TSDB 有自己的保留策略）
 func CleanMonitorHistory() {
 	// Audit retention is finite even when MCP was subsequently disabled.

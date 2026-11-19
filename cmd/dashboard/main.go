@@ -88,6 +88,12 @@ func initSystem(bus chan<- *model.Service) error {
 		return err
 	}
 
+	// WAF 记录保留清理：封禁到期后删除，否则每个来源地址的失败记录会永久保留
+	if _, err := singleton.CronShared.AddFunc("@every 1h", singleton.PruneExpiredWAFBlocks); err != nil {
+		return err
+	}
+	singleton.PruneExpiredWAFBlocks()
+
 	if err := singleton.StartJWTSessionGC(); err != nil {
 		return err
 	}
