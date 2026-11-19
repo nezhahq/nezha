@@ -735,7 +735,7 @@ func canReportServiceResult(service *model.Service, reporter *model.Server, task
 		return false
 	}
 
-	return service.UserID == reporter.GetUserID() || userIsAdmin(service.UserID)
+	return serverTaskResultAdmitted(reporter, service.UserID)
 }
 
 // serviceTrustsReporter reports whether an accepted result may move the state

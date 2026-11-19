@@ -114,6 +114,18 @@ func ServerTaskAdmission(serverID, userID uint64) func() (func(), error) {
 	}
 }
 
+// serverTaskResultAdmitted is the inbound dual of ServerTaskAdmission: a task
+// result counts for userID's monitor or cron only while that task could still
+// be dispatched to the reporter. During a transfer Server.UserID already names
+// the destination user while the Agent stream may still authenticate with the
+// previous owner's secret, so ownership alone does not prove who is reporting.
+func serverTaskResultAdmitted(reporter *model.Server, userID uint64) bool {
+	if userIsAdmin(userID) {
+		return true
+	}
+	return reporter.GetUserID() == userID && !ServerControlTransitioning(reporter.ID)
+}
+
 // ServerControlEpoch invalidates derived URLs permanently on each transfer.
 // Tokens and epochs are both process-local; rollback never restores an old epoch.
 func ServerControlEpoch(serverID uint64) uint64 {

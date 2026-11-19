@@ -193,7 +193,7 @@ func cronCanBeTriggeredByOwner(cr *model.Cron, triggerOwner uint64) bool {
 }
 
 func CanReportCronResult(cr *model.Cron, reporter *model.Server) bool {
-	if cr == nil || reporter == nil || !cronCanSendToServer(cr, reporter) {
+	if cr == nil || reporter == nil || !serverTaskResultAdmitted(reporter, cr.UserID) {
 		return false
 	}
 	if cr.Cover == model.CronCoverAll && slices.Contains(cr.Servers, reporter.ID) {
