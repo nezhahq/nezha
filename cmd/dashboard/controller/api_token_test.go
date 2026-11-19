@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 
@@ -612,4 +613,70 @@ func TestCreateAPIToken_RejectsUnknownResourceWildcard(t *testing.T) {
 	_, err := createAPIToken(c)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "unknown scope")
+}
+
+// A password change bumps User.TokenVersion. Like JWT sessions and MCP OAuth
+// grants, an API token issued before the bump must stop authenticating, and
+// the streams it opened must be dropped.
+func TestAPITokenAuthMW_RejectedAfterOwnerCredentialChange(t *testing.T) {
+	defer setupAPITokenTest(t)()
+	require.NoError(t, singleton.DB.AutoMigrate(&model.Oauth2Bind{}, &model.JWTSession{}))
+
+	originalUserInfoMap, originalAgentSecretToUserID := singleton.UserInfoMap, singleton.AgentSecretToUserId
+	originalRegistry := patConnectionRegistryShared
+	singleton.UserInfoMap = make(map[uint64]model.UserInfo)
+	singleton.AgentSecretToUserId = make(map[string]uint64)
+	patConnectionRegistryShared = newPATConnectionRegistry()
+	defer func() {
+		singleton.UserInfoMap, singleton.AgentSecretToUserId = originalUserInfoMap, originalAgentSecretToUserID
+		patConnectionRegistryShared = originalRegistry
+	}()
+
+	hash, err := bcrypt.GenerateFromPassword([]byte("old-password"), bcrypt.MinCost)
+	require.NoError(t, err)
+	owner := model.User{Common: model.Common{ID: 10}, Username: "alice", Password: string(hash), Role: model.RoleMember, TokenVersion: 3}
+	require.NoError(t, singleton.DB.Create(&owner).Error)
+
+	issue := ctxAsUser(owner.ID, owner.Role)
+	issue.Set(model.CtxKeyAuthorizedUser, &owner)
+	bindJSON(issue, model.APITokenCreateRequest{Name: "ci", Scopes: []string{model.ScopeServerExec}})
+	issued, err := createAPIToken(issue)
+	require.NoError(t, err)
+
+	authenticate := func() (*gin.Context, *httptest.ResponseRecorder) {
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest("GET", "/", nil)
+		c.Request.Header.Set("Authorization", "Bearer "+issued.Token)
+		apiTokenAuthMiddleware()(c)
+		return c, w
+	}
+
+	c, _ := authenticate()
+	require.False(t, c.IsAborted(), "token must work while the owner's credentials are unchanged")
+	streamDropped := false
+	defer registerPATConnection(c, func() { streamDropped = true })()
+
+	change := ctxAsUser(owner.ID, owner.Role)
+	change.Set(model.CtxKeyAuthorizedUser, &owner)
+	bindJSON(change, model.ProfileForm{OriginalPassword: "old-password", NewPassword: "new-password"})
+	_, err = updateProfile(change)
+	require.NoError(t, err)
+
+	c, w := authenticate()
+	require.True(t, c.IsAborted(), "token issued before the password change must be rejected")
+	require.Equal(t, http.StatusUnauthorized, w.Code)
+	require.Nil(t, APITokenFromContext(c))
+	require.True(t, streamDropped, "streams opened with the token must be dropped")
+
+	// A token issued after the change carries the new version and works.
+	var current model.User
+	require.NoError(t, singleton.DB.First(&current, owner.ID).Error)
+	issue = ctxAsUser(current.ID, current.Role)
+	issue.Set(model.CtxKeyAuthorizedUser, &current)
+	bindJSON(issue, model.APITokenCreateRequest{Name: "ci2", Scopes: []string{model.ScopeServerExec}})
+	issued, err = createAPIToken(issue)
+	require.NoError(t, err)
+	c, _ = authenticate()
+	require.False(t, c.IsAborted())
 }

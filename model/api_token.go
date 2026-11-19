@@ -151,6 +151,11 @@ type APIToken struct {
 	// serverWhitelist is ServersCSV decoded once (AfterFind / SetServerIDs) so
 	// that CanAccessServer does not parse the CSV again on every call.
 	serverWhitelist *apiTokenServerWhitelist
+
+	// UserVersion is the owner's User.TokenVersion at issue time. A credential
+	// change bumps that counter and retires the token, like JWT sessions and
+	// MCP OAuth grants.
+	UserVersion uint64 `gorm:"not null;default:0" json:"-"`
 }
 
 // apiTokenServerWhitelist is an immutable decoded ServersCSV. It remembers the

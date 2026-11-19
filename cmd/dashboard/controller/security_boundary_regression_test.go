@@ -25,7 +25,7 @@ import (
 func TestSecurityBoundaryBlankPassword(t *testing.T) {
 	defer setupTenancyTest(t)()
 	defer setupJWTSessionTest(t)()
-	require.NoError(t, singleton.DB.AutoMigrate(&model.Oauth2Bind{}))
+	require.NoError(t, singleton.DB.AutoMigrate(&model.Oauth2Bind{}, &model.APIToken{}))
 	oldUsers, oldSecrets := singleton.UserInfoMap, singleton.AgentSecretToUserId
 	singleton.UserInfoMap = map[uint64]model.UserInfo{}
 	singleton.AgentSecretToUserId = map[string]uint64{}

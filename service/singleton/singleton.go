@@ -95,6 +95,9 @@ func InitDBFromPath(path string) error {
 	if Conf.Debug {
 		DB = DB.Debug()
 	}
+	// Tokens issued before api_tokens.user_version existed inherit the owner's
+	// current version, so an upgrade keeps them valid until the next credential change.
+	backfillAPITokenUserVersion := DB.Migrator().HasTable(&model.APIToken{}) && !DB.Migrator().HasColumn(&model.APIToken{}, "user_version")
 	err = DB.AutoMigrate(model.Server{}, model.User{}, model.ServerGroup{}, model.NotificationGroup{},
 		model.Notification{}, model.AlertRule{}, model.Service{}, model.NotificationGroupNotification{},
 		model.Cron{}, model.Transfer{}, model.ServerGroupServer{},
@@ -104,6 +107,11 @@ func InitDBFromPath(path string) error {
 		model.MCPOAuthClient{}, model.MCPOAuthCode{}, model.MCPOAuthGrant{})
 	if err != nil {
 		return err
+	}
+	if backfillAPITokenUserVersion {
+		if err := DB.Exec("UPDATE api_tokens SET user_version = COALESCE((SELECT token_version FROM users WHERE users.id = api_tokens.user_id), 0)").Error; err != nil {
+			return err
+		}
 	}
 
 	// 旧 mcp:* scope 与 nezha:* 并行了一段时间，HasScope 通过别名让 mcp:fs:write

@@ -340,6 +340,16 @@ func TestMCPOAuthDenialAndLoginBinding(t *testing.T) {
 	require.Error(t, err)
 }
 
+// The permission row behind a grant is authenticated like any API Token, so it
+// has to carry the owner's credential version as well as the grant does.
+func TestMCPOAuthGrantUsableAfterEarlierCredentialChange(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	require.NoError(t, singleton.DB.Model(&model.User{}).Where("id = ?", s.userID).Update("token_version", 4).Error)
+	require.NoError(t, singleton.DB.Model(&model.JWTSession{}).Where("user_id = ?", s.userID).Update("token_version", 4).Error)
+	tokens := s.tokens(t)
+	require.Equal(t, http.StatusOK, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
+}
+
 func TestMCPOAuthCodeExchangeBindingsAndReuse(t *testing.T) {
 	s := setupMCPOAuthSession(t)
 	code := s.approve(t)

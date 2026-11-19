@@ -46,7 +46,7 @@ func TestGetProfile_RedactsPasswordHash(t *testing.T) {
 
 func TestUpdateProfile_UsesStoredPasswordHashAfterRedaction(t *testing.T) {
 	defer setupTenancyTest(t)()
-	require.NoError(t, singleton.DB.AutoMigrate(&model.Oauth2Bind{}, &model.JWTSession{}))
+	require.NoError(t, singleton.DB.AutoMigrate(&model.Oauth2Bind{}, &model.JWTSession{}, &model.APIToken{}))
 
 	originalUserInfoMap := singleton.UserInfoMap
 	originalAgentSecretToUserID := singleton.AgentSecretToUserId

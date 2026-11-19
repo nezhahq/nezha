@@ -224,3 +224,26 @@ func TestUpdateConfig_DisablingMCPInvokesKillSwitch(t *testing.T) {
 		t.Fatalf("in-flight CallAgent did not wake up after kill switch")
 	}
 }
+
+// A one-time transfer URL minted with an API token must not outlive the
+// owner's credential change any more than the token itself does.
+func TestRevalidateTransferEntry_BlocksAfterOwnerCredentialChange(t *testing.T) {
+	cleanup, uid := setupMCPTest(t)
+	defer cleanup()
+
+	tok, _ := mkToken(t, uid, []string{model.ScopeServerRead}, nil)
+	entry := &transferEntry{
+		UserID:    uid,
+		TokenID:   tok.ID,
+		ServerID:  7,
+		Path:      "/srv/file",
+		Direction: transferDirDownload,
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+	}
+	require.NoError(t, revalidateTransferEntry(entry))
+
+	// what updateProfile does
+	require.NoError(t, singleton.DB.Model(&model.User{}).Where("id = ?", uid).Update("token_version", 1).Error)
+
+	require.ErrorContains(t, revalidateTransferEntry(entry), "revoked by credential change")
+}

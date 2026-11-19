@@ -102,6 +102,15 @@ func updateProfile(c *gin.Context) (any, error) {
 	if err := singleton.RevokeJWTSessionsByUser(user.ID); err != nil {
 		return nil, newGormError("%v", err)
 	}
+	// The version bump already rejects this user's API tokens and MCP OAuth
+	// grants on their next request; also drop the streams they still hold open.
+	var tokenIDs []uint64
+	if err := singleton.DB.Model(&model.APIToken{}).Where("user_id = ?", user.ID).Pluck("id", &tokenIDs).Error; err != nil {
+		return nil, newGormError("%v", err)
+	}
+	for _, id := range tokenIDs {
+		patConnectionRegistryShared.revokeToken(id)
+	}
 	return nil, nil
 }
 

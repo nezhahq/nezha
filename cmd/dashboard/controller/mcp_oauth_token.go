@@ -172,7 +172,7 @@ func mcpOAuthExchangeCode(tx *gorm.DB, client *model.MCPOAuthClient, form url.Va
 	expiry := now.Add(mcpOAuthGrantLifetime)
 	// No plaintext PAT is returned or persisted. Only the dedicated nzo_
 	// credential can resolve this permission identity, and only on /mcp.
-	permission := model.APIToken{UserID: user.ID, Name: "OAuth: " + client.Name, TokenHash: model.HashAPIToken(mcpOAuthRandom()), ScopesCSV: code.ScopesCSV, ServersCSV: code.ServersCSV, ExpiresAt: &expiry}
+	permission := model.APIToken{UserID: user.ID, UserVersion: user.TokenVersion, Name: "OAuth: " + client.Name, TokenHash: model.HashAPIToken(mcpOAuthRandom()), ScopesCSV: code.ScopesCSV, ServersCSV: code.ServersCSV, ExpiresAt: &expiry}
 	if err := tx.Create(&permission).Error; err != nil {
 		return nil, 0, err
 	}

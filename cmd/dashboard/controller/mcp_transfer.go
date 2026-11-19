@@ -1150,6 +1150,9 @@ func revalidateTransferEntry(e *transferEntry) error {
 	if err := singleton.DB.First(&user, e.UserID).Error; err != nil {
 		return errors.New("originating user no longer exists")
 	}
+	if user.TokenVersion != tok.UserVersion {
+		return errors.New("originating api token revoked by credential change")
+	}
 	if user.Role != model.RoleAdmin && (srv.GetUserID() != e.UserID || singleton.ServerControlTransitioning(e.ServerID)) {
 		return errors.New("target server is no longer owned by the originating user")
 	}

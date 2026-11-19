@@ -139,9 +139,10 @@ func createAPIToken(c *gin.Context) (*model.APITokenCreateResponse, error) {
 	plaintext := model.APITokenPrefix + secret
 
 	tok := model.APIToken{
-		UserID:    getUid(c),
-		Name:      req.Name,
-		TokenHash: model.HashAPIToken(plaintext),
+		UserID:      getUid(c),
+		UserVersion: c.MustGet(model.CtxKeyAuthorizedUser).(*model.User).TokenVersion,
+		Name:        req.Name,
+		TokenHash:   model.HashAPIToken(plaintext),
 	}
 	tok.SetScopes(cleaned)
 	if len(req.ServerIDs) > 0 {
@@ -272,6 +273,12 @@ func authenticateAPITokenIdentity(c *gin.Context, tok *model.APIToken) {
 			model.BlockIP(singleton.DB, realIP, model.WAFBlockReasonTypeBruteForceToken, model.BlockIDToken)
 		}
 		abortAPITokenUnauthorized(c, "owner of api token not found")
+		return
+	}
+	// Same rule as JWT sessions and MCP OAuth grants: a credential issued
+	// before the owner's password/profile change must not outlive it.
+	if user.TokenVersion != tok.UserVersion {
+		abortAPITokenUnauthorized(c, "api token revoked by credential change")
 		return
 	}
 
