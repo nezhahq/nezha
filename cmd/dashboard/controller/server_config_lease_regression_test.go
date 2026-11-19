@@ -132,3 +132,45 @@ func TestForceUpdateRejectsPendingTransferOwner(t *testing.T) {
 	require.Equal(t, []uint64{server.ID}, response.Failure)
 	require.Empty(t, stream.sent, "the pending destination must not dispatch an Agent upgrade")
 }
+
+// A report left in ConfigCache by an abandoned or timed-out read must not be
+// handed to a later caller: after a transfer that caller is a different user
+// and the report holds the previous owner's account-wide agent secret.
+func TestServerConfigReadIgnoresReportLeftByEarlierRequest(t *testing.T) {
+	server, _ := setupConfigurationLeaseTransfer(t)
+	stream := &configurationLeaseTaskStream{sent: make(chan *pb.Task, 1)}
+	server.SetTaskStream(stream)
+	server.ConfigCache <- "previous owner's configuration"
+	c := ctxAs(1, model.RoleAdmin)
+	c.Params = gin.Params{{Key: "id", Value: "1"}}
+	done := make(chan string, 1)
+	go func() { data, _ := getServerConfig(c); done <- data }()
+	require.Equal(t, uint64(model.TaskTypeReportConfig), (<-stream.sent).Type)
+	server.ConfigCache <- "current configuration"
+	require.Equal(t, "current configuration", <-done)
+}
+
+// The wait for the report runs without the control lease, so a caller who
+// stopped being the owner meanwhile must not receive what arrives afterwards.
+func TestServerConfigReadRechecksControlWhenReportArrives(t *testing.T) {
+	setupConfigurationLeaseTransfer(t)
+	seedServer(t, 2, 100)
+	server, ok := singleton.ServerShared.Get(2)
+	require.True(t, ok)
+	stream := &configurationLeaseTaskStream{sent: make(chan *pb.Task, 1)}
+	server.SetTaskStream(stream)
+	c := ctxAs(100, model.RoleMember)
+	c.Params = gin.Params{{Key: "id", Value: "2"}}
+	type outcome struct {
+		data string
+		err  error
+	}
+	done := make(chan outcome, 1)
+	go func() { data, err := getServerConfig(c); done <- outcome{data, err} }()
+	require.Equal(t, uint64(model.TaskTypeReportConfig), (<-stream.sent).Type)
+	seedPendingTransfer(t, 2, 100, 200, 1)
+	server.ConfigCache <- "next owner's configuration"
+	got := <-done
+	require.Error(t, got.err)
+	require.Empty(t, got.data)
+}

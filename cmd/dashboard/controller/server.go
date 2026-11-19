@@ -266,6 +266,15 @@ func getServerConfig(c *gin.Context) (string, error) {
 		return "", nil
 	}
 
+	// ConfigCache is one slot per server, not per request: a report whose
+	// reader disconnected or timed out stays in it. Drop it, so the answer can
+	// only be a report received after this caller was admitted. An older one
+	// may predate an ownership transfer and carry the previous owner's secret.
+	select {
+	case <-s.ConfigCache:
+	default:
+	}
+
 	if err := s.SendTaskGuarded(&pb.Task{
 		Type: model.TaskTypeReportConfig,
 	}, serverTaskAdmission(c, id)); err != nil {
@@ -283,6 +292,13 @@ func getServerConfig(c *gin.Context) (string, error) {
 	case <-timeout.C:
 		return "", singleton.Localizer.ErrorT("operation timeout")
 	case data := <-s.ConfigCache:
+		// Control was released for the wait, so ownership may have moved on
+		// and the report may already hold the next owner's credential.
+		releaseControl, controlErr := beginServerControl(c, id)
+		if controlErr != nil {
+			return "", controlErr
+		}
+		releaseControl()
 		switch data := data.(type) {
 		case string:
 			return data, nil
