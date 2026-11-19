@@ -117,6 +117,16 @@ func payloadFunc() func(data any) jwt.MapClaims {
 
 func identityHandler() func(c *gin.Context) any {
 	return func(c *gin.Context) any {
+		// The dashboard sets nz-jwt once and host-only, so a request carries it
+		// twice only when another host under the same parent domain (e.g. a
+		// member NAT domain) planted a second one with Domain=<parent>. gin-jwt
+		// reads the first, and a longer Path lists the planted one first, so
+		// that host would choose the account this request runs as. Such a
+		// request has no trustworthy session: authenticate nobody.
+		if len(c.Request.CookiesNamed("nz-jwt")) > 1 {
+			return nil
+		}
+
 		claims := jwt.ExtractClaims(c)
 
 		keyID, ok := claims[jwtClaimKeyID].(string)

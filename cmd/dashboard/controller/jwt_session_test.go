@@ -419,3 +419,78 @@ func TestRefreshResponse_UpdatesSessionExpires(t *testing.T) {
 	require.WithinDuration(t, time.Now(), sess.LastUsedAt, 5*time.Second,
 		"refreshResponse must touch last_used_at")
 }
+
+func TestIdentityHandlerRejectsDuplicateSessionCookie(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+
+	ctx := newCtxForUser(0, "1.2.3.4", "ua")
+	user := model.User{Common: model.Common{ID: 100}, TokenVersion: 7}
+	claims, err := issueJWTSession(ctx, &user, 1)
+	require.NoError(t, err)
+
+	verify := newCtxForUser(0, "1.2.3.4", "ua")
+	verify.Request.Header.Set("Cookie", "nz-jwt=planted; nz-jwt=own; nz-csrf=token")
+	verify.Set("JWT_PAYLOAD", jwt.MapClaims(claims))
+
+	identity := identityHandler()(verify)
+	assert.Nil(t, identity, "a request carrying nz-jwt twice must not be authenticated as either session")
+}
+
+// A sibling host (e.g. a member NAT domain) can add its own valid nz-jwt with
+// Domain=<parent> and a longer Path to a logged-in browser, which then sends
+// "nz-jwt=<planted>; nz-jwt=<own>". Neither the strict nor the optional auth
+// chain may run such a request as the planted session's user.
+func TestPlantedSessionCookieDoesNotSwitchAccount(t *testing.T) {
+	cleanup := setupJWTSessionTest(t)
+	defer cleanup()
+	singleton.Conf.JWTSecretKey = jwtSessionTestMasterKey
+	require.NoError(t, singleton.DB.Create(&model.User{
+		Common:   model.Common{ID: 200},
+		Username: "attacker",
+		Role:     model.RoleMember,
+	}).Error)
+
+	mw, err := jwt.New(initParams())
+	require.NoError(t, err)
+	sessionCookie := func(user model.User) string {
+		claims, err := issueJWTSession(newCtxForUser(0, "", "ua"), &user, 1)
+		require.NoError(t, err)
+		token, _, err := mw.TokenGenerator(claims)
+		require.NoError(t, err)
+		return "nz-jwt=" + token
+	}
+	own := sessionCookie(model.User{Common: model.Common{ID: 100}, TokenVersion: 7})
+	planted := sessionCookie(model.User{Common: model.Common{ID: 200}})
+
+	whoami := func(c *gin.Context) {
+		if u, ok := c.Get(model.CtxKeyAuthorizedUser); ok {
+			c.String(200, "user:"+u.(*model.User).Username)
+			return
+		}
+		c.String(200, "guest")
+	}
+	r := gin.New()
+	r.GET("/strict", mw.MiddlewareFunc(), whoami)
+	r.GET("/optional", fallbackAuthMiddleware(mw), whoami)
+
+	for _, tc := range []struct {
+		name, path, cookie, want string
+	}{
+		{"own session, strict", "/strict", own, "user:victim"},
+		{"own session, optional", "/optional", own, "user:victim"},
+		{"planted first, strict", "/strict", planted + "; " + own, "ApiErrorUnauthorized"},
+		{"planted first, optional", "/optional", planted + "; " + own, "guest"},
+		{"planted last, strict", "/strict", own + "; " + planted, "ApiErrorUnauthorized"},
+		{"planted last, optional", "/optional", own + "; " + planted, "guest"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest("GET", tc.path, nil)
+			req.Header.Set("Cookie", tc.cookie)
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, req)
+			assert.Contains(t, w.Body.String(), tc.want)
+			assert.NotContains(t, w.Body.String(), "attacker")
+		})
+	}
+}
