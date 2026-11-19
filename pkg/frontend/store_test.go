@@ -24,6 +24,9 @@ func distributionZIP(t *testing.T, names ...string) []byte {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if strings.HasSuffix(name, "/") {
+			continue
+		}
 		if _, err := io.WriteString(entry, "<html>installed frontend</html>"); err != nil {
 			t.Fatal(err)
 		}
@@ -281,5 +284,37 @@ func TestRemoveFilesystemFailurePreservesCatalog(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(saved, template.Path, "dist", "index.html")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDistributionLimitsCreatedDirectories(t *testing.T) {
+	siblings := []string{"dist/index.html"}
+	for i := 1; i < maxArchiveFiles; i++ {
+		siblings = append(siblings, fmt.Sprintf("dist/%d/site.js", i))
+	}
+	for _, test := range []struct {
+		names []string
+		want  string
+	}{
+		{siblings, "too many files"},
+		{[]string{"dist/index.html", "dist/" + strings.Repeat("a/", maxArchiveFiles)}, "nested too deeply"},
+		{[]string{"dist/index.html", "dist/" + strings.Repeat("a/", maxArchiveDepth-1) + "site.js"}, "nested too deeply"},
+		{[]string{"dist/index.html", "dist/" + strings.Repeat("a/", maxArchiveDepth-2) + "site.js"}, ""},
+	} {
+		store, _ := installationStore(t, distributionZIP(t, test.names...), "")
+		_, err := store.Install(context.Background(), "https://github.com/owner/site", "v1.0.0", false)
+		if test.want == "" {
+			if err != nil {
+				t.Fatalf("archive within the limits refused: %v", err)
+			}
+			continue
+		}
+		if err == nil || !strings.Contains(err.Error(), test.want) {
+			t.Fatalf("archive with %d entries ending in %.20s accepted: %v", len(test.names), test.names[len(test.names)-1], err)
+		}
+		entries, err := os.ReadDir(store.root)
+		if err != nil || len(entries) != 0 {
+			t.Fatalf("failed installation left files: %v %v", entries, err)
+		}
 	}
 }

@@ -23,6 +23,7 @@ const (
 	maxArchiveSize   int64 = 64 << 20
 	maxExtractedSize int64 = 256 << 20
 	maxArchiveFiles        = 10000
+	maxArchiveDepth        = 64
 )
 
 type Template struct {
@@ -259,6 +260,9 @@ func extractDistribution(ctx context.Context, archivePath, destination string) e
 		return errors.New("frontend archive contains too many files")
 	}
 	seen := make(map[string]bool)
+	// Parent directories are created whether or not the archive lists them, so
+	// the file limit counts every filesystem object rather than every ZIP entry.
+	created := make(map[string]bool)
 	var extracted int64
 	for _, entry := range archive.File {
 		if err := ctx.Err(); err != nil {
@@ -269,6 +273,15 @@ func extractDistribution(ctx context.Context, archivePath, destination string) e
 			return errors.New("frontend archive must contain only safe paths beneath dist/")
 		}
 		seen[name] = true
+		if strings.Count(name, "/") >= maxArchiveDepth {
+			return errors.New("frontend archive paths are nested too deeply")
+		}
+		for object := name; object != "." && !created[object]; object = path.Dir(object) {
+			created[object] = true
+			if len(created) > maxArchiveFiles {
+				return errors.New("frontend archive contains too many files")
+			}
+		}
 		if entry.Mode()&os.ModeSymlink != 0 || (!entry.FileInfo().IsDir() && !entry.Mode().IsRegular()) {
 			return errors.New("frontend archive cannot contain links or special files")
 		}
