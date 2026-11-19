@@ -410,7 +410,10 @@ func downsampleMetrics(points []rawDataPoint, interval time.Duration, useLastVal
 	result := make([]MetricDataPoint, 0)
 
 	bucketStart := (points[0].timestamp / intervalMs) * intervalMs
-	var total float64
+	// Keep a running mean instead of a sum: samples are agent-supplied, and a sum
+	// of finite samples can overflow to Inf, which JSON cannot encode. The mean
+	// of finite samples is always finite.
+	var mean float64
 	var count int
 	var last rawDataPoint
 
@@ -419,7 +422,7 @@ func downsampleMetrics(points []rawDataPoint, interval time.Duration, useLastVal
 		if useLastValue {
 			value = last.value
 		} else if count > 0 {
-			value = total / float64(count)
+			value = mean
 		}
 		result = append(result, MetricDataPoint{
 			Timestamp: bucketStart,
@@ -432,11 +435,12 @@ func downsampleMetrics(points []rawDataPoint, interval time.Duration, useLastVal
 		if key != bucketStart {
 			flushBucket()
 			bucketStart = key
-			total = 0
+			mean = 0
 			count = 0
 		}
-		total += p.value
 		count++
+		// Divide before subtracting: p.value-mean itself may overflow.
+		mean += p.value/float64(count) - mean/float64(count)
 		last = p
 	}
 	flushBucket()

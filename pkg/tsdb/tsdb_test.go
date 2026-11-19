@@ -1,6 +1,8 @@
 package tsdb
 
 import (
+	"encoding/json"
+	"math"
 	"os"
 	"path/filepath"
 	"testing"
@@ -434,6 +436,59 @@ func TestDownsample(t *testing.T) {
 
 	for i := 1; i < len(result); i++ {
 		assert.Greater(t, result[i].Timestamp, result[i-1].Timestamp)
+	}
+}
+
+func TestDownsampleMetrics_Average(t *testing.T) {
+	points := []rawDataPoint{
+		{timestamp: 0, value: 10},
+		{timestamp: 1000, value: 20},
+		{timestamp: 2000, value: 60},
+		{timestamp: 60000, value: 12.5},
+		{timestamp: 61000, value: 12.5},
+		{timestamp: 62000, value: 12.5},
+	}
+
+	result := downsampleMetrics(points, time.Minute, false)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, int64(0), result[0].Timestamp)
+	assert.Equal(t, float64(30), result[0].Value)
+	assert.Equal(t, int64(60000), result[1].Timestamp)
+	assert.Equal(t, 12.5, result[1].Value)
+
+	// 累积型指标取桶内最后一个值
+	result = downsampleMetrics(points, time.Minute, true)
+
+	require.Len(t, result, 2)
+	assert.Equal(t, float64(60), result[0].Value)
+	assert.Equal(t, 12.5, result[1].Value)
+}
+
+// Finite agent-supplied samples must not average to Inf: JSON cannot encode
+// it and the whole metrics response would be lost.
+func TestDownsampleMetrics_HugeSamplesStayFinite(t *testing.T) {
+	for _, samples := range [][]float64{
+		{1.7e308, 1.7e308, 1.7e308},
+		{math.MaxFloat64, math.MaxFloat64, math.MaxFloat64, math.MaxFloat64},
+		{math.MaxFloat64, -math.MaxFloat64, math.MaxFloat64},
+		{-math.MaxFloat64, -math.MaxFloat64},
+		{math.MaxFloat64, math.Nextafter(math.MaxFloat64, 0), math.MaxFloat64},
+	} {
+		points := make([]rawDataPoint, len(samples))
+		lo, hi := samples[0], samples[0]
+		for i, value := range samples {
+			points[i] = rawDataPoint{timestamp: int64(i), value: value}
+			lo, hi = math.Min(lo, value), math.Max(hi, value)
+		}
+
+		result := downsampleMetrics(points, time.Minute, false)
+
+		require.Len(t, result, 1)
+		assert.GreaterOrEqual(t, result[0].Value, lo, "samples %v", samples)
+		assert.LessOrEqual(t, result[0].Value, hi, "samples %v", samples)
+		_, err := json.Marshal(result)
+		require.NoError(t, err, "samples %v", samples)
 	}
 }
 
