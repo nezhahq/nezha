@@ -647,6 +647,17 @@ func canReportServiceResult(service *model.Service, reporter *model.Server, task
 	return service.UserID == reporter.GetUserID() || userIsAdmin(service.UserID)
 }
 
+// serviceTrustsReporter reports whether an accepted result may move the state
+// the service shares between its reporters: availability, alerts, trigger
+// tasks and the TLS baseline. An admin-owned service is dispatched to covered
+// servers of every user and canReportServiceResult accepts their results, but
+// a member can enrol any number of servers, so only servers of the service
+// owner or of an admin are witnesses.
+func serviceTrustsReporter(service *model.Service, reporter *model.Server) bool {
+	reporterOwner := reporter.GetUserID()
+	return reporterOwner == service.UserID || userIsAdmin(reporterOwner)
+}
+
 // Close shuts down the ServiceSentinel worker goroutine and waits for it to
 // exit. It is idempotent and safe to call more than once.
 //
@@ -770,6 +781,12 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 				log.Printf("NEZHA>> Failed to save service monitor metrics to TSDB: %v", err)
 			}
 		}
+	}
+
+	// A covered server of another user keeps the per-server history written
+	// above, but must not decide the service's shared state.
+	if !serviceTrustsReporter(cs, reporter) {
+		return
 	}
 
 	// 写入当天状态

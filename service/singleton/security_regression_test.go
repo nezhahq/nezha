@@ -755,6 +755,45 @@ func TestServiceMonitorResultAllowsCoveredReporterForAdminOwnedService(t *testin
 	waitForServiceHistory(t, 10, 2)
 }
 
+func TestServiceMonitorResultFromMemberServerDoesNotDecideAdminOwnedService(t *testing.T) {
+	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
+		1:   {Role: model.RoleAdmin},
+		2:   {Role: model.RoleAdmin},
+		200: {Role: model.RoleMember},
+	})
+	ss := newServiceMonitorSecurityHarness(t,
+		&model.Server{Common: model.Common{ID: 1, UserID: 1}, Name: "owner-server"},
+		&model.Server{Common: model.Common{ID: 2, UserID: 200}, Name: "member-server"},
+		&model.Server{Common: model.Common{ID: 3, UserID: 2}, Name: "other-admin-server"},
+	)
+	addServiceMonitorSecurityService(t, ss, &model.Service{
+		Common:   model.Common{ID: 10, UserID: 1},
+		Name:     "admin-service",
+		Type:     model.TaskTypeTCPPing,
+		Target:   "example.invalid:443",
+		Duration: 3600,
+		Cover:    model.ServiceCoverAll,
+	})
+
+	ss.Dispatch(serviceMonitorResult(1, 10, model.TaskTypeTCPPing, true))
+	ss.Dispatch(serviceMonitorResult(2, 10, model.TaskTypeTCPPing, false))
+	ss.Dispatch(serviceMonitorResult(3, 10, model.TaskTypeTCPPing, true))
+
+	// The member server keeps its per-server history, but only the servers of
+	// the service owner and of the other admin decide the shared state.
+	waitForServiceHistory(t, 10, 2)
+	waitForTodayStats(t, ss, 10, 2, 0)
+
+	ss.serviceResponseDataStoreLock.RLock()
+	defer ss.serviceResponseDataStoreLock.RUnlock()
+	if current := ss.serviceResponseDataStore[10]; current.Up != 2 || current.Down != 0 {
+		t.Fatalf("member server moved the admin service window: up=%d down=%d", current.Up, current.Down)
+	}
+	if lastStatus := ss.serviceCurrentStatusData[10].lastStatus; lastStatus != StatusGood {
+		t.Fatalf("expected admin service status %d, got %d", StatusGood, lastStatus)
+	}
+}
+
 func newServiceMonitorSecurityHarness(t *testing.T, servers ...*model.Server) *ServiceSentinel {
 	t.Helper()
 
