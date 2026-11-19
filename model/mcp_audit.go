@@ -3,7 +3,7 @@ package model
 import "time"
 
 // MCPAuditLog 记录每一次 MCP tool 调用，用于事后追责与异常检测。
-// 写入是 best-effort：失败仅打日志，不阻塞业务请求。
+// 写入失败仅打日志；匿名失败行在审计队列满时可被丢弃，带凭据的调用则等待入队、不丢行。
 type MCPAuditLog struct {
 	ID         uint64    `gorm:"primaryKey" json:"id"`
 	CreatedAt  time.Time `gorm:"index" json:"created_at"`

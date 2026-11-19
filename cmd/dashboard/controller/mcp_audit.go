@@ -12,7 +12,9 @@ import (
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
-// mcpAuditWrite 异步写一条 MCP 审计日志。失败仅 log，不阻塞业务。
+// mcpAuditWrite 异步写一条 MCP 审计日志。写入失败仅 log。
+// 队列有界：匿名失败（TokenID == 0）在队列满时丢弃并打日志；带凭据的调用
+// 不允许丢审计，队列满时由请求自身等待写入方腾出位置。
 //
 // argsBytes：tool 的 raw JSON 参数（dispatcher 已经反序列化过）。
 // 只记录 sha256 全文哈希，不保留任何明文片段：server.exec 的 env/stdin、
@@ -51,11 +53,20 @@ func mcpAuditWrite(entry model.MCPAuditLog, argsBytes []byte) {
 			}
 		}()
 	})
-	select {
-	case mcpAuditQueue <- mcpAuditJob{db: db, entry: entry}:
-	default:
+	job := mcpAuditJob{db: db, entry: entry}
+	if entry.TokenID != 0 {
+		// A credentialed call must leave its row: wait for a slot instead of
+		// dropping. The waiter is the request's own handler, so a full queue
+		// slows callers to the writer's pace and still adds no goroutine.
+		mcpAuditQueue <- job
+		return
 	}
-
+	// Anonymous failures stay best-effort so unauthenticated peers cannot park handlers.
+	select {
+	case mcpAuditQueue <- job:
+	default:
+		log.Printf("NEZHA>> mcp audit queue full: dropped anonymous %s/%s row", entry.Tool, entry.Outcome)
+	}
 }
 
 // mcpAuditSync 仅供测试切换为同步写入，生产保持 false。
