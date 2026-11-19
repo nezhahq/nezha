@@ -391,6 +391,15 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 		c.Request = c.Request.WithContext(callCtx)
 	}
 
+	// The middlewares accepted the credential when the request head arrived,
+	// but the client decides when the body follows. Check it again now that the
+	// cancel hook is registered, so nothing invalidated in between is dispatched.
+	if err := revalidateMCPCallCredential(c, tok); err != nil {
+		code, msg := classifyToolError(err)
+		finish(code, code, msg, nil)
+		return
+	}
+
 	result, err := tool.Handler(c, p.Arguments)
 	if err != nil {
 		code, msg := classifyToolError(err)
@@ -403,6 +412,35 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 		return
 	}
 	finish(model.MCPOutcomeOK, "", "", result)
+}
+
+var errMCPCredentialInvalid = newMCPError(model.MCPOutcomePermDenied, "credential revoked or expired")
+
+// revalidateMCPCallCredential repeats at dispatch what the auth middlewares
+// checked on the request head. The revocation registry only learns about
+// explicit revocations and forgets them after revokeTombstoneTTL; OAuth
+// credentials mostly die lazily (password change, refresh rotation, expiry,
+// audience change), so the stored rows are the only authority.
+func revalidateMCPCallCredential(c *gin.Context, tok *model.APIToken) error {
+	if singleton.Conf == nil || !singleton.Conf.MCPEnabled() {
+		return rpc.ErrMCPDisabled
+	}
+	if value, viaOAuth := c.Get(mcpOAuthGrantContextKey); viaOAuth {
+		grant, _ := value.(*model.MCPOAuthGrant)
+		if grant == nil || revalidateMCPOAuthCredential(grant.ID, grant.AccessHash, tok.ID, tok.UserID) != nil {
+			return errMCPCredentialInvalid
+		}
+		return nil
+	}
+	var current model.APIToken
+	if singleton.DB.First(&current, tok.ID).Error != nil || current.UserID != tok.UserID || current.IsExpired(time.Now()) {
+		return errMCPCredentialInvalid
+	}
+	var owner model.User
+	if singleton.DB.Select("id").First(&owner, tok.UserID).Error != nil {
+		return errMCPCredentialInvalid
+	}
+	return nil
 }
 
 // classifyToolError 把任何 handler 返回的 error 归类成审计 outcome + 安全错误消息。
