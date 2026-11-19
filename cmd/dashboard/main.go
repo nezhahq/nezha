@@ -191,6 +191,7 @@ func main() {
 	if singleton.Conf.HTTPS.ListenPort != 0 {
 		muxServerHTTPS = &http.Server{
 			ReadHeaderTimeout: dashboardReadHeaderTimeout,
+			MaxHeaderBytes:    dashboardMaxHeaderBytes,
 			Addr:              fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
 			Handler:           muxHandler,
 			TLSConfig: &tls.Config{

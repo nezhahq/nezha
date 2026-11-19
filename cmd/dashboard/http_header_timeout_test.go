@@ -1,15 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 )
 
 func TestDashboardRejectsIncompleteHTTPHeaders(t *testing.T) {
@@ -102,6 +106,61 @@ func TestDashboardHeaderTimeoutDoesNotCancelHTTP2Stream(t *testing.T) {
 			body, err := io.ReadAll(response.Body)
 			require.NoError(t, err)
 			require.Equal(t, "still streaming", string(body))
+		})
+	}
+}
+
+// HPACK sends a repeated field as one byte, so the decoded list has to be bounded.
+func TestDashboardHTTP2BoundsDecodedHeaderList(t *testing.T) {
+	// With its 32 bytes of HPACK overhead this cookie exactly fills the dynamic table.
+	cookie := hpack.HeaderField{Name: "cookie", Value: strings.Repeat("a", 4096-32-len("cookie"))}
+	for _, tc := range []struct {
+		cookies int
+		status  string
+	}{
+		{dashboardMaxHeaderBytes / 4096 / 2, "200"},
+		{dashboardMaxHeaderBytes / 4096 * 2, "431"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(nil)
+			server.Config = newDashboardHTTPServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+			server.Config.Protocols = new(http.Protocols)
+			server.Config.Protocols.SetUnencryptedHTTP2(true)
+			server.Start()
+			defer server.Close()
+
+			conn, err := net.Dial("tcp", server.Listener.Addr().String())
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetDeadline(time.Now().Add(10*time.Second)))
+			_, err = io.WriteString(conn, http2.ClientPreface)
+			require.NoError(t, err)
+			framer := http2.NewFramer(conn, conn)
+			framer.ReadMetaHeaders = hpack.NewDecoder(4096, nil)
+			require.NoError(t, framer.WriteSettings())
+
+			var request bytes.Buffer
+			encoder := hpack.NewEncoder(&request)
+			fields := []hpack.HeaderField{{Name: ":method", Value: "GET"}, {Name: ":scheme", Value: "http"},
+				{Name: ":path", Value: "/"}, {Name: ":authority", Value: "dashboard"}}
+			for range tc.cookies {
+				fields = append(fields, cookie)
+			}
+			for _, field := range fields {
+				require.NoError(t, encoder.WriteField(field))
+			}
+			require.Less(t, request.Len(), 4096, "cookies after the first must be table references")
+			require.NoError(t, framer.WriteHeaders(http2.HeadersFrameParam{
+				StreamID: 1, BlockFragment: request.Bytes(), EndStream: true, EndHeaders: true}))
+
+			for {
+				frame, err := framer.ReadFrame()
+				require.NoError(t, err)
+				if response, ok := frame.(*http2.MetaHeadersFrame); ok {
+					require.Equal(t, tc.status, response.PseudoValue("status"))
+					return
+				}
+			}
 		})
 	}
 }
