@@ -208,6 +208,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 		}
 
 		var bind model.Oauth2Bind
+		var bindUser model.User
 		state.Provider = strings.ToLower(state.Provider)
 		switch state.Action {
 		case model.RTypeBind:
@@ -217,32 +218,50 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 			}
 			user := u.(*model.User)
 
-			result := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).Limit(1).Find(&bind)
-			if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
-				return nil, newGormError("%v", result.Error)
-			}
-			bind.UserID = user.ID
-			bind.Provider = state.Provider
-			bind.OpenID = openId
+			// The session was authenticated before exchangeOpenId waited for the
+			// provider; a credential change during that wait has revoked it. Check
+			// it again in the transaction that stores the binding, so that no such
+			// change can land between the check and the write either.
+			err = singleton.DB.Transaction(func(tx *gorm.DB) error {
+				if !jwtSessionStillLive(tx, state.SessionID, user.ID) {
+					return singleton.Localizer.ErrorT("unauthorized")
+				}
 
-			if result.Error == gorm.ErrRecordNotFound {
-				result = singleton.DB.Create(&bind)
-			} else {
-				result = singleton.DB.Save(&bind)
+				result := tx.Where("provider = ? AND open_id = ?", state.Provider, openId).Limit(1).Find(&bind)
+				if result.Error != nil && result.Error != gorm.ErrRecordNotFound {
+					return newGormError("%v", result.Error)
+				}
+				bind.UserID = user.ID
+				bind.Provider = state.Provider
+				bind.OpenID = openId
+
+				if result.Error == gorm.ErrRecordNotFound {
+					result = tx.Create(&bind)
+				} else {
+					result = tx.Save(&bind)
+				}
+				if result.Error != nil {
+					return newGormError("%v", result.Error)
+				}
+				return nil
+			})
+			if err != nil {
+				return nil, err
 			}
-			if result.Error != nil {
-				return nil, newGormError("%v", result.Error)
-			}
+			// The session issued below continues the one that was just checked.
+			// Issue it for the token_version that one was authenticated against,
+			// not for a reloaded one: a credential change after the check then
+			// leaves it as stale as the session it came from.
+			bindUser = *user
 		default:
 			if err := singleton.DB.Where("provider = ? AND open_id = ?", state.Provider, openId).First(&bind).Error; err != nil {
 				return nil, singleton.Localizer.ErrorT("oauth2 user not binded yet")
 			}
+			if err := singleton.DB.First(&bindUser, bind.UserID).Error; err != nil {
+				return nil, newGormError("%v", err)
+			}
 		}
 
-		var bindUser model.User
-		if err := singleton.DB.First(&bindUser, bind.UserID).Error; err != nil {
-			return nil, newGormError("%v", err)
-		}
 		claims, err := issueJWTSession(c, &bindUser, singleton.Conf.JWTTimeout)
 		if err != nil {
 			return nil, err
