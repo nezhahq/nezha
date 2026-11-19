@@ -128,6 +128,11 @@ func mcpOAuthToken(c *gin.Context) {
 		code := "invalid_grant"
 		if form.Get("grant_type") != "authorization_code" && form.Get("grant_type") != "refresh_token" {
 			code = "unsupported_grant_type"
+		} else if err != nil && !errors.Is(err, errMCPOAuthInvalidGrant) {
+			// A storage failure rolled the transaction back, so nothing was
+			// consumed or revoked. Do not report it as a verdict on the grant.
+			mcpOAuthError(c, http.StatusServiceUnavailable, "temporarily_unavailable", "token endpoint unavailable")
+			return
 		}
 		mcpOAuthError(c, 400, code, errMCPOAuthInvalidGrant.Error())
 		return

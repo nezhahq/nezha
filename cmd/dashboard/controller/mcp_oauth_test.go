@@ -20,6 +20,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/nezhahq/nezha/service/singleton"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestMCPOAuthDiscoveryThroughDashboardRouter(t *testing.T) {
@@ -393,6 +394,46 @@ func TestMCPOAuthRefreshRotationReplayAndRevocation(t *testing.T) {
 	require.Equal(t, 401, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
 	refresh.Set("refresh_token", tokens.RefreshToken)
 	require.Equal(t, 400, s.request(t, "POST", mcpOAuthPath+"/token", refresh, false).Code)
+}
+
+// A writer outside the OAuth mutex (here the last_used_at update every /mcp
+// request performs) must delay a refresh replay, not make its revocation vanish.
+func TestMCPOAuthRefreshReplayRevokesWhileAnotherWriterHoldsTheDatabase(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	tokens := s.tokens(t)
+	refresh := url.Values{"grant_type": {"refresh_token"}, "client_id": {s.clientID}, "resource": {"https://example.com/mcp"}, "refresh_token": {tokens.RefreshToken}}
+	response := s.request(t, "POST", mcpOAuthPath+"/token", refresh, false)
+	require.Equal(t, 200, response.Code, response.Body.String())
+	var rotated mcpOAuthTokenResponse
+	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &rotated))
+
+	writing, done := make(chan struct{}), make(chan error, 1)
+	go func() {
+		done <- singleton.DB.Transaction(func(tx *gorm.DB) error {
+			err := tx.Model(&model.APIToken{}).Where("user_id = ?", s.userID).Update("last_used_at", time.Now()).Error
+			close(writing)
+			time.Sleep(300 * time.Millisecond)
+			return err
+		})
+	}()
+	<-writing
+	replay := s.request(t, "POST", mcpOAuthPath+"/token", refresh, false)
+	require.NoError(t, <-done)
+	require.Equal(t, 400, replay.Code)
+	require.Contains(t, replay.Body.String(), "invalid_grant")
+	require.Equal(t, 401, s.rpc(t, rotated.AccessToken, "initialize", nil).Code, "refresh replay revokes the token family")
+}
+
+func TestMCPOAuthTokenStorageFailureIsNotInvalidGrant(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	tokens := s.tokens(t)
+	require.NoError(t, singleton.DB.Migrator().RenameTable("mcp_oauth_grants", "mcp_oauth_grants_unavailable"))
+	refresh := url.Values{"grant_type": {"refresh_token"}, "client_id": {s.clientID}, "resource": {"https://example.com/mcp"}, "refresh_token": {tokens.RefreshToken}}
+	failed := s.request(t, "POST", mcpOAuthPath+"/token", refresh, false)
+	require.Equal(t, 503, failed.Code, failed.Body.String())
+	require.Contains(t, failed.Body.String(), "temporarily_unavailable")
+	require.NoError(t, singleton.DB.Migrator().RenameTable("mcp_oauth_grants_unavailable", "mcp_oauth_grants"))
+	require.Equal(t, 200, s.request(t, "POST", mcpOAuthPath+"/token", refresh, false).Code, "a failed attempt must not consume the refresh token")
 }
 
 func TestMCPOAuthTokenLifecycleConstraints(t *testing.T) {

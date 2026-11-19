@@ -50,7 +50,16 @@ func mcpOAuthTransaction(fn func(*gorm.DB) error) error {
 	// the revocation path instead of being mistaken for an invalid grant.
 	mcpOAuthMutationMu.Lock()
 	defer mcpOAuthMutationMu.Unlock()
-	return singleton.DB.Transaction(fn)
+	return singleton.DB.Transaction(func(tx *gorm.DB) error {
+		// The mutex cannot order writers outside OAuth (PAT last_used_at, audit
+		// rows, ...), which use their own connections. Take the write lock with
+		// a no-op write before fn reads anything: SQLite waits for busy_timeout
+		// here, but fails an upgrade from a read lock at once.
+		if err := tx.Exec("UPDATE mcp_oauth_clients SET disabled = disabled WHERE 0").Error; err != nil {
+			return err
+		}
+		return fn(tx)
+	})
 }
 
 // Pin OAuth discovery and token audiences to operator configuration. Never
