@@ -960,3 +960,29 @@ func TestMCPOAuthUnknownAccessTokenIsCountedByWAF(t *testing.T) {
 	require.Equal(t, 401, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
 	require.Zero(t, counted())
 }
+
+// The cap of 100 authorizations per user is counted on mcp_oauth_grants. A
+// member's personal API tokens share api_tokens with the OAuth permission
+// identities, have no quota and may be named "OAuth: ..." by their owner, so
+// they must neither be read under the write lock nor use up the cap.
+func TestMCPOAuthGrantCapCountsGrantsNotAPITokens(t *testing.T) {
+	s := setupMCPOAuthSession(t)
+	expiry := time.Now().Add(time.Hour)
+	for i := range 100 {
+		require.NoError(t, singleton.DB.Create(&model.APIToken{UserID: s.userID, Name: "OAuth: personal", TokenHash: model.HashAPIToken("personal-" + strconv.Itoa(i)), ExpiresAt: &expiry}).Error)
+	}
+	s.tokens(t)
+	var grant model.MCPOAuthGrant
+	require.NoError(t, singleton.DB.First(&grant).Error)
+	require.Equal(t, s.userID, grant.UserID)
+
+	for i := range 99 {
+		name := "filler-" + strconv.Itoa(i)
+		permission := model.APIToken{UserID: s.userID, Name: "renamed by its owner", TokenHash: model.HashAPIToken(name), ExpiresAt: &expiry}
+		require.NoError(t, singleton.DB.Create(&permission).Error)
+		require.NoError(t, singleton.DB.Create(&model.MCPOAuthGrant{ID: name, APITokenID: permission.ID, UserID: s.userID, ClientID: s.clientID, AccessHash: model.HashAPIToken(name), ExpiresAt: expiry}).Error)
+	}
+	refused := s.request(t, "POST", mcpOAuthPath+"/token", s.exchangeForm(s.approve(t)), false)
+	require.Equal(t, 400, refused.Code, refused.Body.String())
+	require.Contains(t, refused.Body.String(), "invalid_grant")
+}

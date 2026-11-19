@@ -161,8 +161,11 @@ func mcpOAuthExchangeCode(tx *gorm.DB, client *model.MCPOAuthClient, form url.Va
 	if tx.First(&user, code.UserID).Error != nil || user.TokenVersion != code.UserVersion {
 		return nil, 0, errMCPOAuthInvalidGrant
 	}
+	// Count the grants themselves. api_tokens also holds the user's personal
+	// tokens, which are unbounded and may carry any name, and this transaction
+	// already holds the database write lock while it counts.
 	var count int64
-	if err := tx.Model(&model.APIToken{}).Where("user_id = ? AND name LIKE ? AND expires_at > ?", user.ID, "OAuth: %", time.Now()).Count(&count).Error; err != nil {
+	if err := tx.Model(&model.MCPOAuthGrant{}).Where("user_id = ? AND expires_at > ?", user.ID, time.Now()).Count(&count).Error; err != nil {
 		return nil, 0, err
 	}
 	if count >= 100 {
@@ -176,7 +179,7 @@ func mcpOAuthExchangeCode(tx *gorm.DB, client *model.MCPOAuthClient, form url.Va
 	if err := tx.Create(&permission).Error; err != nil {
 		return nil, 0, err
 	}
-	grant := model.MCPOAuthGrant{ID: mcpOAuthRandom(), APITokenID: permission.ID, ClientID: client.ID, Resource: code.Resource, UserVersion: user.TokenVersion, ExpiresAt: expiry}
+	grant := model.MCPOAuthGrant{ID: mcpOAuthRandom(), APITokenID: permission.ID, UserID: user.ID, ClientID: client.ID, Resource: code.Resource, UserVersion: user.TokenVersion, ExpiresAt: expiry}
 	response := mcpOAuthRotateCredentials(&grant, permission.Scopes())
 	if err := tx.Create(&grant).Error; err != nil {
 		return nil, 0, err

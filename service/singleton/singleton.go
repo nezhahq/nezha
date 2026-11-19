@@ -113,6 +113,11 @@ func InitDBFromPath(path string) error {
 			return err
 		}
 	}
+	// Grants issued before mcp_oauth_grants.user_id existed take the owner of
+	// their permission identity, so they keep counting towards the per-user cap.
+	if err := DB.Exec("UPDATE mcp_oauth_grants SET user_id = COALESCE((SELECT user_id FROM api_tokens WHERE api_tokens.id = mcp_oauth_grants.api_token_id), 0) WHERE user_id = 0").Error; err != nil {
+		return err
+	}
 
 	// 旧 mcp:* scope 与 nezha:* 并行了一段时间，HasScope 通过别名让 mcp:fs:write
 	// 静默扩到 REST nezha:server:write。统一命名后这里把残留旧 scope 一次性

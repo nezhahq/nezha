@@ -31,9 +31,12 @@ type MCPOAuthCode struct {
 
 // MCPOAuthGrant uses an APIToken as the existing permission/audit/revocation
 // identity, but its opaque access credentials are accepted only by /mcp.
+// UserID repeats the owner of that APIToken so the per-user grant cap is
+// counted on this table and never on the user's api_tokens rows.
 type MCPOAuthGrant struct {
 	ID              string `gorm:"primaryKey;size:64"`
 	APITokenID      uint64 `gorm:"uniqueIndex"`
+	UserID          uint64 `gorm:"index;not null;default:0"`
 	ClientID        string `gorm:"index"`
 	Resource        string
 	UserVersion     uint64
