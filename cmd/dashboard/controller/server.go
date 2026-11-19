@@ -81,7 +81,7 @@ func updateServer(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)
 	}
 
-	if !s.HasPermission(c) {
+	if !s.HasPermission(c) || !serverRecordWritable(c, s.ID) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -135,6 +135,12 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	}
 
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(servers)) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+	// Deleting a server mid-transfer cancels the transfer and frees its UUID
+	// for re-enrolment; the destination user does not own it until the agent
+	// has rotated.
+	if slices.ContainsFunc(servers, func(id uint64) bool { return !serverRecordWritable(c, id) }) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 

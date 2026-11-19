@@ -29,3 +29,11 @@ func serverTaskAdmission(c *gin.Context, serverID uint64) func() (func(), error)
 		return release, err
 	}
 }
+
+// serverRecordWritable gates edits and deletes of the server record itself,
+// which dispatch nothing and so take no control lease. Server.HasPermission
+// alone admits the destination of a transfer the agent has not confirmed yet.
+// Admins stay exempt, as for the control lease.
+func serverRecordWritable(c *gin.Context, serverID uint64) bool {
+	return callerIsAdmin(c) || singleton.ServerOwnershipSettled(serverID, getUid(c))
+}
