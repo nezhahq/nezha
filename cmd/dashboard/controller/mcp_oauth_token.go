@@ -262,6 +262,19 @@ func mcpOAuthDeleteGrant(tx *gorm.DB, grant *model.MCPOAuthGrant) error {
 	return tx.Where("id = ?", grant.ID).Delete(&model.MCPOAuthGrant{}).Error
 }
 
+// mcpOAuthDeletePendingCodes drops the authorization codes that the owner of
+// an OAuth permission identity approved for the same client but that were not
+// exchanged yet. They are not listed as authorizations, so a dashboard
+// revocation must take them along or the client mints a fresh grant from one
+// right afterwards. Exchanged codes stay: replay detection still needs them.
+// Call it before the api_tokens row is deleted.
+func mcpOAuthDeletePendingCodes(tx *gorm.DB, apiTokenID uint64) error {
+	return tx.Where("grant_id = ? AND client_id IN (?) AND user_id IN (?)", "",
+		tx.Model(&model.MCPOAuthGrant{}).Select("client_id").Where("api_token_id = ?", apiTokenID),
+		tx.Model(&model.APIToken{}).Select("user_id").Where("id = ?", apiTokenID)).
+		Delete(&model.MCPOAuthCode{}).Error
+}
+
 func mcpOAuthRevoke(c *gin.Context) {
 	client, err := mcpOAuthClientFromForm(c)
 	if err != nil {

@@ -25,7 +25,7 @@ func setupAPITokenTest(t *testing.T) func() {
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
 	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.Server{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.APIToken{}, &model.Server{}, &model.MCPOAuthCode{}, &model.MCPOAuthGrant{}))
 	singleton.DB = db
 	return func() {
 		_ = sqlDB.Close()

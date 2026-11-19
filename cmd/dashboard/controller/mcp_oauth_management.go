@@ -133,6 +133,9 @@ func revokeMCPOAuthGrant(c *gin.Context) (any, error) {
 			return err
 		}
 		tokenID = grant.APITokenID
+		if err := mcpOAuthDeletePendingCodes(tx, grant.APITokenID); err != nil {
+			return err
+		}
 		return mcpOAuthDeleteGrant(tx, &grant)
 	})
 	if err != nil {

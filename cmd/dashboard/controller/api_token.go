@@ -179,16 +179,30 @@ func deleteAPIToken(c *gin.Context) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	q := singleton.DB.Where("id = ?", id)
-	if !callerIsAdmin(c) {
-		q = q.Where("user_id = ?", getUid(c))
-	}
-	res := q.Delete(&model.APIToken{})
-	if res.Error != nil {
-		return nil, newGormError("%v", res.Error)
-	}
-	if res.RowsAffected == 0 {
-		return nil, errors.New("not found")
+	err = mcpOAuthTransaction(func(tx *gorm.DB) error {
+		q := tx.Where("id = ?", id)
+		if !callerIsAdmin(c) {
+			q = q.Where("user_id = ?", getUid(c))
+		}
+		var tok model.APIToken
+		if err := q.Take(&tok).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return errors.New("not found")
+			}
+			return newGormError("%v", err)
+		}
+		// An "OAuth: <client>" row is the permission identity of an MCP OAuth
+		// grant, so deleting it revokes that authorization as a whole.
+		if err := mcpOAuthDeletePendingCodes(tx, tok.ID); err != nil {
+			return newGormError("%v", err)
+		}
+		if err := tx.Delete(&tok).Error; err != nil {
+			return newGormError("%v", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	// Fan out the revocation to any active long-lived connection that
 	// carries this PAT — ws/server, ws/transfer, terminal, FM. Without

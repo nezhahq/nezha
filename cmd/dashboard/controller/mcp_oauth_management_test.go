@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"testing"
 	"time"
 
@@ -249,4 +250,34 @@ func TestMCPOAuthManagementAvailableWhenMCPDisabledAndPagination(t *testing.T) {
 	page := s.request(t, "GET", "/dashboard/settings/mcp-oauth", nil, false)
 	require.Equal(t, 200, page.Code)
 	require.Contains(t, page.Body.String(), "independent admin frontend")
+}
+
+func TestMCPOAuthManagementRevocationDropsPendingCodes(t *testing.T) {
+	for _, mode := range []string{"grant", "api token"} {
+		t.Run(mode, func(t *testing.T) {
+			s := setupMCPOAuthSession(t)
+			tokens := s.tokens(t)
+			pending := s.approve(t)
+			var grant model.MCPOAuthGrant
+			require.NoError(t, singleton.DB.First(&grant, "access_hash = ?", model.HashAPIToken(tokens.AccessToken)).Error)
+			// Only the revoking owner's unexchanged codes for this client may go.
+			unrelated := []model.MCPOAuthCode{
+				{Hash: "other-user", ClientID: s.clientID, UserID: 200, ExpiresAt: time.Now().Add(time.Minute)},
+				{Hash: "other-client", ClientID: "other-client", UserID: s.userID, ExpiresAt: time.Now().Add(time.Minute)},
+			}
+			require.NoError(t, singleton.DB.Create(&unrelated).Error)
+			path := "/api/v1/mcp/oauth/grants/" + grant.ID
+			if mode == "api token" {
+				path = "/api/v1/api-tokens/" + strconv.FormatUint(grant.APITokenID, 10)
+			}
+			oauthManagementResult(t, s.request(t, "DELETE", path, nil, true), true)
+			require.Equal(t, 401, s.rpc(t, tokens.AccessToken, "initialize", nil).Code)
+			require.Equal(t, 400, s.request(t, "POST", mcpOAuthPath+"/token", s.exchangeForm(pending), false).Code, "a code approved before the revocation must not mint a new grant")
+			var hashes []string
+			require.NoError(t, singleton.DB.Model(&model.MCPOAuthCode{}).Order("hash").Pluck("hash", &hashes).Error)
+			require.Len(t, hashes, 3, "exchanged and unrelated codes must be kept")
+			require.Subset(t, hashes, []string{"other-client", "other-user"})
+			require.Equal(t, 200, s.rpc(t, s.tokens(t).AccessToken, "initialize", nil).Code, "a new approval must still work")
+		})
+	}
 }
