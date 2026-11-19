@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -425,6 +426,11 @@ func classifyToolError(err error) (code, msg string) {
 }
 
 // extractServerID 从 raw arguments JSON 里提取 server_id（best-effort，只用于审计字段）。
+//
+// server_id 完全由调用方填写，不使用它的 tool（server.list / meta.whoami）和被拒绝的
+// 调用也会走到这里。database/sql 无法绑定高位为 1 的 uint64，原样写入会让整条审计
+// INSERT 失败，调用方就能按次决定自己是否留痕；这种 ID 不可能对应真实 server，
+// 记 0 即可，args_hash 仍能关联到这次调用。
 func extractServerID(raw json.RawMessage) uint64 {
 	if len(raw) == 0 {
 		return 0
@@ -433,6 +439,9 @@ func extractServerID(raw json.RawMessage) uint64 {
 		ServerID uint64 `json:"server_id"`
 	}
 	_ = json.Unmarshal(raw, &probe)
+	if probe.ServerID > math.MaxInt64 {
+		return 0
+	}
 	return probe.ServerID
 }
 
