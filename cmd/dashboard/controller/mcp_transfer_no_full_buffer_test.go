@@ -94,7 +94,7 @@ func TestRelayDownloadFrames_DoesNotBufferEntirePayloadInMemory(t *testing.T) {
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 
-	if err := relayDownloadFrames(c, stream, size); err != nil {
+	if err := relayDownloadFrames(c, stream, size, nil); err != nil {
 		t.Fatalf("relayDownloadFrames returned err: %v", err)
 	}
 

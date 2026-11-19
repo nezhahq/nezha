@@ -515,19 +515,25 @@ func transferDownloadHandler(c *gin.Context) {
 		return
 	}
 
-	if err := relayDownloadFrames(c, stream, hdr.Size); err != nil {
+	// From the first body byte on, the client decides how long the response
+	// takes and whether its last byte is ever read. The row is therefore written
+	// once the agent's payload is complete and verified, before any of it is
+	// sent; a failure after that is the client's and adds no agent_error row.
+	recorded := false
+	err = relayDownloadFrames(c, stream, hdr.Size, func() {
+		recorded = true
+		_ = singleton.DB.Create(&model.MCPAuditLog{
+			UserID:   entry.UserID,
+			TokenID:  entry.TokenID,
+			Tool:     "fs.download",
+			ServerID: entry.ServerID,
+			Outcome:  model.MCPOutcomeOK,
+			IP:       c.GetString(model.CtxKeyRealIPStr),
+		}).Error
+	})
+	if err != nil && !recorded {
 		writeTransferFailureAudit(c, entry, "fs.download", model.MCPOutcomeAgentError, err)
-		return
 	}
-
-	_ = singleton.DB.Create(&model.MCPAuditLog{
-		UserID:   entry.UserID,
-		TokenID:  entry.TokenID,
-		Tool:     "fs.download",
-		ServerID: entry.ServerID,
-		Outcome:  model.MCPOutcomeOK,
-		IP:       c.GetString(model.CtxKeyRealIPStr),
-	}).Error
 }
 
 // transferUploadHandler 处理 POST /mcp/upload/:token；body 转发到 agent，
@@ -650,7 +656,8 @@ func transferUploadHandler(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, model.FsWriteResult{Size: int64(final.Size), SHA256: hex.EncodeToString(final.SHA256)})
+	// Recorded before the reply, like fs.download: the write to the client is
+	// not a step the audit row may wait for.
 	_ = singleton.DB.Create(&model.MCPAuditLog{
 		UserID:   entry.UserID,
 		TokenID:  entry.TokenID,
@@ -659,6 +666,7 @@ func transferUploadHandler(c *gin.Context) {
 		Outcome:  model.MCPOutcomeOK,
 		IP:       c.GetString(model.CtxKeyRealIPStr),
 	}).Error
+	c.JSON(http.StatusOK, model.FsWriteResult{Size: int64(final.Size), SHA256: hex.EncodeToString(final.SHA256)})
 }
 
 // writeTransferFailureAudit 是 fs.upload / fs.download HTTP handler 失败路径
@@ -811,7 +819,9 @@ func acquireDownloadSpoolShare(userID uint64) (func(), bool) {
 	}, true
 }
 
-func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) error {
+// beforeBody, when not nil, is called once the payload is complete and
+// verified, before the first byte of it is written to the client.
+func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64, beforeBody func()) error {
 	// Bound disk occupancy independently of IOStream quotas and client reading speed.
 	select {
 	case downloadSpoolSlots <- struct{}{}:
@@ -903,6 +913,9 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) 
 	if err := spool.Rewind(); err != nil {
 		c.String(http.StatusInternalServerError, "transfer spool rewind: "+err.Error())
 		return err
+	}
+	if beforeBody != nil {
+		beforeBody()
 	}
 	c.Header("Content-Type", "application/octet-stream")
 	c.Header("Content-Length", strconv.FormatInt(size, 10))

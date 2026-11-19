@@ -19,7 +19,7 @@ func relayDownloadFramesRecorded(size int64, src bytes.Buffer) (*httptest.Respon
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/mcp/download/x", nil)
-	err := relayDownloadFrames(c, &fixedSizeFrameStream{buf: src}, size)
+	err := relayDownloadFrames(c, &fixedSizeFrameStream{buf: src}, size, nil)
 	return w, err
 }
 

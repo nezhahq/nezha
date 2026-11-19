@@ -352,20 +352,18 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 	}
 
 	finish := func(outcome, errCode, errMsg string, result any) {
+		var textPayload string
 		if outcome == model.MCPOutcomeOK {
-			textPayload, err := marshalMCPToolResult(result)
-			if err != nil {
+			var err error
+			if textPayload, err = marshalMCPToolResult(result); err != nil {
 				outcome = model.MCPOutcomeAgentError
 				errCode = model.MCPOutcomeAgentError
 				errMsg = "failed to encode tool result: " + err.Error()
 				result = nil
-			} else {
-				writeJSONRPCResult(c, req.ID, mcpToolCallResult{
-					Content:           []mcpContent{{Type: "text", Text: textPayload}},
-					StructuredContent: result,
-				})
 			}
 		}
+		// The call is audited before it is answered: how long the response
+		// takes, and whether it is ever read to the end, is up to the client.
 		audit.Outcome = outcome
 		audit.ErrorCode = errCode
 		audit.ErrorMsg = truncateString(errMsg, 512)
@@ -374,6 +372,10 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 		mcpAuditWrite(audit, p.Arguments)
 
 		if outcome == model.MCPOutcomeOK {
+			writeJSONRPCResult(c, req.ID, mcpToolCallResult{
+				Content:           []mcpContent{{Type: "text", Text: textPayload}},
+				StructuredContent: result,
+			})
 			return
 		}
 		// Semantic tool failures may retain a typed structured result (notably
