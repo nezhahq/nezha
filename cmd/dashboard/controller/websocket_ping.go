@@ -58,12 +58,17 @@ func websocketPingLoop(ctx context.Context, ticks <-chan time.Time, writer webso
 func startWebsocketPing(ctx context.Context, ticks <-chan time.Time, connection websocketPingConnection) func() {
 	workerContext, cancel := context.WithCancel(ctx)
 	workerDone := make(chan struct{})
+	closeConnection := sync.OnceFunc(func() { _ = connection.Close() })
 	go func() {
 		defer close(workerDone)
-		_ = websocketPingLoop(workerContext, ticks, connection)
+		if err := websocketPingLoop(workerContext, ticks, connection); err != nil {
+			// The peer is gone, and nothing else is guaranteed to notice: a
+			// relay blocked on the agent never touches the WebSocket again.
+			closeConnection()
+		}
 	}()
 	return func() {
-		_ = connection.Close()
+		closeConnection()
 		cancel()
 		<-workerDone
 	}

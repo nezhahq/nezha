@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -113,7 +114,12 @@ func terminalStream(c *gin.Context) (any, error) {
 	}
 	wsConn.SetReadLimit(terminalWebSocketInputLimit)
 	conn := websocketx.NewConn(wsConn)
-	pingTransport := newWebsocketPingTransport(conn, wsConn.Close)
+	// Ending the session must detach the stream too: closing only the
+	// WebSocket does not end a relay that is blocked writing to an agent
+	// that stopped reading, and the deferred CloseStream waits for that relay.
+	pingTransport := newWebsocketPingTransport(conn, func() error {
+		return errors.Join(wsConn.Close(), rpc.NezhaHandlerSingleton.CloseStream(streamId))
+	})
 	stopPing := startWebsocketPingTicker(c.Request.Context(), time.Second*10, pingTransport)
 
 	deregisterPAT := registerPATConnection(c, func() { _ = pingTransport.Close() })

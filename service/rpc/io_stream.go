@@ -119,5 +119,12 @@ func (s *NezhaHandler) startStreamContext(streamId string, stream *ioStreamConte
 		_, copyErr := io.CopyBuffer(agentIo, userIo, bp.buf)
 		errCh <- copyErr
 	}()
-	return <-errCh
+	// Closing the endpoints does not interrupt a copy blocked in an agent Send,
+	// so a detached stream must release its caller without waiting for one.
+	select {
+	case err := <-errCh:
+		return err
+	case <-stream.revokedCh:
+		return errors.New("stream revoked")
+	}
 }

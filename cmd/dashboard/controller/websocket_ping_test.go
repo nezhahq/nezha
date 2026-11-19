@@ -150,3 +150,27 @@ func TestWebsocketPingStop_unblocksPermanentlyBlockedWriteBeforeJoin(t *testing.
 }
 
 var _ websocketPingWriter = (*pingWriterFake)(nil)
+
+// A failed ping is the only sign that the browser is gone while the relay is
+// blocked on the agent, so it has to end the session instead of being dropped.
+func TestStartWebsocketPing_closesConnectionWhenPingFails(t *testing.T) {
+	// Given
+	ticks := make(chan time.Time, 1)
+	closed := make(chan struct{})
+	writer := &pingWriterFake{writeErr: errors.New("broken pipe")}
+	stop := startWebsocketPing(context.Background(), ticks, newWebsocketPingTransport(writer, func() error {
+		close(closed)
+		return nil
+	}))
+
+	// When
+	ticks <- time.Time{}
+
+	// Then
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("connection left open after a failed ping")
+	}
+	stop() // must not close a second time
+}
