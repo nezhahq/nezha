@@ -31,6 +31,9 @@ type OnlineHistoryRecorder struct {
 	closing map[uint64][]*onlineSessionClosing
 	// Preserve the first disconnect while startup reads are unavailable.
 	recoveryDisconnects map[uint64]time.Time
+	// lastOpened 是每台服务器最近一次新建会话行的时刻。重连频率由 agent 决定，
+	// 据此把新建会话限制为每个在线窗口至多一条，避免反复重连无限写入会话行。
+	lastOpened map[uint64]time.Time
 }
 
 type onlineSessionRuntime struct {
@@ -54,6 +57,7 @@ func NewOnlineHistoryRecorder() *OnlineHistoryRecorder {
 		open:                make(map[uint64]*onlineSessionRuntime),
 		closing:             make(map[uint64][]*onlineSessionClosing),
 		recoveryDisconnects: make(map[uint64]time.Time),
+		lastOpened:          make(map[uint64]time.Time),
 	}
 	r.mu.Lock()
 	r.restoreOngoingSessions()
@@ -135,6 +139,8 @@ func (r *OnlineHistoryRecorder) flushClosing(serverID uint64) {
 
 // RecordOnline 记录一次状态上报：无进行中会话时开启新会话（重启遗留且仍在
 // 窗口内的 Ongoing 会话直接续接）；已有会话时节流落库 LastActiveAt。
+// 每台服务器在一个在线窗口内至多新建一条会话：窗口内再次重连不落库，
+// 这段时间保持离线（不并入任何会话），窗口过后的下一次上报照常开启新会话。
 func (r *OnlineHistoryRecorder) RecordOnline(serverID uint64, at time.Time) {
 	at = at.UTC()
 	if r.observe(serverID, at) {
@@ -173,11 +179,19 @@ func (r *OnlineHistoryRecorder) RecordOnline(serverID uint64, at time.Time) {
 
 	// All ongoing rows are owned by open or closing after successful recovery.
 
+	// The agent decides how often it reconnects; without this bound every
+	// reconnect inserts a row that is retained for the whole statistics window.
+	// A clock stepped backwards must not keep the server offline.
+	if opened, ok := r.lastOpened[serverID]; ok && !at.Before(opened) && at.Sub(opened) < model.OnlineActiveWindow {
+		return
+	}
 	s := model.OnlineSession{ServerID: serverID, StartedAt: at, LastActiveAt: at, Ongoing: true}
 	if err := DB.Create(&s).Error; err != nil {
 		log.Printf("NEZHA>> Failed to create online session: %v", err)
 		return
 	}
+	// lastOpened is guarded by dbMu, which every writer of it holds.
+	r.lastOpened[serverID] = at
 	r.mu.Lock()
 	r.open[serverID] = &onlineSessionRuntime{id: s.ID, lastPersist: at, lastObserved: at}
 	r.mu.Unlock()
@@ -294,6 +308,12 @@ func (r *OnlineHistoryRecorder) SweepStale(now time.Time, lastActiveFn func(serv
 		r.flushClosing(id)
 	}
 	r.persistOverdue(candidates)
+	// Entries past the window no longer limit anything (deleted servers included).
+	for id, opened := range r.lastOpened {
+		if now.Sub(opened) >= model.OnlineActiveWindow {
+			delete(r.lastOpened, id)
+		}
+	}
 	r.dbMu.Unlock()
 	for id, candidate := range candidates {
 		lastActive, ok := lastActiveFn(id)

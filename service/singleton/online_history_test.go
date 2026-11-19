@@ -214,6 +214,42 @@ func TestRecordOfflineClosesSession(t *testing.T) {
 	require.WithinDuration(t, start, s.StartedAt, time.Second)
 }
 
+// The agent decides how often it reconnects; the number of rows it leaves
+// behind must not follow that number. Reconnects inside the online window stay
+// offline, and the first report after the window opens a session as usual.
+func TestRecordOnlineLimitsSessionsOpenedByReconnects(t *testing.T) {
+	setupOnlineHistoryTestDB(t)
+	r := NewOnlineHistoryRecorder()
+
+	start := time.Now().Add(-time.Hour).Truncate(time.Second)
+	at := start
+	for range 200 {
+		r.RecordOnline(1, at)
+		at = at.Add(5 * time.Millisecond)
+		r.RecordOffline(1, at)
+		at = at.Add(5 * time.Millisecond)
+	}
+	require.Equal(t, int64(1), countOnlineSessions(t, "server_id = ?", 1))
+	require.Equal(t, int64(0), countOnlineSessions(t, "server_id = ? AND ongoing = ?", 1, true))
+	var first model.OnlineSession
+	require.NoError(t, DB.First(&first).Error)
+	require.WithinDuration(t, start.Add(5*time.Millisecond), first.EndedAt, time.Millisecond, "被跳过的重连不得延长已结束的会话")
+
+	reopened := start.Add(model.OnlineActiveWindow)
+	r.RecordOnline(1, reopened)
+	require.Equal(t, int64(2), countOnlineSessions(t, "server_id = ?", 1))
+	require.Equal(t, int64(1), countOnlineSessions(t, "server_id = ? AND ongoing = ?", 1, true))
+
+	// 长会话断线后立即重连不受影响：限制按上一次新建时刻计算
+	r.RecordOffline(1, reopened.Add(10*time.Minute))
+	r.RecordOnline(1, reopened.Add(10*time.Minute+time.Second))
+	require.Equal(t, int64(3), countOnlineSessions(t, "server_id = ?", 1))
+
+	// 清扫回收已过窗口的记录
+	r.SweepStale(reopened.Add(11*time.Minute), func(uint64) (time.Time, bool) { return reopened.Add(11 * time.Minute), true })
+	require.Empty(t, r.lastOpened)
+}
+
 func TestRecordOnlineContinuesSessionAfterRestart(t *testing.T) {
 	setupOnlineHistoryTestDB(t)
 
