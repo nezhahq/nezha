@@ -147,6 +147,24 @@ type APIToken struct {
 	LastUsedIP string     `gorm:"type:varchar(64)" json:"last_used_ip,omitempty"`
 	CreatedAt  time.Time  `json:"created_at,omitempty"`
 	UpdatedAt  time.Time  `gorm:"autoUpdateTime" json:"updated_at,omitempty"`
+
+	// serverWhitelist is ServersCSV decoded once (AfterFind / SetServerIDs) so
+	// that CanAccessServer does not parse the CSV again on every call.
+	serverWhitelist *apiTokenServerWhitelist
+}
+
+// apiTokenServerWhitelist is an immutable decoded ServersCSV. It remembers the
+// CSV it was built from, so a token whose ServersCSV was assigned directly is
+// never answered from a stale whitelist.
+type apiTokenServerWhitelist struct {
+	csv string
+	ids []uint64 // sorted
+}
+
+func (t *APIToken) decodeServerWhitelist() *apiTokenServerWhitelist {
+	ids := t.ServerIDs()
+	slices.Sort(ids)
+	return &apiTokenServerWhitelist{csv: t.ServersCSV, ids: ids}
 }
 
 func (APIToken) TableName() string {
@@ -214,6 +232,13 @@ func (t *APIToken) SetServerIDs(ids []uint64) {
 		parts = append(parts, formatUint(id))
 	}
 	t.ServersCSV = strings.Join(parts, ",")
+	t.serverWhitelist = t.decodeServerWhitelist()
+}
+
+// AfterFind 解码一次服务器 ID 白名单，供 CanAccessServer 复用。
+func (t *APIToken) AfterFind(tx *gorm.DB) error {
+	t.serverWhitelist = t.decodeServerWhitelist()
+	return nil
 }
 
 // HasScope 判定 token 是否携带某个 scope。
@@ -251,12 +276,22 @@ func scopeMatches(owned, wanted string) bool {
 
 // CanAccessServer 判定 token 是否被允许操作某 server（白名单层；
 // 仍需上层调用 Server.HasPermission 做用户级权限校验）。
+//
+// 列表/推流类调用方会对每台 server 调用一次，所以这里查已解码的白名单，
+// 而不是每次调用都重新解析 ServersCSV。
 func (t *APIToken) CanAccessServer(serverID uint64) bool {
-	ids := t.ServerIDs()
-	if len(ids) == 0 {
+	if t.ServersCSV == "" {
 		return true
 	}
-	return slices.Contains(ids, serverID)
+	wl := t.serverWhitelist
+	if wl == nil || wl.csv != t.ServersCSV {
+		wl = t.decodeServerWhitelist()
+	}
+	if len(wl.ids) == 0 {
+		return true
+	}
+	_, found := slices.BinarySearch(wl.ids, serverID)
+	return found
 }
 
 // IsExpired 判定 token 是否已过期。ExpiresAt 为 nil 表示永不过期。

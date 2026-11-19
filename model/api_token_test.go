@@ -70,6 +70,55 @@ func TestAPIToken_CanAccessServer_Whitelist(t *testing.T) {
 	}
 }
 
+// List and stream projections ask once per server, so a lookup must not decode
+// ServersCSV again: 1000 ids x 10k servers per /ws/server frame otherwise.
+func TestAPIToken_CanAccessServer_DecodesWhitelistOnce(t *testing.T) {
+	ids := make([]uint64, 1000)
+	for i := range ids {
+		ids[i] = uint64(len(ids) - i) // stored unsorted
+	}
+	created := &APIToken{TokenHash: HashAPIToken("nzp_whitelist")}
+	created.SetServerIDs(ids)
+	db := newMigrationTestDB(t)
+	if err := db.Create(created).Error; err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The auth middleware hands out the row as loaded from the database.
+	loaded := &APIToken{}
+	if err := db.First(loaded, created.ID).Error; err != nil {
+		t.Fatalf("load: %v", err)
+	}
+
+	for name, tok := range map[string]*APIToken{"created": created, "loaded": loaded} {
+		if !tok.CanAccessServer(1) || !tok.CanAccessServer(1000) || tok.CanAccessServer(1001) {
+			t.Fatalf("%s: whitelist 1..1000 must allow 1 and 1000 and reject 1001", name)
+		}
+		if allocs := testing.AllocsPerRun(100, func() { tok.CanAccessServer(1001) }); allocs != 0 {
+			t.Fatalf("%s: CanAccessServer must not re-decode server_ids per call, got %v allocs", name, allocs)
+		}
+	}
+}
+
+func TestAPIToken_CanAccessServer_FollowsServersCSVChanges(t *testing.T) {
+	tok := &APIToken{}
+	tok.SetServerIDs([]uint64{1})
+	if !tok.CanAccessServer(1) || tok.CanAccessServer(2) {
+		t.Fatalf("whitelist {1} must allow only 1")
+	}
+	tok.SetServerIDs([]uint64{2})
+	if tok.CanAccessServer(1) || !tok.CanAccessServer(2) {
+		t.Fatalf("a changed whitelist must not be answered from the old one")
+	}
+	tok.ServersCSV = "3"
+	if tok.CanAccessServer(2) || !tok.CanAccessServer(3) {
+		t.Fatalf("a directly assigned ServersCSV must not be answered from the old whitelist")
+	}
+	tok.ServersCSV = ""
+	if !tok.CanAccessServer(1) {
+		t.Fatalf("a cleared whitelist must be unrestricted again")
+	}
+}
+
 func TestAPIToken_SetServerIDs_RoundTrip(t *testing.T) {
 	tok := &APIToken{}
 	tok.SetServerIDs([]uint64{10, 11, 12})
