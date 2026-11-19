@@ -97,6 +97,44 @@ func TestReleaseListFiltersDistributionAndPreservesPagination(t *testing.T) {
 	}
 }
 
+func TestReleaseResponsesBoundListLengths(t *testing.T) {
+	serve := func(body string) *Client {
+		return &Client{open: func(context.Context, string) (*http.Response, error) {
+			return &http.Response{Body: io.NopCloser(strings.NewReader(body))}, nil
+		}}
+	}
+	const repository = "https://github.com/owner/site"
+	asset := `{"name":"dist.zip","browser_download_url":"https://cdn.example/dist.zip"}`
+	tooManyAssets := `{"tag_name":"v1","assets":[` + strings.Repeat(asset+",", maxReleaseAssets) + asset + `]}`
+	for name, body := range map[string]string{
+		"too many releases":   "[" + strings.Repeat("{},", maxReleasesPerPage) + "{}]",
+		"entries of any type": "[" + strings.Repeat("0,", 1<<20) + "0]",
+		"too many assets":     "[" + tooManyAssets + "]",
+		"not a list":          `{"tag_name":"v1"}`,
+	} {
+		if _, err := serve(body).Releases(context.Background(), repository, 1); err == nil {
+			t.Errorf("accepted a release list with %s", name)
+		}
+	}
+	if _, err := serve(tooManyAssets).release(context.Background(), repository, "v1"); err == nil {
+		t.Error("accepted a release with too many assets")
+	}
+
+	// Servers that ignore per_page, null lists and releases without assets still work.
+	body := "[" + strings.Repeat(`{"tag_name":"v0","assets":null},`, maxReleasesPerPage-1) + `{"tag_name":"v1","assets":[` + asset + `]}]`
+	page, err := serve(body).Releases(context.Background(), repository, 1)
+	if err != nil || len(page.Releases) != 1 || page.Releases[0].Tag != "v1" || len(page.Releases[0].Assets) != 1 {
+		t.Fatalf("rejected a full page: %+v, %v", page, err)
+	}
+	if page, err = serve("null").Releases(context.Background(), repository, 1); err != nil || len(page.Releases) != 0 {
+		t.Fatalf("rejected an empty list: %+v, %v", page, err)
+	}
+	release, err := serve(`{"tag_name":"v1","assets":[`+strings.Repeat(asset+",", maxReleaseAssets-1)+asset+`]}`).release(context.Background(), repository, "v1")
+	if err != nil || len(release.Assets) != maxReleaseAssets {
+		t.Fatalf("rejected a release with %d assets: %v", maxReleaseAssets, err)
+	}
+}
+
 func installationStore(t *testing.T, archive []byte, digest string) (*Store, *int) {
 	t.Helper()
 	store, err := NewStore(t.TempDir(), []Template{{Path: "user-dist", Name: "Built in"}})

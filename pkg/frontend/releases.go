@@ -2,6 +2,7 @@
 package frontend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,15 +16,66 @@ import (
 	"github.com/nezhahq/nezha/pkg/utils"
 )
 
-const maxReleaseResponse = 8 << 20
+const (
+	maxReleaseResponse = 8 << 20
+	// The release server, not the per_page we ask for, decides how many entries it returns.
+	// GitHub serves at most 100 releases per page; compatible servers may ignore per_page.
+	maxReleasesPerPage = 100
+	maxReleaseAssets   = 1000
+)
 
 type Release struct {
-	Tag         string  `json:"tag_name"`
-	Name        string  `json:"name"`
-	PublishedAt string  `json:"published_at"`
-	Prerelease  bool    `json:"prerelease"`
-	Draft       bool    `json:"draft"`
-	Assets      []Asset `json:"assets"`
+	Tag         string    `json:"tag_name"`
+	Name        string    `json:"name"`
+	PublishedAt string    `json:"published_at"`
+	Prerelease  bool      `json:"prerelease"`
+	Draft       bool      `json:"draft"`
+	Assets      assetList `json:"assets"`
+}
+
+type releaseList []Release
+
+func (list *releaseList) UnmarshalJSON(data []byte) error {
+	releases, err := decodeList[Release](data, maxReleasesPerPage)
+	*list = releases
+	return err
+}
+
+type assetList []Asset
+
+func (list *assetList) UnmarshalJSON(data []byte) error {
+	assets, err := decodeList[Asset](data, maxReleaseAssets)
+	*list = assets
+	return err
+}
+
+// decodeList decodes a JSON array of at most limit entries and stops at the first
+// entry that is not a T. maxReleaseResponse alone does not bound memory: encoding/json
+// appends a whole T for every entry, even one of the wrong type, so a few bytes of
+// (compressible) JSON would otherwise stand for a far larger allocation.
+func decodeList[T any](data []byte, limit int) ([]T, error) {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	opening, err := decoder.Token()
+	if err != nil || opening == nil {
+		// null leaves the list empty, as it does for a plain slice.
+		return nil, err
+	}
+	if opening != json.Delim('[') {
+		return nil, errors.New("release server did not return a list")
+	}
+	var list []T
+	for decoder.More() {
+		if len(list) == limit {
+			return nil, fmt.Errorf("release server returned a list of more than %d entries", limit)
+		}
+		var entry T
+		if err := decoder.Decode(&entry); err != nil {
+			return nil, err
+		}
+		list = append(list, entry)
+	}
+	_, err = decoder.Token()
+	return list, err
 }
 
 type Asset struct {
@@ -163,7 +215,7 @@ func (c *Client) Releases(ctx context.Context, repository string, page int) (*Re
 	if page < 1 || page > 100 {
 		return nil, errors.New("release page must be between 1 and 100")
 	}
-	var releases []Release
+	var releases releaseList
 	if err := c.readJSON(ctx, fmt.Sprintf("%s/releases?page=%d&per_page=20", api, page), &releases); err != nil {
 		return nil, err
 	}
