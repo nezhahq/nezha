@@ -283,3 +283,55 @@ func TestGenericRecordDeleterContract(t *testing.T) {
 		t.Fatalf("unexpected RR fields: Name=%s, Type=%s", rr.Name, rr.Type)
 	}
 }
+
+// A running update must stop using its profile once the authority it was
+// started with is withdrawn, instead of working through the remaining domains
+// and address families with the captured credentials.
+func TestUpdateDomainStopsOnceRevoked(t *testing.T) {
+	handler := dns.NewServeMux()
+	handler.HandleFunc(".", func(w dns.ResponseWriter, r *dns.Msg) {
+		m := new(dns.Msg)
+		m.SetReply(r)
+		m.Answer = append(m.Answer, &dns.SOA{
+			Hdr:    dns.RR_Header{Name: r.Question[0].Name, Rrtype: dns.TypeSOA, Class: dns.ClassINET, Ttl: 300},
+			Ns:     "ns.example.com.",
+			Mbox:   "admin.example.com.",
+			Serial: 1,
+		})
+		_ = w.WriteMsg(m)
+	})
+
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer pc.Close()
+
+	server := &dns.Server{PacketConn: pc, Net: "udp", Handler: handler}
+	go func() {
+		_ = server.ActivateAndServe()
+	}()
+	defer server.Shutdown()
+
+	enabled := true
+	mockSetter := &MockSetter{}
+	provider := &Provider{
+		DDNSProfile: &model.DDNSProfile{
+			MaxRetries: 1,
+			Domains:    []string{"a.example.com", "b.example.com", "c.example.com"},
+			EnableIPv4: &enabled,
+			EnableIPv6: &enabled,
+		},
+		IPAddrs: &model.IP{IPv4Addr: "1.1.1.1", IPv6Addr: "2001:db8::1"},
+		Setter:  mockSetter,
+	}
+	// Revoked while the first vendor call is in flight.
+	provider.Revoked = func() bool { return len(mockSetter.Records) > 0 }
+
+	ctx := context.WithValue(context.Background(), DNSServerKey{}, []string{pc.LocalAddr().String()})
+	provider.UpdateDomain(ctx)
+
+	if len(mockSetter.Records) != 1 {
+		t.Fatalf("expected the update to stop after the call during which it was revoked, got %d vendor calls", len(mockSetter.Records))
+	}
+}

@@ -25,10 +25,23 @@ type Provider struct {
 	DDNSProfile *model.DDNSProfile
 	IPAddrs     *model.IP
 	Setter      libdns.RecordSetter
+
+	// Revoked, if set, reports whether the authority this update was started
+	// with has been withdrawn. An update outlives the call that started it by
+	// domains x retries x request timeout, so it is asked before every attempt.
+	Revoked func() bool
 }
 
 func (provider *Provider) GetProfileID() uint64 {
 	return provider.DDNSProfile.ID
+}
+
+func (provider *Provider) abandoned() bool {
+	if provider.Revoked == nil || !provider.Revoked() {
+		return false
+	}
+	log.Printf("NEZHA>> DDNS profile %d is no longer in force, abandoning the running update", provider.GetProfileID())
+	return true
 }
 
 func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...string) {
@@ -43,6 +56,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 		var soaErr error
 
 		for retries := 0; retries < maxRetries; retries++ {
+			if provider.abandoned() {
+				return
+			}
 			prefix, zone, soaErr = provider.splitDomainSOA(ctx, domain)
 			if soaErr == nil {
 				break
@@ -58,6 +74,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 		// 独立处理 IPv4 更新或删除
 		if provider.DDNSProfile.EnableIPv4 != nil && *provider.DDNSProfile.EnableIPv4 {
 			for retries := 0; retries < maxRetries; retries++ {
+				if provider.abandoned() {
+					return
+				}
 				log.Printf("NEZHA>> Updating IPv4 record of domain %s: %d/%d", domain, retries+1, maxRetries)
 				var ipv4Err error
 				if provider.IPAddrs.IPv4Addr == "" {
@@ -78,6 +97,9 @@ func (provider *Provider) UpdateDomain(ctx context.Context, overrideDomains ...s
 		// 独立处理 IPv6 更新或删除
 		if provider.DDNSProfile.EnableIPv6 != nil && *provider.DDNSProfile.EnableIPv6 {
 			for retries := 0; retries < maxRetries; retries++ {
+				if provider.abandoned() {
+					return
+				}
 				log.Printf("NEZHA>> Updating IPv6 record of domain %s: %d/%d", domain, retries+1, maxRetries)
 				var ipv6Err error
 				if provider.IPAddrs.IPv6Addr == "" {

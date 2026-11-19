@@ -172,12 +172,27 @@ func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
 
 	for _, provider := range providers {
 		domains := server.OverrideDDNSDomains[provider.GetProfileID()]
+		// The checks above hold for this instant only; the worker outlives the
+		// call, so it repeats them against current state as it goes.
+		provider.Revoked = func() bool { return !c.ddnsUpdateInForce(server, provider.DDNSProfile) }
 		go func(provider *ddns.Provider) {
 			provider.UpdateDomain(ctx, domains...)
 		}(provider)
 	}
 
 	return nil
+}
+
+// ddnsUpdateInForce reports whether an update started for server with profile
+// may still proceed: both are still the registered objects (neither deleted
+// nor replaced by an edit; a server edit starts its own update) and the
+// profile still belongs to the server's current owner.
+func (c *ServerClass) ddnsUpdateInForce(server *model.Server, profile *model.DDNSProfile) bool {
+	if current, ok := c.Get(server.ID); !ok || current != server {
+		return false
+	}
+	current, ok := DDNSShared.Get(profile.ID)
+	return ok && current == profile && profile.GetUserID() == server.GetUserID()
 }
 
 func (c *ServerClass) sortList() {

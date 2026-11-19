@@ -118,3 +118,56 @@ func TestGetDDNSProvidersSkipsUnownedZeroUserProfile(t *testing.T) {
 		t.Fatalf("expected UserID==0 foreign profile to be skipped, got %d provider(s)", len(providers))
 	}
 }
+
+// A DDNS update runs long after UpdateDDNS returned. The worker asks this
+// before every attempt, so each way of withdrawing its authority must be seen.
+func TestDDNSUpdateInForceFollowsCurrentState(t *testing.T) {
+	originalDDNS := DDNSShared
+	t.Cleanup(func() { DDNSShared = originalDDNS })
+
+	setup := func() (*ServerClass, *model.Server, *model.DDNSProfile) {
+		profile := &model.DDNSProfile{Common: model.Common{ID: 5, UserID: 100}, Provider: model.ProviderDummy}
+		DDNSShared = newDDNSClassForTest(profile)
+		server := &model.Server{Common: model.Common{ID: 1, UserID: 100}, EnableDDNS: true, DDNSProfiles: []uint64{5}}
+		servers := NewEmptyServerClassForTest()
+		servers.InsertForTest(server)
+		return servers, server, profile
+	}
+
+	servers, server, profile := setup()
+	if !servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("an untouched binding must stay in force")
+	}
+
+	servers, server, profile = setup()
+	DDNSShared.Delete([]uint64{5})
+	if servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("update still in force after the profile was deleted")
+	}
+
+	servers, server, profile = setup()
+	DDNSShared.Update(&model.DDNSProfile{Common: model.Common{ID: 5, UserID: 100}, Provider: model.ProviderDummy})
+	if servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("update still in force after the profile was edited")
+	}
+
+	// Disabling DDNS, unbinding the profile and changing the override domains
+	// all replace the registered server.
+	servers, server, profile = setup()
+	servers.InsertForTest(&model.Server{Common: model.Common{ID: 1, UserID: 100}})
+	if servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("update still in force after the server was edited")
+	}
+
+	servers, server, profile = setup()
+	servers.setUserID(1, 200)
+	if servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("update still in force after the server changed owner")
+	}
+
+	servers, server, profile = setup()
+	servers.Delete([]uint64{1})
+	if servers.ddnsUpdateInForce(server, profile) {
+		t.Fatal("update still in force after the server was deleted")
+	}
+}
