@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -277,4 +278,49 @@ func TestOAuth2_Unbind_OnlyAffectsOwnBindings(t *testing.T) {
 		First(&victim).Error,
 		"another user's binding must not be touched")
 	require.Equal(t, "victim", victim.OpenID)
+}
+
+// The provider's answers must not choose the next address the Dashboard calls:
+// a redirect from token_url or user_info_url is an error and is never followed.
+func TestOAuth2_ExchangeOpenId_DoesNotFollowProviderRedirects(t *testing.T) {
+	var internalRequests atomic.Int32
+	internal := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		internalRequests.Add(1)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"internal-value","access_token":"internal-token","token_type":"Bearer"}`))
+	}))
+	defer internal.Close()
+
+	// "" is the control: a provider that answers both requests itself.
+	for _, redirecting := range []string{"", "/token", "/userinfo"} {
+		for _, status := range []int{http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect} {
+			t.Run(fmt.Sprintf("%s_%d", redirecting, status), func(t *testing.T) {
+				internalRequests.Store(0)
+				provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					if r.URL.Path == redirecting {
+						http.Redirect(w, r, internal.URL+"/v1/instance", status)
+						return
+					}
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = w.Write([]byte(`{"id":"provider-user","access_token":"provider-token","token_type":"Bearer"}`))
+				}))
+				defer provider.Close()
+
+				c, _ := newOAuth2Ctx(t)
+				openID, err := exchangeOpenId(c, &model.Oauth2Config{
+					ClientID: "x", ClientSecret: "y",
+					Endpoint:    model.Oauth2Endpoint{TokenURL: provider.URL + "/token"},
+					UserInfoURL: provider.URL + "/userinfo", UserIDPath: "id",
+				}, &model.Oauth2Callback{Code: "code"}, "https://panel.example.invalid/callback")
+				if redirecting == "" {
+					require.NoError(t, err)
+					require.Equal(t, "provider-user", openID)
+				} else {
+					require.Error(t, err)
+					require.Empty(t, openID)
+				}
+				require.Zero(t, internalRequests.Load(), "the redirect target must never be called")
+			})
+		}
+	}
 }

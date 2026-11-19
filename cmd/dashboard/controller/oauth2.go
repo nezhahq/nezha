@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -259,15 +260,32 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 	}
 }
 
+// oauth2ProviderHTTPClient calls only the token_url and user_info_url the
+// operator configured. Without it golang.org/x/oauth2 falls back to
+// http.DefaultClient, which follows redirects: the provider's answer would
+// then choose the next address the Dashboard calls (loopback, private ranges,
+// metadata services), the bearer token or client secret would be sent there,
+// and the answer would be taken as the token or userinfo document. The
+// addresses themselves are not filtered as in utils.NewRestrictedHTTPClient,
+// because a provider may legitimately live on a private network. The timeout
+// is the one pkg/utils sets on http.DefaultClient.
+var oauth2ProviderHTTPClient = &http.Client{
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+	Timeout: time.Minute * 10,
+}
+
 func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
 	callbackData *model.Oauth2Callback, redirectURL string) (string, error) {
 	o2conf := o2confRaw.Setup(redirectURL)
+	ctx := context.WithValue(c, oauth2.HTTPClient, oauth2ProviderHTTPClient)
 
-	otk, err := o2conf.Exchange(c, callbackData.Code)
+	otk, err := o2conf.Exchange(ctx, callbackData.Code)
 	if err != nil {
 		return "", err
 	}
-	oauth2client := o2conf.Client(c, otk)
+	oauth2client := o2conf.Client(ctx, otk)
 	resp, err := oauth2client.Get(o2confRaw.UserInfoURL)
 	if err != nil {
 		return "", err
