@@ -222,3 +222,70 @@ func TestOnlineHistoryDisconnectSurvivesUnavailableRecovery(t *testing.T) {
 		})
 	}
 }
+
+// Every agent's state report goes through RecordOnline. A report that has
+// nothing to store must not wait for another server's database write.
+func TestOnlineHistoryReportDoesNotWaitForAnotherServersWrite(t *testing.T) {
+	setupOnlineHistoryTestDB(t)
+	r := NewOnlineHistoryRecorder()
+	start := time.Now().UTC().Truncate(time.Second)
+	r.RecordOnline(1, start)
+	id := r.open[1].id
+
+	writing, release := make(chan struct{}), make(chan struct{})
+	require.NoError(t, DB.Callback().Create().Before("gorm:create").Register("park_session_insert", func(*gorm.DB) {
+		close(writing)
+		<-release
+	}))
+	other := make(chan struct{})
+	go func() {
+		r.RecordOnline(2, start)
+		close(other)
+	}()
+	<-writing
+
+	due := start.Add(model.OnlineActiveWindow)
+	reported := make(chan struct{})
+	go func() {
+		r.RecordOnline(1, start.Add(time.Second))
+		// Due for last_active_at: left to a later report while the writer is busy.
+		r.RecordOnline(1, due)
+		close(reported)
+	}()
+	select {
+	case <-reported:
+	case <-time.After(5 * time.Second):
+		t.Error("a report of server 1 waited for the session insert of server 2")
+	}
+	close(release)
+	<-other
+	<-reported
+
+	require.Equal(t, id, r.open[1].id)
+	require.NotNil(t, r.open[2])
+	require.True(t, getOnlineSession(t, id).LastActiveAt.Equal(start))
+	r.RecordOnline(1, due.Add(time.Second))
+	require.True(t, getOnlineSession(t, id).LastActiveAt.Equal(due.Add(time.Second)))
+}
+
+// Reports skip the throttled last_active_at write while other servers write.
+// The sweep makes up for it, or a restart would end the session at an old time.
+func TestOnlineHistorySweepPersistsLastActiveSkippedByReports(t *testing.T) {
+	setupOnlineHistoryTestDB(t)
+	r := NewOnlineHistoryRecorder()
+	start := time.Now().UTC().Truncate(time.Second)
+	r.RecordOnline(1, start)
+	id := r.open[1].id
+	due := start.Add(model.OnlineActiveWindow)
+	r.dbMu.Lock()
+	r.RecordOnline(1, due)
+	r.dbMu.Unlock()
+	require.True(t, getOnlineSession(t, id).LastActiveAt.Equal(start))
+
+	r.SweepStale(due, func(uint64) (time.Time, bool) { return due, true })
+
+	stored := getOnlineSession(t, id)
+	require.True(t, stored.Ongoing)
+	require.True(t, stored.LastActiveAt.Equal(due))
+	require.True(t, r.open[1].lastPersist.Equal(due))
+}

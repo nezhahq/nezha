@@ -7,6 +7,8 @@ import (
 	"sync"
 	"time"
 
+	"gorm.io/gorm"
+
 	"github.com/nezhahq/nezha/model"
 )
 
@@ -14,6 +16,12 @@ import (
 // 关闭由 agent 状态流的建立/断开驱动（service/rpc），并由定时清扫兜底关闭
 // 失联（未正常断流）的会话；dashboard 重启时通过数据库中 Ongoing 会话恢复。
 type OnlineHistoryRecorder struct {
+	// dbMu serializes session transitions together with their database calls,
+	// which can wait for a connection, for SQLite's lock or for the disk.
+	dbMu sync.Mutex
+	// mu guards the fields below. Every state report of every agent takes it, so
+	// it is only held across a database call during startup recovery. Changes to
+	// the maps additionally need dbMu, which is taken first.
 	mu       sync.Mutex
 	restored bool
 	open     map[uint64]*onlineSessionRuntime
@@ -103,6 +111,7 @@ func (r *OnlineHistoryRecorder) restoreOngoingSessions() bool {
 
 // flushClosing 尽力重试关闭该服务器的待关闭会话：按入列时固定的结束时间
 // 持久化，成功才移除；失败的条目原样保留，结束时间不得被后续上报改写。
+// The caller holds dbMu, not mu.
 func (r *OnlineHistoryRecorder) flushClosing(serverID uint64) {
 	pendings, ok := r.closing[serverID]
 	if !ok {
@@ -115,6 +124,8 @@ func (r *OnlineHistoryRecorder) flushClosing(serverID uint64) {
 			kept = append(kept, pc)
 		}
 	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if len(kept) == 0 {
 		delete(r.closing, serverID)
 	} else {
@@ -125,30 +136,37 @@ func (r *OnlineHistoryRecorder) flushClosing(serverID uint64) {
 // RecordOnline 记录一次状态上报：无进行中会话时开启新会话（重启遗留且仍在
 // 窗口内的 Ongoing 会话直接续接）；已有会话时节流落库 LastActiveAt。
 func (r *OnlineHistoryRecorder) RecordOnline(serverID uint64, at time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	// A failed startup read is not an empty history: retry before accepting reports.
-	if !r.restored && !r.restoreOngoingSessions() {
+	at = at.UTC()
+	if r.observe(serverID, at) {
 		return
 	}
-	at = at.UTC()
+	r.dbMu.Lock()
+	defer r.dbMu.Unlock()
+	// A failed startup read is not an empty history: retry before accepting reports.
+	if !r.ensureRestored() {
+		return
+	}
 	r.flushClosing(serverID)
 
+	r.mu.Lock()
+	rt := r.open[serverID]
 	// A report can arrive after expiry but before the next sweep. Close at the
 	// previous observation before overwriting it, preserving failed-close retries.
-	if rt := r.open[serverID]; rt != nil && at.Sub(rt.lastObserved) > model.OnlineActiveWindow {
-		r.recordOfflineLocked(serverID, rt.lastObserved)
-	}
-	if rt, ok := r.open[serverID]; ok {
+	expired := rt != nil && at.Sub(rt.lastObserved) > model.OnlineActiveWindow
+	persist := false
+	if expired {
+		delete(r.open, serverID)
+	} else if rt != nil {
 		rt.lastObserved = at
 		rt.revision++
-		if at.Sub(rt.lastPersist) >= model.OnlineActiveWindow {
-			if err := DB.Model(&model.OnlineSession{}).Where("id = ?", rt.id).Update("last_active_at", at).Error; err != nil {
-				log.Printf("NEZHA>> Failed to persist online session last_active_at: %v", err)
-			} else {
-				// Only committed writes advance the throttle; failures retry on the next report.
-				rt.lastPersist = at
-			}
+		persist = at.Sub(rt.lastPersist) >= model.OnlineActiveWindow
+	}
+	r.mu.Unlock()
+	if expired {
+		r.closeSession(serverID, rt, rt.lastObserved)
+	} else if rt != nil {
+		if persist {
+			r.persistLastActive(rt, at)
 		}
 		return
 	}
@@ -160,7 +178,51 @@ func (r *OnlineHistoryRecorder) RecordOnline(serverID uint64, at time.Time) {
 		log.Printf("NEZHA>> Failed to create online session: %v", err)
 		return
 	}
+	r.mu.Lock()
 	r.open[serverID] = &onlineSessionRuntime{id: s.ID, lastPersist: at, lastObserved: at}
+	r.mu.Unlock()
+}
+
+// observe records a report of an open session in memory and returns false if
+// the report needs a session transition. Nearly every report ends here, so it
+// never waits for another server's database call: while dbMu is taken the
+// throttled last_active_at write is left to a later report or to the sweep.
+func (r *OnlineHistoryRecorder) observe(serverID uint64, at time.Time) bool {
+	r.mu.Lock()
+	rt := r.open[serverID]
+	if !r.restored || rt == nil || len(r.closing[serverID]) > 0 || at.Sub(rt.lastObserved) > model.OnlineActiveWindow {
+		r.mu.Unlock()
+		return false
+	}
+	rt.lastObserved = at
+	rt.revision++
+	// dbMu is ordered before mu: it can be tried here, but not waited for.
+	persist := at.Sub(rt.lastPersist) >= model.OnlineActiveWindow && r.dbMu.TryLock()
+	r.mu.Unlock()
+	if persist {
+		defer r.dbMu.Unlock()
+		r.persistLastActive(rt, at)
+	}
+	return true
+}
+
+// persistLastActive is called with dbMu held, not mu.
+func (r *OnlineHistoryRecorder) persistLastActive(rt *onlineSessionRuntime, at time.Time) {
+	if err := DB.Model(&model.OnlineSession{}).Where("id = ?", rt.id).Update("last_active_at", at).Error; err != nil {
+		log.Printf("NEZHA>> Failed to persist online session last_active_at: %v", err)
+		return
+	}
+	// Only committed writes advance the throttle; failures retry on the next report.
+	r.mu.Lock()
+	rt.lastPersist = at
+	r.mu.Unlock()
+}
+
+// ensureRestored retries a failed startup read. The caller holds dbMu, not mu.
+func (r *OnlineHistoryRecorder) ensureRestored() bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.restored || r.restoreOngoingSessions()
 }
 
 // RecordOffline 关闭该服务器当前进行中的会话。at 是会话结束时刻：正常断流
@@ -169,12 +231,14 @@ func (r *OnlineHistoryRecorder) RecordOnline(serverID uint64, at time.Time) {
 // 结束时刻（at 与 lastPersist 的较大者）就此固定，后续上报不得覆盖；重试
 // 只为旧会话完成持久化，重连则开启新会话——断线后的离线间隔不得计作在线。
 func (r *OnlineHistoryRecorder) RecordOffline(serverID uint64, at time.Time) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
+	r.dbMu.Lock()
+	defer r.dbMu.Unlock()
 	// Disconnect may be the first event after startup storage recovers.
-	if !r.restored && !r.restoreOngoingSessions() {
+	if !r.ensureRestored() {
 		// Retrying SELECT alone loses confirmed offline gaps on a quick reconnect.
 		// Keep the first boundary; subsequent disconnected streams cannot extend it.
+		r.mu.Lock()
+		defer r.mu.Unlock()
 		if r.recoveryDisconnects == nil {
 			r.recoveryDisconnects = make(map[uint64]time.Time)
 		}
@@ -183,14 +247,19 @@ func (r *OnlineHistoryRecorder) RecordOffline(serverID uint64, at time.Time) {
 		}
 		return
 	}
-	r.recordOfflineLocked(serverID, at)
+	r.mu.Lock()
+	rt, ok := r.open[serverID]
+	delete(r.open, serverID)
+	r.mu.Unlock()
+	if ok {
+		r.closeSession(serverID, rt, at)
+	}
 }
 
-func (r *OnlineHistoryRecorder) recordOfflineLocked(serverID uint64, at time.Time) {
-	rt, ok := r.open[serverID]
-	if !ok {
-		return
-	}
+// closeSession closes the row of a session that has already left open, so that
+// a report arriving meanwhile is not counted towards it but waits for dbMu in
+// RecordOnline. The caller holds dbMu, not mu.
+func (r *OnlineHistoryRecorder) closeSession(serverID uint64, rt *onlineSessionRuntime, at time.Time) {
 	end := at
 	if end.Before(rt.lastPersist) {
 		end = rt.lastPersist
@@ -199,46 +268,108 @@ func (r *OnlineHistoryRecorder) recordOfflineLocked(serverID uint64, at time.Tim
 		log.Printf("NEZHA>> Failed to close online session %d: %v", rt.id, err)
 		// 结束时刻已观察到，不能因写库失败丢失，也不能把行继续当活跃
 		// 会话：转待关闭状态，由 RecordOnline 冲洗与清扫周期重试
+		r.mu.Lock()
 		r.closing[serverID] = append(r.closing[serverID], &onlineSessionClosing{id: rt.id, end: end})
-		delete(r.open, serverID)
-		return
+		r.mu.Unlock()
 	}
-	delete(r.open, serverID)
 }
 
 // SweepStale 关闭超过在线窗口仍无状态上报的进行中会话。lastActiveFn 返回
 // 服务器的运行时最后活跃时间与是否存在。
 func (r *OnlineHistoryRecorder) SweepStale(now time.Time, lastActiveFn func(serverID uint64) (time.Time, bool)) {
-	// Never call the runtime observer while holding mu: reports acquire the
-	// runtime lease before this mutex. Snapshot identities, then revalidate them.
-	r.mu.Lock()
-	if !r.restored && !r.restoreOngoingSessions() {
-		r.mu.Unlock()
+	// Never call the runtime observer while holding dbMu or mu: reports acquire the
+	// runtime lease before these. Snapshot identities, then revalidate them.
+	r.dbMu.Lock()
+	if !r.ensureRestored() {
+		r.dbMu.Unlock()
 		return
 	}
+	r.mu.Lock()
 	candidates := make(map[uint64]onlineSessionRuntime, len(r.open))
 	for id, rt := range r.open {
 		candidates[id] = *rt
 	}
+	r.mu.Unlock()
 	for id := range r.closing {
 		r.flushClosing(id)
 	}
-	r.mu.Unlock()
+	r.persistOverdue(candidates)
+	r.dbMu.Unlock()
 	for id, candidate := range candidates {
 		lastActive, ok := lastActiveFn(id)
+		// Most sessions are alive: find that out without queueing behind the
+		// writes of other servers, and take dbMu only to close a session.
 		r.mu.Lock()
-		rt := r.open[id]
-		if rt != nil && rt.id == candidate.id && rt.revision == candidate.revision {
-			if lastActive.Before(rt.lastObserved) {
-				lastActive = rt.lastObserved
-			}
-			if (!ok || lastActive.Before(now.Add(-model.OnlineActiveWindow))) && rt.lastObserved.Before(now.Add(-model.OnlineActiveWindow)) {
-				r.recordOfflineLocked(id, lastActive)
-			}
+		rt, _ := r.staleLocked(id, candidate, now, lastActive, ok)
+		r.mu.Unlock()
+		if rt == nil {
+			continue
+		}
+		r.dbMu.Lock()
+		r.mu.Lock()
+		rt, end := r.staleLocked(id, candidate, now, lastActive, ok)
+		if rt != nil {
+			delete(r.open, id)
 		}
 		r.mu.Unlock()
+		if rt != nil {
+			r.closeSession(id, rt, end)
+		}
+		r.dbMu.Unlock()
 	}
 
+}
+
+// staleLocked returns the server's session and its end if it is still the
+// snapshotted one, unreported since, and out of the online window. mu is held.
+func (r *OnlineHistoryRecorder) staleLocked(id uint64, candidate onlineSessionRuntime, now, lastActive time.Time, ok bool) (*onlineSessionRuntime, time.Time) {
+	rt := r.open[id]
+	if rt == nil || rt.id != candidate.id || rt.revision != candidate.revision {
+		return nil, time.Time{}
+	}
+	if lastActive.Before(rt.lastObserved) {
+		lastActive = rt.lastObserved
+	}
+	if (!ok || lastActive.Before(now.Add(-model.OnlineActiveWindow))) && rt.lastObserved.Before(now.Add(-model.OnlineActiveWindow)) {
+		return rt, lastActive
+	}
+	return nil, time.Time{}
+}
+
+// persistOverdue writes last_active_at for the snapshotted sessions whose
+// reports found dbMu taken when the write was due (see observe), in one
+// transaction. Without it, sustained writes of other servers would leave the
+// column behind without bound, and a restart would close those sessions at a
+// long outdated time. The caller holds dbMu, not mu.
+func (r *OnlineHistoryRecorder) persistOverdue(sessions map[uint64]onlineSessionRuntime) {
+	overdue := make(map[uint64]onlineSessionRuntime)
+	for id, rt := range sessions {
+		if rt.lastObserved.Sub(rt.lastPersist) >= model.OnlineActiveWindow {
+			overdue[id] = rt
+		}
+	}
+	if len(overdue) == 0 {
+		return
+	}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		for _, rt := range overdue {
+			if err := tx.Model(&model.OnlineSession{}).Where("id = ?", rt.id).Update("last_active_at", rt.lastObserved).Error; err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		log.Printf("NEZHA>> Failed to persist online session last_active_at: %v", err)
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, persisted := range overdue {
+		if rt := r.open[id]; rt != nil && rt.id == persisted.id {
+			rt.lastPersist = persisted.lastObserved
+		}
+	}
 }
 
 // SweepOnlineSessions 是定时清扫入口，接上服务器运行时的最后活跃时间。
@@ -309,9 +440,9 @@ func closeOnlineSessionRow(id uint64, end time.Time) error {
 // successful retry can remove the boundary after the reader fetched a stale row.
 func (r *OnlineHistoryRecorder) Sessions(serverID uint64, start, end time.Time) ([]model.OnlineSession, error) {
 	if r != nil {
-		r.mu.Lock()
-		defer r.mu.Unlock()
-		if !r.restored && !r.restoreOngoingSessions() {
+		r.dbMu.Lock()
+		defer r.dbMu.Unlock()
+		if !r.ensureRestored() {
 			return nil, fmt.Errorf("online history recovery unavailable")
 		}
 	}

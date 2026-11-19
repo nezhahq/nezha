@@ -394,3 +394,54 @@ func TestStateStreamDisconnectSideEffectSerializesReplacement(t *testing.T) {
 	require.False(t, old.UpdateStateWithSideEffect(&HostState{}, time.Now(), func() error { called = true; return nil }))
 	require.False(t, called)
 }
+
+// RuntimeSnapshot serves every server list and the alert loop. It must not wait
+// for a state report's side effect (online history, database), nor for a
+// replacement stream that does.
+func TestStateStreamSideEffectDoesNotBlockRuntimeSnapshot(t *testing.T) {
+	busy, idle := &Server{}, &Server{}
+	InitServer(busy)
+	InitServer(idle)
+	lease := busy.AttachStateStream(runtimeOwnershipStream{})
+	require.True(t, lease.UpdateState(&HostState{Uptime: 1}, time.Unix(1, 0)))
+	previous := busy.RuntimeSnapshot().ReportSequence
+
+	writing, release := make(chan struct{}), make(chan struct{})
+	reported := make(chan bool, 1)
+	go func() {
+		reported <- lease.UpdateStateWithSideEffect(&HostState{Uptime: 2}, time.Unix(2, 0), func() error {
+			close(writing)
+			<-release
+			return nil
+		})
+	}()
+	<-writing
+	attached := make(chan StateStreamLease, 1)
+	go func() { attached <- busy.AttachStateStream(runtimeOwnershipStream{}) }()
+	time.Sleep(20 * time.Millisecond)
+
+	snapshots := make(chan RuntimeSnapshot, 1)
+	go func() {
+		idle.RuntimeSnapshot()
+		snapshots <- busy.RuntimeSnapshot()
+	}()
+	select {
+	case snapshot := <-snapshots:
+		// The report is visible as a whole: its state with its own sequence.
+		require.Equal(t, uint64(2), snapshot.State.Uptime)
+		require.Equal(t, time.Unix(2, 0), snapshot.LastActive)
+		require.Greater(t, snapshot.ReportSequence, previous)
+	case <-time.After(5 * time.Second):
+		t.Error("RuntimeSnapshot waited for a state report's side effect")
+	}
+	select {
+	case <-attached:
+		t.Error("replacement attached before the report's side effect finished")
+	default:
+	}
+	close(release)
+	require.True(t, <-reported)
+	next := <-attached
+	require.False(t, lease.UpdateState(&HostState{}, time.Now()))
+	require.True(t, next.UpdateState(&HostState{}, time.Now()))
+}
