@@ -418,6 +418,49 @@ func TestAssertOwnsNotificationGroup(t *testing.T) {
 	assert.NoError(t, assertOwnsNotificationGroup(adminCtx, 8))
 }
 
+// 写侧绑定通知组后，sentinel / cron 会在没有 PAT 上下文的情况下通过该组发通知，
+// 所以 PAT 必须自带 notification-group scope，仅凭 service / alertrule / cron
+// 的 write scope 不能借用签发者的通知渠道。
+func TestAssertOwnsNotificationGroupPATRequiresNotificationGroupScope(t *testing.T) {
+	withPAT := func(ctx *gin.Context, userID uint64, scopes ...string) *gin.Context {
+		tok := &model.APIToken{ID: 1, UserID: userID}
+		tok.SetScopes(scopes)
+		ctx.Set(model.CtxKeyAPIToken, tok)
+		ctx.Set(apiTokenCtxKey, tok)
+		return ctx
+	}
+
+	noScope := withPAT(newMemberValidationContext(t), 200, model.ScopeServiceWrite, model.ScopeAlertRuleWrite, model.ScopeCronWrite, model.ScopeCronExec)
+	assert.NoError(t, assertOwnsNotificationGroup(noScope, 0), "leaving the group unset needs no scope")
+	assert.Error(t, assertOwnsNotificationGroup(noScope, 8), "PAT without a notification-group scope must not bind its owner's group")
+	// 无 scope 的 PAT 不应能通过报错差异枚举通知组 ID。
+	assert.ErrorContains(t, assertOwnsNotificationGroup(noScope, 9999), "permission denied")
+	assert.Error(t, validateServers(noScope, &model.Service{
+		Common:              model.Common{UserID: 200},
+		Cover:               model.ServiceCoverIgnoreAll,
+		Notify:              true,
+		NotificationGroupID: 8,
+	}), "service:write PAT must not bind a notification group")
+	assert.Error(t, validateRule(noScope, &model.AlertRule{
+		Common:              model.Common{UserID: 200},
+		Rules:               []*model.Rule{{Type: "offline", Cover: model.RuleCoverIgnoreAll, Duration: 10}},
+		NotificationGroupID: 8,
+	}), "alertrule:write PAT must not bind a notification group")
+
+	withScope := withPAT(newMemberValidationContext(t), 200, model.ScopeServiceWrite, model.ScopeNotificationGroupRead)
+	assert.NoError(t, assertOwnsNotificationGroup(withScope, 8))
+	assert.Error(t, assertOwnsNotificationGroup(withScope, 7), "scope must not widen ownership")
+	assert.NoError(t, validateServers(withScope, &model.Service{
+		Common:              model.Common{UserID: 200},
+		Cover:               model.ServiceCoverIgnoreAll,
+		Notify:              true,
+		NotificationGroupID: 8,
+	}))
+
+	adminNoScope := withPAT(newAdminValidationContext(t), 1, model.ScopeServiceWrite)
+	assert.Error(t, assertOwnsNotificationGroup(adminNoScope, 8), "admin-issued PAT is bound by its scopes too")
+}
+
 func TestListServerGroupFiltersByOwnership(t *testing.T) {
 	ctx := newMemberValidationContext(t)
 	assert.NoError(t, singleton.DB.Create(&model.ServerGroup{Common: model.Common{ID: 1, UserID: 200}, Name: "member group"}).Error)

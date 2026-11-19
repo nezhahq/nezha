@@ -538,9 +538,20 @@ func userCanViewService(c *gin.Context, service *model.Service) bool {
 	return true
 }
 
+// assertOwnsNotificationGroup 是 service / alertrule / cron 写侧引用通知组的
+// 唯一校验入口。与 enforcePATTriggerTaskScope 同理：运行时 sentinel / cron 通过
+// 已落库的 notification_group_id 发通知时没有 PAT 上下文，HasPermission 也只
+// 校验 ownership 而非 scope，所以必须在写侧对 PAT 额外要求
+// ScopeNotificationGroupRead，否则仅有 service:write 的 PAT 就能借签发者的通知
+// 渠道发送任意文本。scope 校验放在查库之前，避免无 scope 的 PAT 借报错差异
+// 枚举通知组 ID。
 func assertOwnsNotificationGroup(c *gin.Context, groupID uint64) error {
 	if groupID == 0 {
 		return nil
+	}
+
+	if tok := APITokenFromContext(c); tok != nil && !tok.HasScope(model.ScopeNotificationGroupRead) {
+		return singleton.Localizer.ErrorT("permission denied")
 	}
 
 	var ng model.NotificationGroup
