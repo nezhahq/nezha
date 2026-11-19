@@ -106,13 +106,15 @@ func updateServer(c *gin.Context) (any, error) {
 	}
 	s.OverrideDDNSDomainsRaw = string(overrideDomainsRaw)
 
-	if err := singleton.DB.Save(&s).Error; err != nil {
-		return nil, newGormError("%v", err)
+	// The server may have been deleted since First. A plain Save would insert
+	// the row again when its UPDATE matches nothing; with a Select it does not.
+	saved := singleton.DB.Select("*").Save(&s)
+	if saved.Error != nil {
+		return nil, newGormError("%v", saved.Error)
 	}
-
-	rs, _ := singleton.ServerShared.Get(s.ID)
-	s.CopyFromRunningServer(rs)
-	singleton.ServerShared.Update(&s, "")
+	if saved.RowsAffected == 0 || !singleton.ServerShared.Replace(&s) {
+		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)
+	}
 
 	return nil, nil
 }

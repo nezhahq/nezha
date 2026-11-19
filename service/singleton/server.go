@@ -92,10 +92,35 @@ func (c *ServerClass) unlockLifecycleWrite() {
 	c.lifecycleMu.Unlock()
 }
 
+// Update registers a new server. An edit of a registered server goes through
+// Replace.
 func (c *ServerClass) Update(s *model.Server, uuid string) {
 	c.lockLifecycleWrite()
 	defer c.unlockLifecycleWrite()
 
+	c.publish(s, uuid)
+}
+
+// Replace publishes s, an edited copy of a registered server, in place of the
+// running one and hands it the running server's runtime state. The lookup and
+// the swap share one lifecycle lock so a Delete cannot fall in between; if the
+// server is no longer registered it reports false and changes nothing, rather
+// than bring the deleted server back.
+func (c *ServerClass) Replace(s *model.Server) bool {
+	c.lockLifecycleWrite()
+	defer c.unlockLifecycleWrite()
+
+	current, ok := c.Get(s.ID)
+	if !ok || current == nil {
+		return false
+	}
+	s.CopyFromRunningServer(current)
+	c.publish(s, "")
+	return true
+}
+
+// publish must be called with the lifecycle lock held for writing.
+func (c *ServerClass) publish(s *model.Server, uuid string) {
 	c.listMu.Lock()
 
 	c.list[s.ID] = s
@@ -126,7 +151,10 @@ func (c *ServerClass) Delete(idList []uint64) {
 		if !ok {
 			continue
 		}
-		delete(c.uuidToID, s.UUID)
+		// Only unmap a UUID that still belongs to this server.
+		if c.uuidToID[s.UUID] == id {
+			delete(c.uuidToID, s.UUID)
+		}
 		delete(c.list, id)
 	}
 
