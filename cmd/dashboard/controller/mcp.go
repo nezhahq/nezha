@@ -69,6 +69,18 @@ const (
 // per-request batched arguments while making OOM-via-decode impossible.
 const mcpJSONRPCMaxBodyBytes = 8 * 1024 * 1024
 
+// Bounds on request-controlled text that is repeated in a reply. The body cap
+// above limits what is read, not what is written back: a reply is rendered in
+// memory and the JSON encoder writes '<', '>' and '&' as six-byte escapes, so
+// an 8 MiB id, method or tool name would cost a ~50 MB answer per call, rate
+// limit refusals included. The id is raw JSON and cannot be shortened, so a
+// longer one is refused; real clients send a number or a short string. Other
+// echoed text (method, tool name, argument decode errors) is truncated.
+const (
+	mcpJSONRPCMaxIDBytes = 256
+	mcpMaxEchoBytes      = 256
+)
+
 // --- MCP types ---
 
 // mcpServerInfo MCP initialize 响应的 serverInfo 字段。
@@ -204,7 +216,13 @@ func mcpEndpoint(c *gin.Context) {
 		writeJSONRPCError(c, nil, rpcErrParse, "invalid json-rpc envelope: "+err.Error())
 		return
 	}
-	if req.JSONRPC != "2.0" || req.Method == "" {
+	// Every reply below repeats req.ID, so an oversized one is dropped here,
+	// before the rate-limit branches, and the envelope is refused without it.
+	idTooLong := len(req.ID) > mcpJSONRPCMaxIDBytes
+	if idTooLong {
+		req.ID = nil
+	}
+	if req.JSONRPC != "2.0" || req.Method == "" || idTooLong {
 		if rateLimited {
 			writeJSONRPCErrorWithStatus(c, req.ID, rpcErrForbidden, "rate limit exceeded for this token", http.StatusTooManyRequests)
 			return
@@ -248,7 +266,7 @@ func mcpEndpoint(c *gin.Context) {
 	case "tools/call":
 		handleToolsCall(c, &req, tok)
 	default:
-		writeJSONRPCError(c, req.ID, rpcErrMethodNotFound, "method not supported: "+req.Method)
+		writeJSONRPCError(c, req.ID, rpcErrMethodNotFound, "method not supported: "+truncateString(req.Method, mcpMaxEchoBytes))
 	}
 }
 
@@ -302,7 +320,7 @@ func handleToolsCall(c *gin.Context, req *jsonRPCRequest, tok *model.APIToken) {
 	tool, ok := mcpTools[p.Name]
 	mcpToolsMu.RUnlock()
 	if !ok {
-		writeJSONRPCError(c, req.ID, rpcErrMethodNotFound, "unknown tool: "+p.Name)
+		writeJSONRPCError(c, req.ID, rpcErrMethodNotFound, "unknown tool: "+truncateString(p.Name, mcpMaxEchoBytes))
 		return
 	}
 
@@ -493,7 +511,8 @@ func decodeToolArgs(raw json.RawMessage, out any) error {
 		return nil
 	}
 	if err := json.Unmarshal(raw, out); err != nil {
-		return fmt.Errorf("invalid arguments: %w", err)
+		// encoding/json quotes an out-of-range number literal in full.
+		return fmt.Errorf("invalid arguments: %s", truncateString(err.Error(), mcpMaxEchoBytes))
 	}
 	return nil
 }
