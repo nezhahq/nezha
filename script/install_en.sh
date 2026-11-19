@@ -37,16 +37,27 @@ else
 fi
 
 
+# Download into a private directory: a fixed name in /tmp can be created in advance by another local user
+tmp_dir="$(mktemp -d)" || exit 1
+
+download_failed() {
+    echo "Error: failed to download the installation script, aborting"
+    rm -rf "$tmp_dir"
+    exit 1
+}
+
 if command -v wget >/dev/null 2>&1; then
-    wget -O "/tmp/nezha.sh" "$shell_url"
+    wget -O "$tmp_dir/nezha.sh" "$shell_url" || download_failed
 elif command -v curl >/dev/null 2>&1; then
-    curl -o "/tmp/nezha.sh" "$shell_url"
+    curl -f -o "$tmp_dir/nezha.sh" "$shell_url" || download_failed
 else
     echo "Error: wget or curl not found, please install either one and try again"
+    rm -rf "$tmp_dir"
     exit 1
 fi
 
-chmod +x "/tmp/nezha.sh"
-mv "/tmp/nezha.sh" "./$file_name"
+chmod +x "$tmp_dir/nezha.sh" || download_failed
+mv "$tmp_dir/nezha.sh" "./$file_name" || download_failed
+rm -rf "$tmp_dir"
 # Run the new script with the original parameters
 exec ./"$file_name" "$@"

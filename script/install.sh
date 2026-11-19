@@ -87,16 +87,27 @@ else
 fi
 
 
+# 下载到私有临时目录：/tmp 下的固定文件名可被其他本地用户预先创建
+tmp_dir="$(mktemp -d)" || exit 1
+
+download_failed() {
+    echo "错误: 安装脚本下载失败，已中止"
+    rm -rf "$tmp_dir"
+    exit 1
+}
+
 if command -v wget >/dev/null 2>&1; then
-    wget -O "/tmp/nezha.sh" "$shell_url"
+    wget -O "$tmp_dir/nezha.sh" "$shell_url" || download_failed
 elif command -v curl >/dev/null 2>&1; then
-    curl -o "/tmp/nezha.sh" "$shell_url"
+    curl -f -o "$tmp_dir/nezha.sh" "$shell_url" || download_failed
 else
     echo "错误: 未找到 wget 或 curl，请安装其中任意一个后再试"
+    rm -rf "$tmp_dir"
     exit 1
 fi
 
-chmod +x "/tmp/nezha.sh"
-mv "/tmp/nezha.sh" "./$file_name"
+chmod +x "$tmp_dir/nezha.sh" || download_failed
+mv "$tmp_dir/nezha.sh" "./$file_name" || download_failed
+rm -rf "$tmp_dir"
 # 携带原参数运行新脚本
 exec ./"$file_name" "$@"
