@@ -125,12 +125,15 @@ func (rw *RequestWrapper) Close() error {
 		if rw.pipe != nil {
 			_ = rw.pipe.Close()
 		}
+		// The producer owns req until it returns: Body.Close reads the trailer
+		// fields into req.Trailer, which req.Write iterates. Both ends it can
+		// block on are closed above, so it returns promptly.
+		if rw.producerDone != nil {
+			<-rw.producerDone
+		}
 		var bodyErr error
 		if rw.req.Body != nil {
 			bodyErr = rw.req.Body.Close()
-		}
-		if rw.producerDone != nil {
-			<-rw.producerDone
 		}
 		rw.closeErr = errors.Join(bodyErr, connErr)
 		close(rw.closeDone)

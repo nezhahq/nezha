@@ -159,10 +159,53 @@ func TestRequestWrapper_Close_concurrentCallersWaitForCopyToUnblock(t *testing.T
 	}
 }
 
+func TestRequestWrapper_Close_waitsForProducerBeforeClosingBody(t *testing.T) {
+	// Given a producer that is still using the request when Close is called.
+	// Body.Close fills req.Trailer, which req.Write iterates, so closing the
+	// body earlier is a fatal concurrent map iteration and map write.
+	reader, producer := io.Pipe()
+	producerDone := make(chan struct{})
+	var closedBeforeProducerDone atomic.Bool
+	body := &requestWrapperTestBody{onClose: func() {
+		select {
+		case <-producerDone:
+		default:
+			closedBeforeProducerDone.Store(true)
+		}
+	}}
+	rw := &RequestWrapper{
+		req:          &http.Request{Body: body},
+		reader:       reader,
+		pipe:         reader,
+		producerDone: producerDone,
+		writer:       newRequestWrapperTestConn(nil),
+		closeDone:    make(chan struct{}),
+	}
+	go func() {
+		defer close(producerDone)
+		_, _ = producer.Write([]byte("request line"))
+		time.Sleep(20 * time.Millisecond)
+	}()
+
+	// When
+	if err := rw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Then
+	if closedBeforeProducerDone.Load() {
+		t.Fatal("request body closed while the producer was still writing the request")
+	}
+	if got := body.closeCount.Load(); got != 1 {
+		t.Fatalf("expected one body close, got %d", got)
+	}
+}
+
 type requestWrapperTestBody struct {
 	readErr    error
 	closeErr   error
 	closeCount atomic.Int32
+	onClose    func()
 }
 
 func (b *requestWrapperTestBody) Read([]byte) (int, error) {
@@ -174,6 +217,9 @@ func (b *requestWrapperTestBody) Read([]byte) (int, error) {
 
 func (b *requestWrapperTestBody) Close() error {
 	b.closeCount.Add(1)
+	if b.onClose != nil {
+		b.onClose()
+	}
 	return b.closeErr
 }
 
