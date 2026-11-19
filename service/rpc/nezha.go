@@ -24,6 +24,16 @@ var NezhaHandlerSingleton *NezhaHandler
 // after its stream is no longer the live stream for the authenticated server.
 var ErrRequestTaskStreamSuperseded = errors.New("request task stream superseded")
 
+// maxConfigReportBytes bounds the Agent-chosen text answering
+// TaskTypeReportConfig. GET /server/config/:id returns it as it came, JSON
+// escaping can grow it sixfold, and the response stays in memory until the
+// client has read it. An Agent configuration is a few hundred bytes.
+const maxConfigReportBytes = 64 * 1024
+
+// ErrConfigReportTooLarge is handed to the waiting config reader in place of
+// a report, or a failure reason, longer than maxConfigReportBytes.
+var ErrConfigReportTooLarge = errors.New("agent config report too large")
+
 type NezhaHandler struct {
 	Auth                   *authHandler
 	ioStreams              map[string]*ioStreamContext
@@ -189,6 +199,10 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 			}
 		case model.TaskTypeReportConfig:
 			if len(server.ConfigCache) < 1 {
+				if len(result.GetData()) > maxConfigReportBytes {
+					server.ConfigCache <- ErrConfigReportTooLarge
+					continue
+				}
 				if !result.GetSuccessful() {
 					server.ConfigCache <- errors.New(result.Data)
 					continue
