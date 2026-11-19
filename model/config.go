@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -130,6 +131,10 @@ type Config struct {
 
 	k        *koanf.Koanf `json:"-"`
 	filePath string       `json:"-"`
+
+	// envKeys holds the top-level settings supplied by NZ_* variables, in the
+	// underscore-free spelling of the environment. save() consults it.
+	envKeys map[string]any `json:"-"`
 }
 
 type HTTPSConf struct {
@@ -166,6 +171,7 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 	if err != nil {
 		return err
 	}
+	c.envKeys = c.k.Raw()
 
 	if _, err := os.Stat(path); err == nil {
 		c.restrictFileMode()
@@ -246,7 +252,10 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 		c.OnlineStatsDays = DefaultOnlineStatsDays
 	}
 
+	// Both mirrors must be loaded before the first-start Save below, which
+	// persists them; otherwise it would record MCP as explicitly disabled.
 	c.jwtIPChangeAllowed.Store(c.AllowJWTIPChange)
+	c.mcpEnabled.Store(c.EnableMCP)
 
 	if c.AgentSecretKey == "" {
 		c.AgentSecretKey, err = utils.GenerateRandomString(32)
@@ -257,8 +266,6 @@ func (c *Config) Read(path string, frontendTemplates []FrontendTemplate) error {
 			return err
 		}
 	}
-
-	c.mcpEnabled.Store(c.EnableMCP)
 
 	return nil
 }
@@ -372,19 +379,53 @@ func (c *Config) save() error {
 	if err != nil {
 		return err
 	}
-	// Public JSON must omit the signing key, but file-backed keys must survive Save.
-	if !c.jwtSecretFromEnv && c.JWTSecretKey != "" {
-		var persisted map[string]any
-		if err := yaml.Unmarshal(data, &persisted); err != nil {
-			return err
+	var persisted map[string]any
+	if err := yaml.Unmarshal(data, &persisted); err != nil {
+		return err
+	}
+	// omitempty drops a setting that was switched off or cleared, but on the
+	// next start config.yaml overrides an NZ_* variable only for the keys it
+	// contains. Write such a setting explicitly, or the environment would
+	// silently undo a saved revocation (MCP kill switch, member NAT domains, ...).
+	for key, empty := range omitemptySettings(reflect.TypeFor[Config](), map[string]any{}) {
+		if _, saved := persisted[key]; saved {
+			continue
 		}
-		persisted["jwt_secret_key"] = c.JWTSecretKey
-		data, err = yaml.Marshal(persisted)
-		if err != nil {
-			return err
+		if _, fromEnv := c.envKeys[strings.ReplaceAll(key, "_", "")]; fromEnv {
+			persisted[key] = empty
 		}
 	}
+	// Public JSON must omit the signing key, but file-backed keys must survive Save.
+	if !c.jwtSecretFromEnv && c.JWTSecretKey != "" {
+		persisted["jwt_secret_key"] = c.JWTSecretKey
+	}
+	data, err = yaml.Marshal(persisted)
+	if err != nil {
+		return err
+	}
 	return c.write(data)
+}
+
+// omitemptySettings collects the empty value of every top-level setting that
+// marshalling leaves out of config.yaml while it is empty, by its file key.
+func omitemptySettings(t reflect.Type, settings map[string]any) map[string]any {
+	for i := range t.NumField() {
+		field := t.Field(i)
+		if field.Anonymous {
+			omitemptySettings(field.Type, settings)
+			continue
+		}
+		name, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "" || name == "-" || !strings.Contains(options, "omitempty") {
+			continue
+		}
+		empty := reflect.Zero(field.Type)
+		if field.Type.Kind() == reflect.Slice {
+			empty = reflect.MakeSlice(field.Type, 0, 0) // "[]" rather than "null"
+		}
+		settings[name] = empty.Interface()
+	}
+	return settings
 }
 
 func (c *Config) write(data []byte) error {

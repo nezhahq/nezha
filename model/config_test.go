@@ -345,6 +345,83 @@ func TestConfigFileIsRestrictedToOwner(t *testing.T) {
 	})
 }
 
+// config.yaml overrides NZ_* variables, so a setting an administrator switched
+// off or cleared must stay that way after a restart with the variable still set.
+func TestSavedEmptySettingsOverrideEnvironment(t *testing.T) {
+	t.Setenv("NZ_ENABLEMCP", "true")
+	t.Setenv("NZ_ALLOWJWTIPCHANGE", "true")
+	t.Setenv("NZ_NATMEMBERDOMAINS", "tunnel.example.com")
+	t.Setenv("NZ_RESERVEDHOSTS", "admin.example.com")
+	t.Setenv(JWTSecretEnvKey, "secret-from-environment")
+
+	t.Run("cleared settings survive a restart", func(t *testing.T) {
+		file := newTempConfig(t, "agent_secret_key: none\n")
+		t.Cleanup(func() { os.Remove(file) })
+
+		c := &Config{}
+		if err := c.Read(file, nil); err != nil {
+			t.Fatalf("read config failed: %v", err)
+		}
+		if !c.MCPEnabled() || !c.JWTIPChangeAllowed() || len(c.NATMemberDomains) != 1 || c.ReservedHosts == "" {
+			t.Fatalf("environment not applied: mcp=%v ip_change=%v nat=%v reserved=%q",
+				c.MCPEnabled(), c.JWTIPChangeAllowed(), c.NATMemberDomains, c.ReservedHosts)
+		}
+		c.SetMCPEnabled(false)
+		c.SetJWTIPChangeAllowed(false)
+		c.NATMemberDomains = nil
+		c.ReservedHosts = ""
+		if err := c.Save(); err != nil {
+			t.Fatalf("save config failed: %v", err)
+		}
+
+		restarted := &Config{}
+		if err := restarted.Read(file, nil); err != nil {
+			t.Fatalf("read saved config failed: %v", err)
+		}
+		if restarted.MCPEnabled() || restarted.EnableMCP {
+			t.Error("MCP is enabled again after a restart")
+		}
+		if restarted.JWTIPChangeAllowed() {
+			t.Error("JWT IP binding is disabled again after a restart")
+		}
+		if len(restarted.NATMemberDomains) != 0 {
+			t.Errorf("revoked member NAT domains are back: %v", restarted.NATMemberDomains)
+		}
+		if restarted.ReservedHosts != "" {
+			t.Errorf("cleared reserved hosts are back: %q", restarted.ReservedHosts)
+		}
+
+		saved, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("read saved config: %v", err)
+		}
+		if strings.Contains(string(saved), "secret-from-environment") {
+			t.Errorf("environment JWT secret was written to disk: %s", saved)
+		}
+		// Settings without a variable keep being omitted while empty.
+		if strings.Contains(string(saved), "install_host") {
+			t.Errorf("empty setting without an NZ_* variable was written: %s", saved)
+		}
+	})
+
+	t.Run("first start keeps MCP enabled by the environment", func(t *testing.T) {
+		// An empty agent secret makes Read generate one and save the file.
+		t.Setenv("NZ_AGENTSECRETKEY", "")
+		file := newTempConfig(t, "")
+		t.Cleanup(func() { os.Remove(file) })
+
+		for range 2 {
+			c := &Config{}
+			if err := c.Read(file, nil); err != nil {
+				t.Fatalf("read config failed: %v", err)
+			}
+			if !c.MCPEnabled() {
+				t.Fatal("NZ_ENABLEMCP=true did not enable MCP")
+			}
+		}
+	})
+}
+
 func newTempConfig(t *testing.T, cfg string) string {
 	t.Helper()
 
