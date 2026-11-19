@@ -3,6 +3,7 @@ package controller
 import (
 	"slices"
 	"strconv"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
@@ -10,6 +11,12 @@ import (
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
 )
+
+// ddnsWriteMu makes reading a profile, writing it back and publishing it to
+// DDNSShared one step with respect to batchDeleteDDNS, so that neither the
+// database nor the registry the DDNS worker reads gets back a profile whose
+// deletion has already been answered.
+var ddnsWriteMu sync.Mutex
 
 // List DDNS Profiles
 // @Summary List DDNS profiles
@@ -125,6 +132,9 @@ func updateDDNS(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("the retry count must be an integer between 1 and 10")
 	}
 
+	ddnsWriteMu.Lock()
+	defer ddnsWriteMu.Unlock()
+
 	var p model.DDNSProfile
 	if err = singleton.DB.First(&p, id).Error; err != nil {
 		return nil, singleton.Localizer.ErrorT("profile id %d does not exist", id)
@@ -167,8 +177,14 @@ func updateDDNS(c *gin.Context) (any, error) {
 	}
 	p.Domains = domains
 
-	if err = singleton.DB.Save(&p).Error; err != nil {
-		return nil, newGormError("%v", err)
+	// Not Save: it inserts the row again, under its old id, when its UPDATE
+	// matches nothing, i.e. when the profile has been deleted since it was read.
+	updated := singleton.DB.Model(&p).Select("*").Updates(&p)
+	if updated.Error != nil {
+		return nil, newGormError("%v", updated.Error)
+	}
+	if updated.RowsAffected == 0 {
+		return nil, singleton.Localizer.ErrorT("profile id %d does not exist", id)
 	}
 
 	singleton.DDNSShared.Update(&p)
@@ -197,6 +213,9 @@ func batchDeleteDDNS(c *gin.Context) (any, error) {
 	if !singleton.DDNSShared.CheckPermission(c, slices.Values(ddnsConfigs)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
+
+	ddnsWriteMu.Lock()
+	defer ddnsWriteMu.Unlock()
 
 	if err := singleton.DB.Unscoped().Delete(&model.DDNSProfile{}, "id in (?)", ddnsConfigs).Error; err != nil {
 		return nil, newGormError("%v", err)
