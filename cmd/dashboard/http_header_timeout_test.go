@@ -222,3 +222,62 @@ func TestDashboardHTTP2ClosesConnectionThatStoppedReading(t *testing.T) {
 		t.Fatal("handler is still blocked writing to a peer that stopped reading")
 	}
 }
+
+// net/http allocates a frame's payload when its 9-byte header arrives and waits
+// for the rest without a deadline, so the largest frame a client may announce
+// is memory it can pin per connection without ever sending a request.
+func TestDashboardHTTP2RefusesOversizedFrameHeader(t *testing.T) {
+	for _, useTLS := range []bool{false, true} {
+		name := "h2c"
+		if useTLS {
+			name = "h2"
+		}
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("unfinished frame reached handler") }))
+			server.Config = newDashboardHTTPServer(server.Config.Handler)
+			server.Config.Protocols = new(http.Protocols)
+			server.Config.Protocols.SetHTTP1(true)
+			server.Config.Protocols.SetHTTP2(true)
+			server.Config.Protocols.SetUnencryptedHTTP2(true)
+			server.EnableHTTP2 = true
+			if useTLS {
+				server.StartTLS()
+			} else {
+				server.Start()
+			}
+			defer server.Close()
+			var conn net.Conn
+			var err error
+			if useTLS {
+				conn, err = tls.Dial("tcp", server.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"h2"}})
+			} else {
+				conn, err = net.Dial("tcp", server.Listener.Addr().String())
+			}
+			require.NoError(t, err)
+			defer conn.Close()
+			require.NoError(t, conn.SetDeadline(time.Now().Add(5*time.Second)))
+			_, err = io.WriteString(conn, http2.ClientPreface)
+			require.NoError(t, err)
+			framer := http2.NewFramer(conn, conn)
+			require.NoError(t, framer.WriteSettings())
+			// Header of an unknown-type frame on stream 0, one byte over the limit,
+			// and only the first byte of its payload.
+			const length = dashboardHTTP2MaxReadFrameSize + 1
+			_, err = conn.Write([]byte{length >> 16, length >> 8 & 0xff, length & 0xff, 0x63, 0, 0, 0, 0, 0, 'x'})
+			require.NoError(t, err)
+			for {
+				frame, err := framer.ReadFrame()
+				require.NoError(t, err, "server waits for the oversized frame")
+				if settings, ok := frame.(*http2.SettingsFrame); ok && !settings.IsAck() {
+					maxFrameSize, ok := settings.Value(http2.SettingMaxFrameSize)
+					require.True(t, ok)
+					require.EqualValues(t, dashboardHTTP2MaxReadFrameSize, maxFrameSize)
+				}
+				if goAway, ok := frame.(*http2.GoAwayFrame); ok {
+					require.Equal(t, http2.ErrCodeFrameSize, goAway.ErrCode)
+					return
+				}
+			}
+		})
+	}
+}

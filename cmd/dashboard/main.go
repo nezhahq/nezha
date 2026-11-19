@@ -199,7 +199,7 @@ func main() {
 		muxServerHTTPS = &http.Server{
 			ReadHeaderTimeout: dashboardReadHeaderTimeout,
 			MaxHeaderBytes:    dashboardMaxHeaderBytes,
-			HTTP2:             &http.HTTP2Config{WriteByteTimeout: dashboardHTTP2WriteByteTimeout},
+			HTTP2:             &http.HTTP2Config{WriteByteTimeout: dashboardHTTP2WriteByteTimeout, MaxReadFrameSize: dashboardHTTP2MaxReadFrameSize},
 			Addr:              fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
 			Handler:           muxHandler,
 			TLSConfig: &tls.Config{
