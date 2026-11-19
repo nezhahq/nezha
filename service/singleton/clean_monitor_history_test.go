@@ -94,3 +94,51 @@ func TestHistoryCleanupIgnoresFalseServerSelection(t *testing.T) {
 	require.NoError(t, DB.Model(&model.Transfer{}).Count(&count).Error)
 	require.Zero(t, count, "false selection must not retain unrelated transfer history")
 }
+
+func TestHistoryCleanupIgnoresListedIDsWithoutServer(t *testing.T) {
+	setupCleanMonitorHistoryTestDB(t)
+	require.NoError(t, DB.AutoMigrate(&model.MCPAuditLog{}))
+	require.NoError(t, DB.Exec("INSERT INTO servers (id, name, uuid) VALUES (2, 'unlisted', 'clean-monitor-history-unlisted')").Error)
+	start := time.Now().UTC().Add(-48 * time.Hour)
+	listed := map[uint64]bool{1: true}
+	for id := uint64(1000); id < 6000; id++ {
+		listed[id] = true // no such servers
+	}
+	require.NoError(t, DB.Create(&model.AlertRule{Name: "listed ids", Rules: []*model.Rule{{Type: "transfer_in_cycle", CycleStart: &start, CycleInterval: 1000, CycleUnit: "hour", Cover: model.RuleCoverIgnoreAll, Ignore: listed}}}).Error)
+	retained := model.Transfer{Common: model.Common{CreatedAt: start.Add(time.Hour)}, ServerID: 1, In: 1}
+	require.NoError(t, DB.Create(&retained).Error)
+	require.NoError(t, DB.Create(&model.Transfer{Common: model.Common{CreatedAt: start.Add(-time.Hour)}, ServerID: 1, In: 2}).Error)
+	require.NoError(t, DB.Create(&model.Transfer{Common: model.Common{CreatedAt: start.Add(time.Hour)}, ServerID: 2, In: 3}).Error)
+
+	deletes := 0
+	require.NoError(t, DB.Callback().Delete().Before("gorm:delete").Register("count_deletes", func(*gorm.DB) { deletes++ }))
+	CleanMonitorHistory()
+
+	require.LessOrEqual(t, deletes, 4, "cleanup must not issue one DELETE per listed ID (%d IDs)", len(listed))
+	var transfers []model.Transfer
+	require.NoError(t, DB.Find(&transfers).Error)
+	require.Len(t, transfers, 1)
+	require.Equal(t, retained.ID, transfers[0].ID)
+}
+
+func TestHistoryCleanupListsEachServerOnce(t *testing.T) {
+	setupCleanMonitorHistoryTestDB(t)
+	require.NoError(t, DB.AutoMigrate(&model.MCPAuditLog{}))
+	require.NoError(t, DB.Exec("INSERT INTO servers (id, name, uuid) VALUES (2, 'unlisted', 'clean-monitor-history-unlisted')").Error)
+	now := time.Now().UTC()
+	// More successively earlier cycles for one server than SQLite accepts bound variables.
+	rules := make([]*model.Rule, 40000)
+	for i := range rules {
+		start := now.Add(-48*time.Hour - time.Duration(i)*time.Second)
+		rules[i] = &model.Rule{Type: "transfer_in_cycle", CycleStart: &start, CycleInterval: 1000, CycleUnit: "hour", Cover: model.RuleCoverIgnoreAll, Ignore: map[uint64]bool{1: true}}
+	}
+	require.NoError(t, DB.Create(&model.AlertRule{Name: "repeated server", Rules: rules}).Error)
+	retained := model.Transfer{Common: model.Common{CreatedAt: now.Add(-24 * time.Hour)}, ServerID: 1, In: 1}
+	require.NoError(t, DB.Create(&retained).Error)
+	require.NoError(t, DB.Create(&model.Transfer{Common: model.Common{CreatedAt: now.Add(-24 * time.Hour)}, ServerID: 2, In: 2}).Error)
+	CleanMonitorHistory()
+	var transfers []model.Transfer
+	require.NoError(t, DB.Find(&transfers).Error)
+	require.Len(t, transfers, 1, "history of servers no rule lists must still be pruned")
+	require.Equal(t, retained.ID, transfers[0].ID)
+}

@@ -170,6 +170,18 @@ func CleanMonitorHistory() {
 		log.Printf("NEZHA>> Failed to load alert rules while cleaning transfer history: %v", err)
 		return
 	}
+	// Rule.Ignore is user-supplied and unbounded. Transfers of servers that do
+	// not exist were removed above, so only IDs of existing servers need their
+	// own retention; this bounds the statements below by the number of servers.
+	var serverIDs []uint64
+	if err := DB.Model(&model.Server{}).Pluck("id", &serverIDs).Error; err != nil {
+		log.Printf("NEZHA>> Failed to load servers while cleaning transfer history: %v", err)
+		return
+	}
+	existingServers := make(map[uint64]struct{}, len(serverIDs))
+	for _, id := range serverIDs {
+		existingServers[id] = struct{}{}
+	}
 	for _, alert := range alerts {
 		for _, rule := range alert.Rules {
 			// 是不是流量记录规则
@@ -189,15 +201,19 @@ func CleanMonitorHistory() {
 					if !included {
 						continue
 					}
+					if _, exists := existingServers[id]; !exists {
+						continue
+					}
 					if specialServerKeep[id].IsZero() || specialServerKeep[id].After(dataCouldRemoveBefore) {
 						specialServerKeep[id] = dataCouldRemoveBefore
-						specialServerIDs = append(specialServerIDs, id)
 					}
 				}
 			}
 		}
 	}
 	for id, couldRemove := range specialServerKeep {
+		// One entry per server, however many rules list it.
+		specialServerIDs = append(specialServerIDs, id)
 		// Retain history required by either a global or server-specific rule.
 		if !allServerKeep.IsZero() && allServerKeep.Before(couldRemove) {
 			couldRemove = allServerKeep
