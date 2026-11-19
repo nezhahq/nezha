@@ -150,15 +150,22 @@ func (c *CronClass) Update(cr *model.Cron) {
 }
 
 func (c *CronClass) Delete(idList []uint64) {
+	var jobs []cron.EntryID
 	c.listMu.Lock()
 	for _, id := range idList {
 		cr := c.list[id]
 		if cr != nil && cr.CronJobID != 0 {
-			c.Cron.Remove(cr.CronJobID)
+			jobs = append(jobs, cr.CronJobID)
 		}
 		delete(c.list, id)
 	}
 	c.listMu.Unlock()
+	// Every Remove makes the scheduler copy and sort all of its entries, so
+	// the jobs are unregistered after the lock every task lookup waits for is
+	// released.
+	for _, job := range jobs {
+		c.Cron.Remove(job)
+	}
 	c.deleteAlertTriggerCronResultAuthorizations(idList)
 
 	c.sortList()

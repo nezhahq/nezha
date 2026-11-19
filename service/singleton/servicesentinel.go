@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
+	"github.com/robfig/cron/v3"
 	"golang.org/x/exp/constraints"
 
 	"github.com/nezhahq/nezha/model"
@@ -606,6 +607,16 @@ func (ss *ServiceSentinel) Update(m *model.Service) error {
 }
 
 func (ss *ServiceSentinel) Delete(ids []uint64) {
+	// Runs after the locks below are released: every Remove makes the
+	// scheduler copy and sort all of its entries, and every probe result
+	// waits for these locks.
+	var jobs []cron.EntryID
+	defer func() {
+		for _, job := range jobs {
+			CronShared.Remove(job)
+		}
+	}()
+
 	ss.serviceResponseDataStoreLock.Lock()
 	defer ss.serviceResponseDataStoreLock.Unlock()
 	ss.monthlyStatusLock.Lock()
@@ -630,7 +641,7 @@ func (ss *ServiceSentinel) Delete(ids []uint64) {
 		// ids are cleaned from memory — their service records were already deleted
 		// from the database, producing zombie services.
 		if svc := ss.services[id]; svc != nil {
-			CronShared.Remove(svc.CronJobID)
+			jobs = append(jobs, svc.CronJobID)
 		}
 		delete(ss.services, id)
 

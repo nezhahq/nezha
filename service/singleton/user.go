@@ -90,6 +90,16 @@ func OnUserUpdate(u *model.User) {
 }
 
 func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
+	// Runs after UserLock is released: unregistering scheduled tasks takes time
+	// per task, and every Agent request and alert check waits for UserLock.
+	// Until then a task that fires covers nothing, because its owner is gone.
+	var deletedCrons []uint64
+	defer func() {
+		if len(deletedCrons) > 0 {
+			CronShared.Delete(deletedCrons)
+		}
+	}()
+
 	if len(id) < 1 {
 		return Localizer.ErrorT("user id not specified")
 	}
@@ -155,7 +165,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 		}
 
 		if cron {
-			CronShared.Delete(crons)
+			deletedCrons = append(deletedCrons, crons...)
 		}
 
 		if server {
