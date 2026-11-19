@@ -96,6 +96,8 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	fallbackAuth.GET("/oauth2/:provider", commonHandler(oauth2redirect))
 	fallbackAuth.GET("/setting", commonHandler(listConfig))
 	fallbackAuth.GET("/oauth2/callback", commonHandler(oauth2callback(authMiddleware)))
+	// With several providers each one is given its own callback path.
+	fallbackAuth.GET("/oauth2/callback/:provider", commonHandler(oauth2callback(authMiddleware)))
 
 	jwtMw := authMiddleware.MiddlewareFunc()
 	patMw := apiTokenAuthMiddleware()

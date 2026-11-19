@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -85,6 +86,13 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 		return nil, singleton.Localizer.ErrorT("provider not found")
 	}
 	redirectURL := getRedirectURL(c)
+	if len(singleton.Conf.Oauth2) > 1 {
+		// OAuth mix-up defence (RFC 9700 section 4.4.2): with several providers
+		// each one gets its own redirect URI, so the path a code arrives on
+		// tells which provider issued it. A single provider keeps the shared
+		// path, so existing single-provider registrations stay valid.
+		redirectURL += "/" + url.PathEscape(provider)
+	}
 	o2conf := o2confRaw.Setup(redirectURL)
 
 	randomString, err := utils.GenerateRandomString(32)
@@ -162,6 +170,7 @@ func unbindOauth2(c *gin.Context) (any, error) {
 // @Param code query string true "code"
 // @Success 200 {object} model.CommonResponse[any]
 // @Router /api/v1/oauth2/callback [get]
+// @Router /api/v1/oauth2/callback/{provider} [get]
 func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, error) {
 	return func(c *gin.Context) (any, error) {
 		callbackData := &model.Oauth2Callback{
@@ -172,6 +181,12 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 		state, err := verifyState(c, callbackData.State)
 		if err != nil {
 			return nil, err
+		}
+		// The state says which provider was asked, the path which one answered.
+		// A code another provider issued must not reach this one's token_url,
+		// so the shared path is not accepted either once there are several.
+		if len(singleton.Conf.Oauth2) > 1 && c.Param("provider") != state.Provider {
+			return nil, singleton.Localizer.ErrorT("invalid state key")
 		}
 
 		o2confRaw, has := singleton.Conf.Oauth2[state.Provider]
