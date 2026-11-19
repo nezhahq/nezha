@@ -834,6 +834,9 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) 
 
 	remaining := size
 	header := make([]byte, 4+8)
+	// Built once: the agent chooses the chunk length, so nothing the relay
+	// does per frame may cost an allocation or a write(2) of its own.
+	sink := io.MultiWriter(spool, hasher)
 	for remaining > 0 {
 		if _, err := io.ReadFull(stream, header); err != nil {
 			c.String(http.StatusBadGateway, "stream relay failed: "+err.Error())
@@ -859,11 +862,14 @@ func relayDownloadFrames(c *gin.Context, stream io.ReadWriteCloser, size int64) 
 			c.String(http.StatusBadGateway, "stream relay failed: zero-length data frame while payload incomplete")
 			return errMCPMidstreamAbort
 		}
-		if int64(chunkLen) > remaining {
+		// Compare before narrowing: a length of 1<<63 or more is negative as
+		// int64, would pass a signed comparison and make io.CopyN copy nothing,
+		// which is the zero-progress frame rejected above under another spelling.
+		if chunkLen > uint64(remaining) {
 			c.String(http.StatusBadGateway, "agent oversent: more data bytes than declared size")
 			return errMCPMidstreamAbort
 		}
-		n, err := io.CopyN(io.MultiWriter(spool, hasher), stream, int64(chunkLen))
+		n, err := io.CopyN(sink, stream, int64(chunkLen))
 		if err != nil {
 			c.String(http.StatusBadGateway, "stream relay failed: "+err.Error())
 			return err

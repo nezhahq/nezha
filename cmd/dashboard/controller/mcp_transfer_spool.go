@@ -1,13 +1,21 @@
 package controller
 
 import (
+	"bufio"
 	"io"
 	"os"
 	"runtime"
 )
 
+// transferSpoolBuffer sizes the write buffer in front of the spool tmpfile.
+const transferSpoolBuffer = 64 << 10
+
 type transferSpool struct {
 	f *os.File
+	// The agent chooses how the payload is cut into Write calls (one per NZTC
+	// frame), so writes are buffered: the number of write(2) calls must follow
+	// the payload size, not the agent's framing. Rewind flushes.
+	w *bufio.Writer
 }
 
 func newTransferSpool() (*transferSpool, error) {
@@ -19,14 +27,17 @@ func newTransferSpool() (*transferSpool, error) {
 	if runtime.GOOS != "windows" {
 		_ = os.Remove(f.Name())
 	}
-	return &transferSpool{f: f}, nil
+	return &transferSpool{f: f, w: bufio.NewWriterSize(f, transferSpoolBuffer)}, nil
 }
 
-func (s *transferSpool) Write(p []byte) (int, error) { return s.f.Write(p) }
+func (s *transferSpool) Write(p []byte) (int, error) { return s.w.Write(p) }
 
 func (s *transferSpool) Read(p []byte) (int, error) { return s.f.Read(p) }
 
 func (s *transferSpool) Rewind() error {
+	if err := s.w.Flush(); err != nil {
+		return err
+	}
 	_, err := s.f.Seek(0, io.SeekStart)
 	return err
 }
