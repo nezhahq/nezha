@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -320,7 +321,10 @@ func exchangeOpenId(c *gin.Context, o2confRaw *model.Oauth2Config,
 		return "", err
 	}
 
-	if len(body) > maxUserInfoSize || !gjson.ValidBytes(body) {
+	// gjson.ValidBytes recurses once per nesting level with no depth limit, so a body of
+	// "[" within the size cap grows this goroutine's stack to over 100 MiB. json.Valid
+	// does not recurse and rejects documents nested deeper than 10000 levels.
+	if len(body) > maxUserInfoSize || !json.Valid(body) {
 		return "", fmt.Errorf("invalid or oversized userinfo response")
 	}
 	id := gjson.GetBytes(body, o2confRaw.UserIDPath)

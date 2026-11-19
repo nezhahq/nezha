@@ -70,6 +70,8 @@ func TestSecurityBoundaryOAuthRejectsInvalidUserInfo(t *testing.T) {
 		{"missing_identifier", http.StatusOK, `{"message":"missing user"}`, ""},
 		{"error_status", http.StatusUnauthorized, `{"id":"error-response-id"}`, "error-response-id"},
 		{"non_json_error", http.StatusBadGateway, "provider unavailable", ""},
+		{"deeply_nested", http.StatusOK, `{"id":"provider-user","groups":` + strings.Repeat("[", 20000) + strings.Repeat("]", 20000) + "}", ""},
+		{"unterminated_nesting", http.StatusOK, strings.Repeat("[", 1<<20), ""},
 	} {
 		t.Run(scenario.name, func(t *testing.T) {
 			originalTransport := http.DefaultTransport
