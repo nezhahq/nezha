@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"time"
@@ -53,6 +54,36 @@ func (s *NezhaHandler) IOStream(stream pb.NezhaService_IOStreamServer) error {
 		return err
 	}
 	wrapper.Wait()
+	s.endClosedIOStream(stream.Context())
 	<-keepaliveDone
 	return nil
+}
+
+// endClosedIOStream makes sure the RPC of a closed session ends with it. The
+// session's quota slot is already free, but an agent that stopped reading keeps
+// the relay's write, its buffer and the status IOStream is about to return
+// queued behind a response write parked on flow control. The stream is reset
+// unless the RPC finishes by itself within ioStreamCloseGrace, and only the
+// maxClosingStreams most recently closed sessions get that grace, so what
+// closed sessions pin stays bounded however fast they are opened and closed.
+func (s *NezhaHandler) endClosedIOStream(ctx context.Context) {
+	abort := grpcx.StreamAbort(ctx)
+	if abort == nil {
+		return
+	}
+	time.AfterFunc(ioStreamCloseGrace, abort)
+	for {
+		select {
+		case s.ioStreamAborts <- abort:
+			return
+		default:
+		}
+		// Full: the oldest one has waited longest. Resetting it does nothing
+		// if its RPC has ended, which a healthy one does right away.
+		select {
+		case oldest := <-s.ioStreamAborts:
+			oldest()
+		default:
+		}
+	}
 }

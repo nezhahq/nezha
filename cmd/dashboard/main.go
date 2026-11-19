@@ -22,6 +22,7 @@ import (
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/cmd/dashboard/rpc"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/grpcx"
 	"github.com/nezhahq/nezha/pkg/idcodec"
 	"github.com/nezhahq/nezha/pkg/utils"
 	"github.com/nezhahq/nezha/proto"
@@ -264,7 +265,7 @@ func newHTTPandGRPCMux(httpHandler http.Handler, grpcHandler http.Handler) http.
 		}
 		if r.ProtoMajor == 2 && r.Header.Get("Content-Type") == "application/grpc" &&
 			strings.HasPrefix(r.URL.Path, "/"+proto.NezhaService_ServiceDesc.ServiceName) {
-			grpcHandler.ServeHTTP(w, r)
+			grpcx.ServeAbortable(grpcHandler, w, r)
 			return
 		}
 		httpHandler.ServeHTTP(w, r)

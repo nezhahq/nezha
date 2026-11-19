@@ -1,10 +1,19 @@
 package rpc
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 const (
 	maxStreamsPerUser   = 20
 	maxStreamsPerServer = 40
+	// A closed stream no longer counts toward the caps above, so the agent
+	// RPCs of closed streams that have not ended yet are bounded separately:
+	// each gets ioStreamCloseGrace to end by itself, and no more than the
+	// maxClosingStreams most recently closed ones are left waiting for it.
+	maxClosingStreams  = maxStreamsPerUser
+	ioStreamCloseGrace = 2 * time.Second
 )
 
 var (

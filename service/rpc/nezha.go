@@ -41,6 +41,8 @@ type NezhaHandler struct {
 	ioStreamGeneration     uint64
 	ioStreamNotify         chan struct{}
 	ioStreamWaitLockedHook func()
+	// ioStreamAborts resets the agent RPCs of the most recently closed streams (endClosedIOStream).
+	ioStreamAborts chan func()
 	// Capability authorization and exact stream deletion share ioStreamMutex to avoid TOCTOU.
 	agentCompatCapabilities agentCompatCapabilityState
 }
@@ -62,6 +64,7 @@ func NewNezhaHandler() *NezhaHandler {
 		ioStreamMutex:  new(sync.RWMutex),
 		ioStreams:      make(map[string]*ioStreamContext),
 		ioStreamNotify: make(chan struct{}),
+		ioStreamAborts: make(chan func(), maxClosingStreams),
 	}
 	handler.initializeAgentCompatCapabilities()
 	return handler
