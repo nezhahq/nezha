@@ -503,6 +503,12 @@ func userCanViewService(c *gin.Context, service *model.Service) bool {
 	if service == nil {
 		return false
 	}
+	// PAT 白名单优先，与 userCanViewServer 对称：server_ids 受限 PAT 只能看见
+	// fan-out 完全落在白名单内的 service，与 HideForGuest 无关。否则公开 service
+	// 的聚合状态/历史会把白名单外 server 的探测结果泄漏给受限 PAT。
+	if enforcePATServiceDispatchScope(c, service) != nil {
+		return false
+	}
 	// HideForGuest 默认公开，置 true 才对 guest 隐藏，语义与 Server.HideForGuest 对齐。
 	if service.HideForGuest {
 		if _, isMember := c.Get(model.CtxKeyAuthorizedUser); !isMember {
