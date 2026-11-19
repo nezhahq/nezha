@@ -7,11 +7,13 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/goccy/go-json"
 	"github.com/nezhahq/nezha/pkg/utils"
+	"github.com/tidwall/gjson"
 )
 
 const (
@@ -46,9 +48,24 @@ type Notification struct {
 
 func (ns *NotificationServerBundle) reqURL(message string) string {
 	n := ns.Notification
-	return ns.replaceParamsInString(n.URL, message, func(msg string) string {
-		return url.QueryEscape(msg)
-	})
+	base, query, hasQuery := strings.Cut(n.URL, "?")
+	reqURL := ns.replaceParamsInString(base, message, url.QueryEscape)
+	if !hasQuery {
+		return reqURL
+	}
+	// Like a form field, a query parameter may hold a JSON document.
+	params := strings.Split(query, "&")
+	for i, param := range params {
+		escape := url.QueryEscape
+		_, value, _ := strings.Cut(param, "=")
+		if value, err := url.QueryUnescape(value); err == nil {
+			if jsonEscape := jsonTemplateEscape(value); jsonEscape != nil {
+				escape = func(msg string) string { return url.QueryEscape(jsonEscape(msg)) }
+			}
+		}
+		params[i] = ns.replaceParamsInString(param, message, escape)
+	}
+	return reqURL + "?" + strings.Join(params, "&")
 }
 
 func (n *Notification) reqMethod() (string, error) {
@@ -68,10 +85,7 @@ func (ns *NotificationServerBundle) reqBody(message string) (string, error) {
 	}
 	switch n.RequestType {
 	case NotificationRequestTypeJSON:
-		return ns.replaceParamsInString(n.RequestBody, message, func(msg string) string {
-			msgBytes, _ := json.Marshal(msg)
-			return string(msgBytes)[1 : len(msgBytes)-1]
-		}), nil
+		return ns.replaceParamsInString(n.RequestBody, message, jsonStringEscape), nil
 	case NotificationRequestTypeForm:
 		data, err := utils.GjsonIter(n.RequestBody)
 		if err != nil {
@@ -79,11 +93,44 @@ func (ns *NotificationServerBundle) reqBody(message string) (string, error) {
 		}
 		params := url.Values{}
 		for k, v := range data {
-			params.Add(k, ns.replaceParamsInString(v, message, nil))
+			params.Add(k, ns.replaceParamsInString(v, message, jsonTemplateEscape(v)))
 		}
 		return params.Encode(), nil
 	}
 	return "", errors.New("不支持的请求类型")
+}
+
+// jsonStringEscape escapes msg for use inside a JSON string literal.
+func jsonStringEscape(msg string) string {
+	msgBytes, _ := json.Marshal(msg)
+	return string(msgBytes)[1 : len(msgBytes)-1]
+}
+
+// templatePlaceholder matches the placeholders of replaceParamsInString:
+// #NEZHA#, #DATETIME#, #SERVER.NAME#, ...
+var templatePlaceholder = regexp.MustCompile(`#[A-Z0-9.]+#`)
+
+// jsonTemplateEscape returns the escaping that placeholder values need before
+// they are expanded in value, one form field or query parameter of a template.
+// Such a field may hold a JSON document, as in Slack's
+// payload={"text":"#NEZHA#"}: form encoding keeps a value inside the field but
+// not inside the string literal, so it needs jsonStringEscape like a JSON
+// body. For a plain text field the result is nil.
+func jsonTemplateEscape(value string) func(string) string {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "{") && !strings.HasPrefix(value, "[") {
+		return nil
+	}
+	// Without a string literal there is nothing to break out of, and
+	// "[#SERVER.NAME#]" is plain text.
+	if !strings.Contains(value, `"`) {
+		return nil
+	}
+	// A placeholder may also stand for a number: {"swap":#SERVER.SWAPUSED#}.
+	if !gjson.Valid(templatePlaceholder.ReplaceAllString(value, "0")) {
+		return nil
+	}
+	return jsonStringEscape
 }
 
 func (n *Notification) setContentType(req *http.Request) {

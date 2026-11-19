@@ -2,9 +2,12 @@ package model
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -380,5 +383,96 @@ func TestNotificationHTTPClientInvertsVerifyTLSFlag(t *testing.T) {
 					tc.verifyTLS, tc.wantSkipVerifyOn, got)
 			}
 		})
+	}
+}
+
+// A form field or a query parameter may hold a JSON document (Slack's
+// payload={"text":"#NEZHA#"}). The message and the server name are not written
+// by the owner of the notification, so they must stay inside the JSON string
+// the template puts them in.
+func TestNotificationPlaceholderValuesStayInNestedJSON(t *testing.T) {
+	message := `[Down] mail Error: x", "channel": "#mallory", "text": "[Good] mail`
+	name := `web", "channel": "#mallory`
+	ns := NotificationServerBundle{
+		Server: &Server{Name: name},
+		Loc:    time.Local,
+	}
+	check := func(what, document string) {
+		t.Helper()
+		var got map[string]string
+		if err := json.Unmarshal([]byte(document), &got); err != nil {
+			t.Fatalf("%s is not JSON: %v: %s", what, err, document)
+		}
+		expect := map[string]string{"channel": "#oncall", "server": name, "text": message}
+		if !maps.Equal(got, expect) {
+			t.Fatalf("placeholder value changed the JSON document in %s: %s", what, document)
+		}
+	}
+
+	for _, payload := range []string{
+		`{"channel": "#oncall", "server": "#SERVER.NAME#", "text": "#NEZHA#"}`,
+		`"{\"channel\": \"#oncall\", \"server\": \"#SERVER.NAME#\", \"text\": \"#NEZHA#\"}"`,
+	} {
+		ns.Notification = &Notification{
+			URL:           "https://example.com/hook",
+			RequestMethod: NotificationRequestMethodPOST,
+			RequestType:   NotificationRequestTypeForm,
+			RequestBody:   `{"plain": "[#SERVER.NAME#] #NEZHA#", "payload": ` + payload + `}`,
+		}
+		body, err := ns.reqBody(message)
+		if err != nil {
+			t.Fatal(err)
+		}
+		form, err := url.ParseQuery(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("form field", form.Get("payload"))
+		// Plain text fields are sent as before.
+		if got := form.Get("plain"); got != "["+name+"] "+message {
+			t.Fatalf("plain text field changed: %s", got)
+		}
+	}
+
+	for _, query := range []string{
+		`payload={"channel":"%23oncall","server":"#SERVER.NAME#","text":"#NEZHA#"}`,
+		`payload=%7B%22channel%22%3A%22%23oncall%22%2C%22server%22%3A%22#SERVER.NAME#%22%2C%22text%22%3A%22#NEZHA#%22%7D`,
+	} {
+		ns.Notification = &Notification{
+			URL:           "https://example.com/hook?plain=[#SERVER.NAME#]+#NEZHA#&" + query,
+			RequestMethod: NotificationRequestMethodGET,
+		}
+		u, err := url.Parse(ns.reqURL(message))
+		if err != nil {
+			t.Fatal(err)
+		}
+		check("query parameter", u.Query().Get("payload"))
+		if got := u.Query().Get("plain"); got != "["+name+"] "+message {
+			t.Fatalf("plain text query parameter changed: %s", got)
+		}
+	}
+}
+
+func TestJSONTemplateEscape(t *testing.T) {
+	cases := map[string]bool{
+		// JSON documents
+		`{"text":"#NEZHA#"}`:                                         true,
+		` [{"text": "#SERVER.NAME#: #NEZHA#"}] `:                     true,
+		`{"text":"#NEZHA#","swap":#SERVER.SWAPUSED#}`:                true,
+		"{\n  \"channel\": \"#oncall\",\n  \"text\": \"#NEZHA#\"\n}": true,
+		// plain text
+		``:                           false,
+		`#NEZHA#`:                    false,
+		`"#NEZHA#"`:                  false,
+		`[#SERVER.NAME#]`:            false,
+		`[#SERVER.NAME#] #NEZHA#`:    false,
+		`["Nezha"] #NEZHA#`:          false,
+		`{#NEZHA#}`:                  false,
+		`{"text":"#NEZHA#"} #NEZHA#`: false,
+	}
+	for value, expect := range cases {
+		if got := jsonTemplateEscape(value) != nil; got != expect {
+			t.Errorf("jsonTemplateEscape(%q): JSON document %v, expected %v", value, got, expect)
+		}
 	}
 }
