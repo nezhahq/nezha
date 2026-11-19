@@ -2,6 +2,8 @@ package controller
 
 import (
 	"errors"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -74,4 +76,41 @@ func TestRequireAgentSupportsMCPAcceptsBarePrefixReport(t *testing.T) {
 	agent := &model.Server{Host: &model.Host{Version: "2.1.0"}}
 	require.NoError(t, requireAgentSupportsMCP(agent),
 		"agents report Host.Version without the 'v' prefix (e.g. \"2.1.0\"); it must compare equal to MCPMinAgentVersion \"v2.1.0\" and be accepted")
+}
+
+// Host.Version 由 agent 任意上报，长度只受 gRPC 消息上限约束；版本门槛在每次
+// MCP tool 调用时都会解析它，所以解析的内存开销不能随版本串长度放大。
+func TestSemverPartsAllocationIsIndependentOfVersionLength(t *testing.T) {
+	agentChosen := "2.1.0" + strings.Repeat(".", 4<<20)
+	// TotalAlloc 是进程级累计值，取三次中的最小值以排除其他 goroutine 的分配噪声。
+	allocated := ^uint64(0)
+	for range 3 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := semverParts(agentChosen)
+		runtime.ReadMemStats(&after)
+		require.Equal(t, [3]int{2, 1, 0}, got)
+		allocated = min(allocated, after.TotalAlloc-before.TotalAlloc)
+	}
+	require.Less(t, allocated, uint64(len(agentChosen)),
+		"semverParts only reads the first three components; splitting the whole agent-supplied version costs 16 bytes per dot on every MCP tool call")
+	require.NoError(t, requireAgentSupportsMCP(&model.Server{Host: &model.Host{Version: agentChosen}}))
+}
+
+func TestSemverPartsIgnoresComponentsAfterPatch(t *testing.T) {
+	cases := []struct {
+		v    string
+		want [3]int
+	}{
+		{"", [3]int{}},
+		{"2", [3]int{2, 0, 0}},
+		{"2.1", [3]int{2, 1, 0}},
+		{"v2.1.3", [3]int{2, 1, 3}},
+		{"2.1.3.4.5", [3]int{2, 1, 3}},
+		{"2.1.3-rc.1+build.7", [3]int{2, 1, 3}},
+		{"2.1.3rc.9.9", [3]int{2, 1, 3}},
+	}
+	for _, c := range cases {
+		require.Equalf(t, c.want, semverParts(c.v), "semverParts(%q)", c.v)
+	}
 }

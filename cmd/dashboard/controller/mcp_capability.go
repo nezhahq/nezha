@@ -50,13 +50,16 @@ func compareSemver(a, b string) int {
 	return 0
 }
 
+// semverParts 取出前三段数字。v 可能是 agent 上报的 Host.Version，长度只受 gRPC
+// 消息上限（4 MiB）约束，所以只切出用得到的前三段：整串 Split 会为每个 '.' 分配
+// 一个 string header，让每次 MCP tool 调用都付出 16 倍于版本串长度的内存。
 func semverParts(v string) [3]int {
 	v = strings.TrimPrefix(v, "v")
 	if i := strings.IndexAny(v, "-+"); i >= 0 {
 		v = v[:i]
 	}
 	var out [3]int
-	parts := strings.Split(v, ".")
+	parts := strings.SplitN(v, ".", 4)
 	for i := 0; i < 3 && i < len(parts); i++ {
 		n := 0
 		for _, c := range parts[i] {
