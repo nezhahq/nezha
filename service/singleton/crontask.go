@@ -3,6 +3,7 @@ package singleton
 import (
 	"cmp"
 	"fmt"
+	"log"
 	"slices"
 	"strings"
 	"sync"
@@ -91,13 +92,18 @@ func NewCronClass() *CronClass {
 	notificationMsgMap := make(map[uint64]*strings.Builder)
 
 	for _, cron := range sortedList {
+		// Rows stored before the command limit existed are reported like a
+		// failed registration instead of being scheduled or left triggerable.
+		err = model.ValidateCronCommand(cron.Command)
 		// 触发任务类型无需注册
-		if cron.TaskType == model.CronTypeTriggerTask {
+		if err == nil && cron.TaskType == model.CronTypeTriggerTask {
 			list[cron.ID] = cron
 			continue
 		}
 		// 注册计划任务
-		cron.CronJobID, err = cronx.AddFunc(cron.Scheduler, CronTrigger(cron))
+		if err == nil {
+			cron.CronJobID, err = cronx.AddFunc(cron.Scheduler, CronTrigger(cron))
+		}
 		if err == nil {
 			list[cron.ID] = cron
 		} else {
@@ -321,6 +327,12 @@ func CronTrigger(cr *model.Cron, triggerServer ...uint64) func() {
 		crIgnoreMap[server] = true
 	}
 	return func() {
+		if err := model.ValidateCronCommand(cr.Command); err != nil {
+			// Defense in depth, as in DispatchTask: every covered Agent gets
+			// its own encoded copy of the command.
+			log.Printf("NEZHA>> CronTrigger rejected task %d: %v", cr.ID, err)
+			return
+		}
 		if cr.Cover == model.CronCoverAlertTrigger {
 			if len(triggerServer) == 0 {
 				return

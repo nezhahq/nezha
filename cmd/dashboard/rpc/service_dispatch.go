@@ -20,6 +20,11 @@ func DispatchTask(serviceSentinelDispatchBus <-chan *model.Service) {
 			log.Printf("NEZHA>> DispatchTask rejected service %d: %v", task.ID, err)
 			continue
 		}
+		if err := model.ValidateServiceTarget(task.Target); err != nil {
+			// Every covered Agent gets its own encoded copy of the probe.
+			log.Printf("NEZHA>> DispatchTask rejected service %d: %v", task.ID, err)
+			continue
+		}
 		probe := task.PB()
 		if probe == nil {
 			log.Printf("NEZHA>> DispatchTask rejected service %d: invalid probe", task.ID)

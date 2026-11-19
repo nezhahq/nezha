@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -172,6 +173,34 @@ func TestCronTriggerSendsToMemberOwnedServer(t *testing.T) {
 	CronTrigger(cronTask)()
 
 	assertTaskCommand(t, memberStream, "id")
+}
+
+func TestCronTriggerRejectsOversizedCommand(t *testing.T) {
+	memberStream := newCapturedTaskStream()
+	replaceServerSharedForSecurityTest(t,
+		withTaskStream(&model.Server{Common: model.Common{ID: 1, UserID: 100}, Name: "member-server"}, memberStream),
+	)
+	replaceUserInfoMapForSecurityTest(t, map[uint64]model.UserInfo{
+		100: {Role: model.RoleMember},
+	})
+
+	// A row that reached memory without passing Cron.BeforeSave must not be
+	// encoded once per covered Agent; the largest allowed command still is.
+	cronTask := &model.Cron{
+		Common:  model.Common{ID: 99, UserID: 100},
+		Command: strings.Repeat("#", model.MaxCronCommandBytes+1),
+		Cover:   model.CronCoverAll,
+	}
+	CronTrigger(cronTask)()
+	select {
+	case task := <-memberStream.tasks:
+		t.Fatalf("expected no task to be sent, got a %d-byte command", len(task.GetData()))
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	cronTask.Command = cronTask.Command[1:]
+	CronTrigger(cronTask)()
+	assertTaskCommand(t, memberStream, cronTask.Command)
 }
 
 func TestCronTriggerAdminCronFansOutAcrossOwners(t *testing.T) {

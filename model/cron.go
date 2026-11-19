@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -34,7 +35,24 @@ type Cron struct {
 	ServersRaw string       `json:"-"`
 }
 
+// MaxCronCommandBytes bounds Cron.Command for the same reason
+// MaxServiceTargetBytes bounds Service.Target: the command becomes pb.Task.Data
+// and is encoded once per covered Agent every time the task fires.
+const MaxCronCommandBytes = 32 * 1024
+
+// ValidateCronCommand is checked wherever a Cron is persisted, scheduled, or
+// dispatched.
+func ValidateCronCommand(command string) error {
+	if len(command) > MaxCronCommandBytes {
+		return fmt.Errorf("task command exceeds %d bytes", MaxCronCommandBytes)
+	}
+	return nil
+}
+
 func (c *Cron) BeforeSave(tx *gorm.DB) error {
+	if err := ValidateCronCommand(c.Command); err != nil {
+		return err
+	}
 	if data, err := json.Marshal(c.Servers); err != nil {
 		return err
 	} else {

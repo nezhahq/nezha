@@ -409,6 +409,10 @@ func (ss *ServiceSentinel) loadServiceHistory() error {
 			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
 			continue
 		}
+		if err := model.ValidateServiceTarget(service.Target); err != nil {
+			log.Printf("NEZHA>> quarantining service %d: %v", service.ID, err)
+			continue
+		}
 		task := service
 		// 通过cron定时将服务监控任务传递给任务调度管道
 		service.CronJobID, err = CronShared.AddFunc(task.CronSpec(), func() {
@@ -553,6 +557,9 @@ func (ss *ServiceSentinel) Update(m *model.Service) error {
 		return fmt.Errorf("service is nil")
 	}
 	if err := model.ValidateServiceMonitorType(uint64(m.Type)); err != nil {
+		return err
+	}
+	if err := model.ValidateServiceTarget(m.Target); err != nil {
 		return err
 	}
 

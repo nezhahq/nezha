@@ -64,6 +64,21 @@ func ValidateServiceMonitorType(t uint64) error {
 	return nil
 }
 
+// MaxServiceTargetBytes bounds Service.Target. The target becomes pb.Task.Data
+// and gRPC encodes a separate copy of it for every covered Agent at every tick;
+// a copy stays allocated until that Agent has taken it. Without a bound one
+// stored monitor costs (Agents x target size) bytes per tick.
+const MaxServiceTargetBytes = 4096
+
+// ValidateServiceTarget is checked wherever a Service is persisted, scheduled,
+// or dispatched, like ValidateServiceMonitorType.
+func ValidateServiceTarget(target string) error {
+	if len(target) > MaxServiceTargetBytes {
+		return fmt.Errorf("service target exceeds %d bytes", MaxServiceTargetBytes)
+	}
+	return nil
+}
+
 // IsMCPRPCResult 判定一个 TaskResult.Type 是否属于 MCP 走 RequestTask 通道的
 // 一次性 RPC 类型。dashboard 的 RequestTask 接收循环用它把这些回包路由到
 // Server.inflightRPC 等待方，而不是走 ServiceSentinel。
@@ -351,6 +366,9 @@ func (m *Service) BeforeSave(tx *gorm.DB) error {
 		return err
 	}
 	if err := ValidateServiceLatency(m.MinLatency, m.MaxLatency); err != nil {
+		return err
+	}
+	if err := ValidateServiceTarget(m.Target); err != nil {
 		return err
 	}
 	if data, err := json.Marshal(m.SkipServers); err != nil {
