@@ -216,13 +216,46 @@ func TestGetServerOnlineHistoryPermission(t *testing.T) {
 	// 游客不能查看 HideForGuest 服务器
 	guestHidden := onlineHistoryCtx(t, "2", "days=1")
 	_, err = getServerOnlineHistory(guestHidden)
-	require.EqualError(t, err, singleton.Localizer.ErrorT("unauthorized").Error())
+	require.EqualError(t, err, singleton.Localizer.ErrorT("server not found").Error())
 
 	// 成员不能查看他人隐藏服务器
 	member := onlineHistoryCtx(t, "2", "days=7")
 	member.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: 100}, Role: model.RoleMember})
 	_, err = getServerOnlineHistory(member)
-	require.Error(t, err)
+	require.EqualError(t, err, singleton.Localizer.ErrorT("server not found").Error())
+}
+
+// A server the caller may not view must answer exactly like an ID that does
+// not exist on every per-server read route, otherwise walking the sequential
+// IDs tells guests (and other members) which ones are hidden servers.
+func TestServerReadRoutesDoNotDistinguishHiddenFromUnknown(t *testing.T) {
+	_, hidden := setupOnlineHistoryControllerTest(t)
+	const hiddenID, unknownID = "2", "3"
+	require.EqualValues(t, 2, hidden.ID)
+
+	routes := map[string]func(*gin.Context) error{
+		"online-history": func(c *gin.Context) error { _, err := getServerOnlineHistory(c); return err },
+		"metrics":        func(c *gin.Context) error { _, err := getServerMetrics(c); return err },
+		"service":        func(c *gin.Context) error { _, err := listServerServices(c); return err },
+	}
+	callers := map[string]func(*gin.Context){
+		"guest": func(*gin.Context) {},
+		"other member": func(c *gin.Context) {
+			c.Set(model.CtxKeyAuthorizedUser, &model.User{Common: model.Common{ID: 100}, Role: model.RoleMember})
+		},
+	}
+	for route, call := range routes {
+		for caller, login := range callers {
+			hiddenCtx := onlineHistoryCtx(t, hiddenID, "days=1&metric=cpu")
+			login(hiddenCtx)
+			unknownCtx := onlineHistoryCtx(t, unknownID, "days=1&metric=cpu")
+			login(unknownCtx)
+
+			hiddenErr, unknownErr := call(hiddenCtx), call(unknownCtx)
+			require.EqualError(t, unknownErr, singleton.Localizer.ErrorT("server not found").Error(), "%s as %s", route, caller)
+			require.EqualError(t, hiddenErr, unknownErr.Error(), "%s as %s", route, caller)
+		}
+	}
 }
 
 func patchOnlineStatsDays(t *testing.T, days any) error {

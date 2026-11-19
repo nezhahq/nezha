@@ -289,12 +289,10 @@ func listServerServices(c *gin.Context) ([]*model.ServiceInfos, error) {
 
 	m := singleton.ServerShared.GetList()
 	server, ok := m[serverID]
-	if !ok || server == nil {
+	// Hidden and unknown IDs deliberately share one response so sequential
+	// server IDs cannot be enumerated by callers who may not view them.
+	if !ok || server == nil || !userCanViewServer(c, server) {
 		return nil, singleton.Localizer.ErrorT("server not found")
-	}
-
-	if !userCanViewServer(c, server) {
-		return nil, singleton.Localizer.ErrorT("unauthorized")
 	}
 	_, isMember := c.Get(model.CtxKeyAuthorizedUser)
 
