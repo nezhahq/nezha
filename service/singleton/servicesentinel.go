@@ -28,6 +28,10 @@ const (
 
 	// serviceHistoryQueueSize bounds the history rows waiting for the database.
 	serviceHistoryQueueSize = 256
+	// rejectedReportLogInterval is the minimum spacing between two "Incorrect
+	// service monitor report" log lines. The reporting agent decides how many
+	// results get rejected, so the line must not be written once per result.
+	rejectedReportLogInterval = time.Second
 )
 
 var serviceEventSequence atomic.Uint64
@@ -263,6 +267,10 @@ type ServiceSentinel struct {
 	// restoring globals.
 	closeOnce sync.Once
 	workerWG  sync.WaitGroup
+
+	// Throttle state of logRejectedReport; only the worker goroutine touches it.
+	rejectedReportLoggedAt    time.Time
+	rejectedReportsSuppressed uint64
 }
 
 // NewServiceSentinel 创建服务监控器
@@ -782,6 +790,26 @@ func (ss *ServiceSentinel) worker() {
 	}
 }
 
+// logRejectedReport records a result that failed canReportServiceResult.
+//
+// Both the size and the number of rejected results are chosen by the reporting
+// agent, so the line carries identifiers only — never the result itself, whose
+// data field can be megabytes and is escaped to several times that by %v — and
+// is written at most once per rejectedReportLogInterval. Formatting happens on
+// the single worker goroutine: a slow line here stalls every tenant's results
+// and lets the report channel back up.
+func (ss *ServiceSentinel) logRejectedReport(r ReportData) {
+	now := time.Now()
+	if now.Sub(ss.rejectedReportLoggedAt) < rejectedReportLogInterval {
+		ss.rejectedReportsSuppressed++
+		return
+	}
+	log.Printf("NEZHA>> Incorrect service monitor report: serviceID=%d type=%d reporterID=%d suppressedSinceLast=%d",
+		r.Data.GetId(), r.Data.GetType(), r.Reporter, ss.rejectedReportsSuppressed)
+	ss.rejectedReportLoggedAt = now
+	ss.rejectedReportsSuppressed = 0
+}
+
 func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass) {
 	serverShared.lockLifecycleRead()
 	defer serverShared.unlockLifecycleRead()
@@ -790,7 +818,7 @@ func (ss *ServiceSentinel) processReport(r ReportData, serverShared *ServerClass
 	reporter, _ := serverShared.Get(r.Reporter)
 	// 入站结果必须匹配出站任务派发边界，避免 agent 伪造其他服务 ID 写入监控状态。
 	if !canReportServiceResult(cs, reporter, r.Data.GetType()) {
-		log.Printf("NEZHA>> Incorrect service monitor report %+v", r)
+		ss.logRejectedReport(r)
 		return
 	}
 	if ss.serviceReportValidatedHook != nil {

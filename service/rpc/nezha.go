@@ -151,6 +151,9 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		}
 	}()
 	var result *pb.TaskResult
+	// The agent decides how many unmatched ServerTransferApply results it sends;
+	// log at most one of them per second on this stream.
+	var transferResultIgnoredLoggedAt time.Time
 	for {
 		select {
 		case <-failed:
@@ -221,7 +224,10 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 			}
 			pending, ok := singleton.ServerTransferShared.LookupPending(clientID)
 			if !ok || pending.ID != result.GetId() {
-				log.Printf("NEZHA>> ServerTransferApply result ignored: clientID=%d reported transferID=%d but no matching pending transfer", clientID, result.GetId())
+				if now := time.Now(); now.Sub(transferResultIgnoredLoggedAt) >= time.Second {
+					transferResultIgnoredLoggedAt = now
+					log.Printf("NEZHA>> ServerTransferApply result ignored: clientID=%d reported transferID=%d but no matching pending transfer", clientID, result.GetId())
+				}
 				continue
 			}
 			if result.GetSuccessful() {
