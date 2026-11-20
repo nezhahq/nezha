@@ -64,7 +64,8 @@ func TestMCPAuditWriteFullQueueKeepsCredentialedRows(t *testing.T) {
 	unpark()
 	<-queued
 	require.Eventually(t, func() bool { return countAuditRows(t, "server.exec", "") == 1 },
-		5*time.Second, 10*time.Millisecond, "credentialed call must leave its audit row once the writer catches up")
+		// 129 file-backed SQLite inserts take well over 5 s on Windows runners.
+		60*time.Second, 10*time.Millisecond, "credentialed call must leave its audit row once the writer catches up")
 	require.Equal(t, int64(cap(mcpAuditQueue)+1), countAuditRows(t, "meta.whoami", ""))
 	require.Zero(t, countAuditRows(t, "fs.upload", ""), "anonymous failures stay best-effort when the queue is full")
 }

@@ -88,7 +88,8 @@ fi
 
 
 # 下载到私有临时目录：/tmp 下的固定文件名可被其他本地用户预先创建
-tmp_dir="$(mktemp -d)" || exit 1
+# An explicit template: BSD mktemp (macOS) ignores TMPDIR without one.
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nezha.XXXXXX")" || exit 1
 
 download_failed() {
     echo "错误: 安装脚本下载失败，已中止"

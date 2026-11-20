@@ -38,7 +38,8 @@ fi
 
 
 # Download into a private directory: a fixed name in /tmp can be created in advance by another local user
-tmp_dir="$(mktemp -d)" || exit 1
+# An explicit template: BSD mktemp (macOS) ignores TMPDIR without one.
+tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/nezha.XXXXXX")" || exit 1
 
 download_failed() {
     echo "Error: failed to download the installation script, aborting"

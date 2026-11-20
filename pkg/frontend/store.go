@@ -270,7 +270,7 @@ func (b *directoryBudget) ReadAt(p []byte, offset int64) (int, error) {
 }
 
 func extractDistribution(ctx context.Context, archivePath, destination string) error {
-	file, err := os.Open(archivePath)
+	file, err := os.Open(archivePath) // #nosec G304 -- archivePath is the store-created temporary download, not user input
 	if err != nil {
 		return err
 	}

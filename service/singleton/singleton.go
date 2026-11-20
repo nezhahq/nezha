@@ -149,7 +149,7 @@ func restrictSQLiteFileMode(dsn string) error {
 		return nil
 	}
 
-	f, err := os.OpenFile(dsn, os.O_RDONLY|os.O_CREATE, 0600)
+	f, err := os.OpenFile(dsn, os.O_RDONLY|os.O_CREATE, 0600) // #nosec G304 -- dsn is the operator-configured database path
 	if err != nil {
 		return err
 	}
