@@ -49,7 +49,8 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 
 ## Contributors
 
-<!--GAMFC_DELIMITER--><a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>
+<!--GAMFC_DELIMITER-->
+<a href="https://github.com/naiba" title="naiba"><img src="https://avatars.githubusercontent.com/u/29243953?v=4" width="50;" alt="naiba"/></a>
 <a href="https://github.com/uubulb" title="UUBulb"><img src="https://avatars.githubusercontent.com/u/35923940?v=4" width="50;" alt="UUBulb"/></a>
 <a href="https://github.com/AkkiaS7" title="Akkia"><img src="https://avatars.githubusercontent.com/u/68485070?v=4" width="50;" alt="Akkia"/></a>
 <a href="https://github.com/matchch" title="卖女孩的小火柴"><img src="https://avatars.githubusercontent.com/u/44471469?v=4" width="50;" alt="卖女孩的小火柴"/></a>
@@ -111,7 +112,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/dreamingsleeping" title="Nanjing Hopefun Network Technology Co. Ltd."><img src="https://avatars.githubusercontent.com/u/13828658?v=4" width="50;" alt="Nanjing Hopefun Network Technology Co. Ltd."/></a>
 <a href="https://github.com/Septrum101" title="Spetrum"><img src="https://avatars.githubusercontent.com/u/11692994?v=4" width="50;" alt="Spetrum"/></a>
 <a href="https://github.com/IamTaoChen" title="Tao Chen"><img src="https://avatars.githubusercontent.com/u/42793494?v=4" width="50;" alt="Tao Chen"/></a>
-<a href="https://github.com/nickfox-taterli" title="Tater Li"><img src="https://avatars.githubusercontent.com/u/19658596?v=4" width="50;" alt="Tater Li"/></a>
+<a href="https://github.com/nickfox-taterli" title="nickfox-taterli"><img src="https://avatars.githubusercontent.com/u/19658596?v=4" width="50;" alt="nickfox-taterli"/></a>
 <a href="https://github.com/TomyJan" title="TomyJan"><img src="https://avatars.githubusercontent.com/u/67973160?v=4" width="50;" alt="TomyJan"/></a>
 <a href="https://github.com/hmsjy2017" title="Tony"><img src="https://avatars.githubusercontent.com/u/42692274?v=4" width="50;" alt="Tony"/></a>
 <a href="https://github.com/ace-consultoria" title="ace-consultoria"><img src="https://avatars.githubusercontent.com/u/263983342?v=4" width="50;" alt="ace-consultoria"/></a>
@@ -120,7 +121,9 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/Mubelotix" title="Mubelotix"><img src="https://avatars.githubusercontent.com/u/42696684?v=4" width="50;" alt="Mubelotix"/></a>
 <a href="https://github.com/ryrenz" title="Ryrenz"><img src="https://avatars.githubusercontent.com/u/163799701?v=4" width="50;" alt="Ryrenz"/></a>
 <a href="https://github.com/Sam5440" title="Sam5440"><img src="https://avatars.githubusercontent.com/u/47051833?v=4" width="50;" alt="Sam5440"/></a>
-<a href="https://github.com/zhdsmy" title="zhdsmy"><img src="https://avatars.githubusercontent.com/u/8348149?v=4" width="50;" alt="zhdsmy"/></a><!--GAMFC_DELIMITER_END-->
+<a href="https://github.com/zhdsmy" title="zhdsmy"><img src="https://avatars.githubusercontent.com/u/8348149?v=4" width="50;" alt="zhdsmy"/></a>
+
+<!--GAMFC_DELIMITER_END-->
 
 ## Special Thanks
 - [IPInfo](https://ipinfo.io/) for providing an accurate GeoIP Database.
