@@ -112,7 +112,7 @@ add your theme to [service/singleton/frontend-templates.yaml](service/singleton/
 <a href="https://github.com/dreamingsleeping" title="Nanjing Hopefun Network Technology Co. Ltd."><img src="https://avatars.githubusercontent.com/u/13828658?v=4" width="50;" alt="Nanjing Hopefun Network Technology Co. Ltd."/></a>
 <a href="https://github.com/Septrum101" title="Spetrum"><img src="https://avatars.githubusercontent.com/u/11692994?v=4" width="50;" alt="Spetrum"/></a>
 <a href="https://github.com/IamTaoChen" title="Tao Chen"><img src="https://avatars.githubusercontent.com/u/42793494?v=4" width="50;" alt="Tao Chen"/></a>
-<a href="https://github.com/nickfox-taterli" title="nickfox-taterli"><img src="https://avatars.githubusercontent.com/u/19658596?v=4" width="50;" alt="nickfox-taterli"/></a>
+<a href="https://github.com/nickfox-taterli" title="Tater Li"><img src="https://avatars.githubusercontent.com/u/19658596?v=4" width="50;" alt="Tater Li"/></a>
 <a href="https://github.com/TomyJan" title="TomyJan"><img src="https://avatars.githubusercontent.com/u/67973160?v=4" width="50;" alt="TomyJan"/></a>
 <a href="https://github.com/hmsjy2017" title="Tony"><img src="https://avatars.githubusercontent.com/u/42692274?v=4" width="50;" alt="Tony"/></a>
 <a href="https://github.com/ace-consultoria" title="ace-consultoria"><img src="https://avatars.githubusercontent.com/u/263983342?v=4" width="50;" alt="ace-consultoria"/></a>
