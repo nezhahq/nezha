@@ -297,6 +297,35 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 	})
 }
 
+// Logout
+// @Summary Logout
+// @Security BearerAuth
+// @Schemes
+// @Description Revoke the current login session and expire its cookie
+// @Tags auth required
+// @Produce json
+// @Success 200 {object} model.CommonResponse[any]
+// @Router /logout [post]
+//
+// The frontend used to "log out" by deleting its cookies only. That ends
+// nothing on the server: a token copied out of the browser (or sent in an
+// Authorization header) stayed valid until expiry. Revoke the session row so
+// identityHandler rejects it from now on. Only this session is revoked; the
+// user's other devices stay signed in.
+func logout(c *gin.Context) (any, error) {
+	keyID, _ := jwt.ExtractClaims(c)[jwtClaimKeyID].(string)
+	if keyID != "" {
+		if err := singleton.RevokeJWTSession(keyID); err != nil {
+			return nil, newGormError("%v", err)
+		}
+	}
+	// Mirror the attributes gin-jwt used when it set the cookie (host-only,
+	// Path=/, SameSite=Lax), otherwise the browser keeps the original.
+	c.SetSameSite(http.SameSiteLaxMode)
+	c.SetCookie("nz-jwt", "", -1, "/", "", false, false)
+	return nil, nil
+}
+
 func fallbackAuthMiddleware(mw *jwt.GinJWTMiddleware) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		claims, err := mw.GetClaimsFromJWT(c)
