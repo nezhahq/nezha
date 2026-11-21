@@ -41,14 +41,18 @@ func TestS3Integration(t *testing.T) {
 	require.NoError(t, err)
 	ctx := context.Background()
 	t.Cleanup(func() {
-		list, _ := e.m.List(ctx)
-		var names []string
-		for _, b := range list {
-			if b.Status == StatusSuccess {
-				names = append(names, b.Name)
-			}
+		// The manager refuses work after Apply; clean up through the storage.
+		s, _ := e.m.effective()
+		st, err := newS3Storage(s.S3)
+		if err != nil {
+			return
 		}
-		_ = e.m.Delete(ctx, names, admin)
+		objs, _ := st.List(ctx, prefix)
+		for _, o := range objs {
+			_ = st.Delete(ctx, o.Key)
+		}
+		left, _ := st.List(ctx, prefix)
+		assert.Empty(t, left, "integration test objects must be removed")
 	})
 
 	require.NoError(t, e.m.TestConnection(ctx, nil, admin))
