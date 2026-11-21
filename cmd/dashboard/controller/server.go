@@ -108,9 +108,18 @@ func updateServer(c *gin.Context) (any, error) {
 
 	// The server may have been deleted since First. A plain Save would insert
 	// the row again when its UPDATE matches nothing; with a Select it does not.
-	saved := singleton.DB.Select("*").Save(&s)
+	// 归属不属于这个表单，不能跟着整行写回：上面读出这一行之后，转移的取消或超时
+	// 可能已经把 user_id 改回了来源用户，整行回写会用读到的旧值把它盖掉，服务器
+	// 就此归了目标用户且没有任何待确认状态。
+	saved := singleton.DB.Select("*").Omit("user_id").Save(&s)
 	if saved.Error != nil {
 		return nil, newGormError("%v", saved.Error)
+	}
+	if saved.RowsAffected != 0 {
+		// 内存里的记录要用库里当前的归属，理由同上。
+		if err := singleton.DB.Model(&model.Server{}).Where("id = ?", s.ID).Pluck("user_id", &s.UserID).Error; err != nil {
+			return nil, newGormError("%v", err)
+		}
 	}
 	if saved.RowsAffected == 0 || !singleton.ServerShared.Replace(&s) {
 		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)

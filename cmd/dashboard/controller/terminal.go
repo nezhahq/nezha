@@ -80,6 +80,9 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 		return nil, err
 	}
 
+	// 浏览器一直不连上来的话，这条流不能永远占着配额（见 CloseStreamUnlessUserConnects）。
+	rpc.NezhaHandlerSingleton.CloseStreamUnlessUserConnects(streamId, unattachedStreamTimeout)
+
 	return &model.CreateTerminalResponse{
 		SessionID:  streamId,
 		ServerID:   server.ID,

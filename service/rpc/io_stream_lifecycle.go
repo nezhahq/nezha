@@ -77,6 +77,28 @@ func (s *NezhaHandler) detachStreams(shouldDetach func(*ioStreamContext) bool) (
 	return len(detached), errors.Join(closeErrors...)
 }
 
+// CloseStreamUnlessUserConnects 在 timeout 内没有用户连接附着时关闭这条流。
+// 创建接口成功之后流就占着配额，agent 也已经为它起了 shell 或文件会话；
+// 浏览器的 WebSocket 没连上来（反向代理没放行、标签页提前关闭、脚本只调了创建
+// 接口）的话，没有任何东西会回收它，攒够数量后这个用户乃至整台服务器都开不了新会话。
+func (s *NezhaHandler) CloseStreamUnlessUserConnects(streamID string, timeout time.Duration) {
+	stream, err := s.GetStream(streamID)
+	if err != nil {
+		return
+	}
+	go func() {
+		unattached := time.NewTimer(timeout)
+		defer unattached.Stop()
+		select {
+		case <-stream.userIoConnectCh:
+		case <-stream.revokedCh:
+		case <-unattached.C:
+			// 只关闭仍然是这一条的流，ID 被复用时不能误关新的。
+			_, _ = s.detachStreams(func(candidate *ioStreamContext) bool { return candidate == stream })
+		}
+	}()
+}
+
 func (s *NezhaHandler) CloseStream(streamID string) error {
 	_, err := s.detachStreams(func(stream *ioStreamContext) bool {
 		return stream != nil && streamID != "" && stream == s.ioStreams[streamID]

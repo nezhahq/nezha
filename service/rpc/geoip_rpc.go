@@ -59,9 +59,12 @@ func (s *NezhaHandler) ReportGeoIP(ctx context.Context, report *pb.GeoIP) (*pb.G
 			(singleton.Conf.Cover == model.ConfigCoverIgnoreAll && singleton.Conf.IgnoredIPNotificationServerIDs[clientID])) &&
 		server.GeoIP.IP.Join() != "" && joinedIP != "" && server.GeoIP.IP != geoIP.IP &&
 		singleton.AllowIPChangeNotification(server) {
-		singleton.NotificationShared.SendNotification(singleton.Conf.IPChangeNotificationGroupID,
-			fmt.Sprintf("[%s] %s, %s => %s", singleton.Localizer.T("IP Changed"), server.Name,
-				singleton.IPDesensitize(server.GeoIP.IP.Join()), singleton.IPDesensitize(joinedIP)), "")
+		// 通知必须异步发：webhook 最长会等 10 分钟，同步发送会让这次上报超时，
+		// agent 重试后又触发一次 DDNS 更新和一条通知。频率已由上面的
+		// AllowIPChangeNotification 限制。
+		message := fmt.Sprintf("[%s] %s, %s => %s", singleton.Localizer.T("IP Changed"), server.Name,
+			singleton.IPDesensitize(server.GeoIP.IP.Join()), singleton.IPDesensitize(joinedIP))
+		go singleton.NotificationShared.SendNotification(singleton.Conf.IPChangeNotificationGroupID, message, "")
 	}
 	ip := geoIP.IP.IPv4Addr
 	if geoIP.IP.IPv6Addr != "" && (report.GetUse6() || ip == "") {

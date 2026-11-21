@@ -90,10 +90,16 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 		return nil, err
 	}
 
+	// 浏览器一直不连上来的话，这条流不能永远占着配额（见 CloseStreamUnlessUserConnects）。
+	rpc.NezhaHandlerSingleton.CloseStreamUnlessUserConnects(streamId, unattachedStreamTimeout)
+
 	return &model.CreateFMResponse{
 		SessionID: streamId,
 	}, nil
 }
+
+// unattachedStreamTimeout 是终端、文件会话创建后等待浏览器 WebSocket 连上来的最长时间。
+const unattachedStreamTimeout = time.Minute
 
 // Start FM stream
 // @Summary Start FM stream

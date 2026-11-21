@@ -214,3 +214,25 @@ func TestUpdateServerDoesNotRestoreServerDeletedWhileEditWaitsForRuntime(t *test
 	require.True(t, deletion.Success, deletion.Error)
 	requireServerGone(t, 1)
 }
+
+// The owner is not part of the edit form. Between reading the row and saving it
+// a transfer can be cancelled or time out and hand the server back; writing the
+// whole row then put the stale owner back, and the target user kept the server.
+func TestUpdateServerDoesNotWriteBackAStaleOwner(t *testing.T) {
+	setupServerEditDeleteFixture(t)
+	seedServer(t, 1, 100)
+	const ownerSetWhileEditing = uint64(200)
+	onNextServerSave(t, true, func() {
+		require.NoError(t, singleton.DB.Model(&model.Server{}).Where("id = ?", 1).Update("user_id", ownerSetWhileEditing).Error)
+	})
+
+	resp := editServerAsMember(1)
+	require.True(t, resp.Success, resp.Error)
+
+	var row model.Server
+	require.NoError(t, singleton.DB.First(&row, 1).Error)
+	require.Equal(t, "renamed", row.Name)
+	require.Equal(t, ownerSetWhileEditing, row.UserID, "the edit wrote the owner it had read before the change")
+	edited, _ := singleton.ServerShared.Get(1)
+	require.Equal(t, ownerSetWhileEditing, edited.GetUserID(), "the in-memory server kept the stale owner")
+}
