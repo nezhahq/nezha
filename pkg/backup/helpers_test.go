@@ -157,8 +157,10 @@ type testEnv struct {
 	m        *Manager
 	restarts atomic.Int32
 	maxBytes int64
-	now      time.Time
-	nowMu    sync.Mutex
+
+	restoreName, restoreSHA string
+	now                     time.Time
+	nowMu                   sync.Mutex
 }
 
 func newTestEnv(t *testing.T) *testEnv {

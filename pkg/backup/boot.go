@@ -94,6 +94,16 @@ func readRestoreResult(dataDir string) (*RestoreResult, error) {
 	return &r, nil
 }
 
+// writeRestoreResultDurable records the result of a committed restore; the
+// commit is only cleaned up once this is on disk.
+func writeRestoreResultDurable(dataDir string, r RestoreResult) error {
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	return writeFileDurable(filepath.Join(dataDir, resultFileName), data)
+}
+
 func writeRestoreResult(dataDir string, r RestoreResult) {
 	data, err := json.Marshal(r)
 	if err == nil {
@@ -127,14 +137,15 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 			return nil, fmt.Errorf("restore: unreadable %s, refusing to start: %w", statePath, err)
 		}
 		b.state = &st
-		committed, err := readCommitRecord(dataDir, st.ID)
+		rec, err := readCommitRecord(dataDir, st.ID)
 		if err != nil {
 			return nil, err
 		}
-		if committed {
+		if rec != nil {
 			// The previous start committed the restore (the record is on
-			// disk, confirmed above) but did not finish removing the plan.
-			if err := b.finishCommit(); err != nil {
+			// disk, confirmed above) but did not finish: publish its result
+			// and remove the plan.
+			if err := b.finishCommit(rec.result(&st)); err != nil {
 				return nil, err
 			}
 			break
@@ -152,8 +163,9 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		return nil, fmt.Errorf("restore: cannot read %s, refusing to start: %w", statePath, err)
 	default:
 		// No plan: a commit record can only be left over from a commit
-		// whose plan was already removed.
-		if err := removeCommitRecord(dataDir); err != nil {
+		// whose plan was already removed. Its result is published (again)
+		// before the record goes.
+		if err := settleCommitRecord(dataDir); err != nil {
 			return nil, err
 		}
 	}
@@ -229,8 +241,8 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		return nil, err
 	}
 	// A commit record left from an earlier restore must not be mistaken
-	// for this one (it carries another plan id, but remove it anyway).
-	if err := removeCommitRecord(dataDir); err != nil {
+	// for this one (it carries another plan id, but settle it anyway).
+	if err := settleCommitRecord(dataDir); err != nil {
 		return nil, err
 	}
 	st := &restoreState{ID: planID, Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
@@ -424,31 +436,49 @@ func writeState(path string, st *restoreState) error {
 type commitRecord struct {
 	ID          string    `json:"id"`
 	CommittedAt time.Time `json:"committed_at"`
+	// Result is the success result of this restore. It travels with the
+	// record so that it can be published after any interruption.
+	Result RestoreResult `json:"result"`
+}
+
+// result returns the success result of the committed restore described by st.
+func (r *commitRecord) result(st *restoreState) RestoreResult {
+	if r.Result.Status != "" {
+		return r.Result
+	}
+	return RestoreResult{Status: "success", Name: st.Name, SHA256: st.SHA256, AppliedAt: st.AppliedAt, FinishedAt: r.CommittedAt}
 }
 
 // readCommitRecord reports whether a commit record for plan id exists and
 // is on disk. A record whose durability cannot be confirmed, or that cannot
 // be read, stops the start: the outcome of the commit is unknown.
-func readCommitRecord(dataDir, id string) (bool, error) {
-	path := filepath.Join(dataDir, commitFileName)
-	data, err := os.ReadFile(path) // #nosec G304 -- data directory
+func readCommitRecord(dataDir, id string) (*commitRecord, error) {
+	rec, err := loadCommitRecord(dataDir)
+	if err != nil || rec == nil {
+		return nil, err
+	}
+	if rec.ID != id {
+		return nil, nil // left over from another restore
+	}
+	if err := syncDir(dataDir); err != nil {
+		return nil, fmt.Errorf("restore: cannot confirm the commit record on disk, refusing to start: %w", err)
+	}
+	return rec, nil
+}
+
+func loadCommitRecord(dataDir string) (*commitRecord, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, commitFileName)) // #nosec G304 -- data directory
 	if os.IsNotExist(err) {
-		return false, nil
+		return nil, nil
 	}
 	if err != nil {
-		return false, fmt.Errorf("restore: cannot read %s, refusing to start: %w", commitFileName, err)
+		return nil, fmt.Errorf("restore: cannot read %s, refusing to start: %w", commitFileName, err)
 	}
 	var rec commitRecord
 	if err := json.Unmarshal(data, &rec); err != nil {
-		return false, fmt.Errorf("restore: unreadable %s, refusing to start: %w", commitFileName, err)
+		return nil, fmt.Errorf("restore: unreadable %s, refusing to start: %w", commitFileName, err)
 	}
-	if rec.ID != id {
-		return false, nil // left over from another restore
-	}
-	if err := syncDir(dataDir); err != nil {
-		return false, fmt.Errorf("restore: cannot confirm the commit record on disk, refusing to start: %w", err)
-	}
-	return true, nil
+	return &rec, nil
 }
 
 // Commit records a restore whose start succeeded. Call it only once the
@@ -468,7 +498,11 @@ func (b *Boot) Commit() error {
 		return err
 	}
 	commitPath := filepath.Join(b.dataDir, commitFileName)
-	data, err := json.Marshal(commitRecord{ID: b.state.ID, CommittedAt: time.Now().UTC()})
+	now := time.Now().UTC()
+	rec := commitRecord{ID: b.state.ID, CommittedAt: now, Result: RestoreResult{
+		Status: "success", Name: b.state.Name, SHA256: b.state.SHA256, AppliedAt: b.state.AppliedAt, FinishedAt: now,
+	}}
+	data, err := json.Marshal(rec)
 	if err != nil {
 		return err
 	}
@@ -486,7 +520,7 @@ func (b *Boot) Commit() error {
 	}
 	// Committed. What follows is cleanup; the next start repeats it if it
 	// is interrupted.
-	if err := b.finishCommit(); err != nil {
+	if err := b.finishCommit(rec.Result); err != nil {
 		if errors.Is(err, errSimulatedCrash) {
 			return err
 		}
@@ -496,33 +530,42 @@ func (b *Boot) Commit() error {
 	return nil
 }
 
-// removeCommitRecord removes a commit record that does not belong to the
-// current plan, if there is one.
-func removeCommitRecord(dataDir string) error {
-	path := filepath.Join(dataDir, commitFileName)
-	if _, err := os.Lstat(path); os.IsNotExist(err) {
-		return nil
+// settleCommitRecord publishes the result of a commit record whose plan is
+// already gone and removes the record. A record that cannot be read or
+// whose result cannot be published stops the start.
+func settleCommitRecord(dataDir string) error {
+	rec, err := loadCommitRecord(dataDir)
+	if err != nil || rec == nil {
+		return err
 	}
-	if err := removeDurably(path); err != nil {
+	if rec.Result.Status != "" {
+		if err := writeRestoreResultDurable(dataDir, rec.Result); err != nil {
+			return fmt.Errorf("restore: cannot publish the result of the last restore, refusing to start: %w", err)
+		}
+	}
+	if err := removeDurably(filepath.Join(dataDir, commitFileName)); err != nil {
 		return fmt.Errorf("restore: cannot remove an old commit record, refusing to start: %w", err)
 	}
 	return nil
 }
 
-// finishCommit removes the plan of a committed restore, records the result
-// and removes the commit record. The previous files are removed at the next
-// start that finds no plan.
-func (b *Boot) finishCommit() error {
+// finishCommit completes a committed restore in an order that any
+// interruption can resume: publish the result (on disk), remove the plan
+// (on disk), then remove the commit record. The previous files are removed
+// at the next start that finds no plan.
+func (b *Boot) finishCommit(result RestoreResult) error {
 	if err := fault("commit cleanup"); err != nil {
+		return err
+	}
+	if err := writeRestoreResultDurable(b.dataDir, result); err != nil {
+		return fmt.Errorf("restore: committed, but cannot publish the result: %w", err)
+	}
+	if err := fault("plan cleanup"); err != nil {
 		return err
 	}
 	if err := removeDurably(filepath.Join(b.dataDir, stateFileName)); err != nil {
 		return fmt.Errorf("restore: committed, but cannot remove the plan: %w", err)
 	}
-	writeRestoreResult(b.dataDir, RestoreResult{
-		Status: "success", Name: b.state.Name, SHA256: b.state.SHA256,
-		AppliedAt: b.state.AppliedAt, FinishedAt: time.Now().UTC(),
-	})
 	log.Printf("NEZHA>> restore: dashboard started with backup %s", b.state.Name)
 	b.state = nil
 	if err := fault("commit record cleanup"); err != nil {

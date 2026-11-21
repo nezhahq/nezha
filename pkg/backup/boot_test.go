@@ -563,6 +563,8 @@ func restartKeepsRestore(t *testing.T, e *testEnv) {
 	r, err := readRestoreResult(e.dir)
 	require.NoError(t, err)
 	assert.Equal(t, "success", r.Status)
+	assert.Equal(t, e.restoreName, r.Name, "the status shows this restore, not an earlier one")
+	assert.Equal(t, e.restoreSHA, r.SHA256)
 	for _, name := range []string{stateFileName, commitFileName, rollbackDirName} {
 		_, err := os.Stat(filepath.Join(e.dir, name))
 		assert.True(t, os.IsNotExist(err), name)
@@ -577,6 +579,9 @@ func swappedEnv(t *testing.T) (*testEnv, *Boot) {
 	require.NoError(t, err)
 	require.True(t, boot.Applied())
 	require.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath), "restored data in place")
+	e.restoreName, e.restoreSHA = boot.state.Name, boot.state.SHA256
+	// An earlier restore's result is on disk; it must be replaced.
+	writeRestoreResult(e.dir, RestoreResult{Status: "failed", Name: "nezha-backup-20200101-000000-manual-000000", Error: "earlier"})
 	return e, boot
 }
 
@@ -654,7 +659,7 @@ func TestBootRestoreCommitRecordUnconfirmedAndNotWithdrawn(t *testing.T) {
 // finishes the commit. Dying after the plan was removed but before the
 // record was: the restart removes the stale record and keeps the data.
 func TestBootRestoreCrashDuringCommitCleanup(t *testing.T) {
-	for _, op := range []string{"commit cleanup", "commit record cleanup"} {
+	for _, op := range []string{"commit cleanup", "plan cleanup", "commit record cleanup"} {
 		t.Run(op, func(t *testing.T) {
 			e, boot := swappedEnv(t)
 			crashAt(op)
@@ -682,16 +687,20 @@ func TestBootRestorePlanRemovedOnlyAfterRecord(t *testing.T) {
 	e, boot := swappedEnv(t)
 	var order []string
 	bootFault = func(op string) error {
-		if strings.HasPrefix(op, "write ") || op == "commit cleanup" {
+		if strings.HasPrefix(op, "write ") || strings.HasSuffix(op, "cleanup") {
 			order = append(order, op)
 		}
 		return nil
 	}
 	require.NoError(t, boot.Commit())
 	bootFault = nil
-	require.Len(t, order, 2, "%v", order) // record write, then plan removal
+	// record on disk, then the result on disk, then the plan, then the record
+	require.Len(t, order, 5, "%v", order)
 	assert.True(t, strings.HasSuffix(order[0], commitFileName))
 	assert.Equal(t, "commit cleanup", order[1])
+	assert.True(t, strings.HasSuffix(order[2], resultFileName))
+	assert.Equal(t, "plan cleanup", order[3])
+	assert.Equal(t, "commit record cleanup", order[4])
 	restartKeepsRestore(t, e)
 }
 
@@ -726,4 +735,53 @@ func TestBootRestoreCrashBeforePlanWrittenRetries(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, boot.Applied())
 	assert.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath))
+}
+
+// The result cannot be written while the commit is finished: Commit still
+// succeeds (the restore is committed and the dashboard may serve it), the
+// plan and the record stay, and the next start publishes this restore's
+// result without rolling the data back.
+func TestBootRestoreResultWriteFailsIsPublishedOnRestart(t *testing.T) {
+	e, boot := swappedEnv(t)
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "write ") && strings.HasSuffix(op, resultFileName) {
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	require.NoError(t, boot.Commit())
+	bootFault = nil
+	for _, name := range []string{stateFileName, commitFileName} {
+		_, err := os.Stat(filepath.Join(e.dir, name))
+		require.NoError(t, err, name)
+	}
+	r, err := readRestoreResult(e.dir)
+	require.NoError(t, err)
+	assert.Equal(t, "earlier", r.Error, "not published yet")
+	restartKeepsRestore(t, e)
+}
+
+// A commit record whose plan is already gone (crash right after the plan
+// was removed): the restart publishes the record's result before removing
+// it, so the status shows this restore.
+func TestBootRestoreLeftoverRecordPublishesResult(t *testing.T) {
+	e, boot := swappedEnv(t)
+	bootFault = func(op string) error {
+		if op == "commit record cleanup" {
+			return errSimulatedCrash
+		}
+		if strings.HasPrefix(op, "write ") && strings.HasSuffix(op, resultFileName) {
+			return errors.New("injected I/O error") // pretend it never reached the disk
+		}
+		return nil
+	}
+	err := boot.Commit()
+	bootFault = nil
+	// The failed result write stops before the plan removal; finish it by
+	// hand to model "plan removed, result missing, record left".
+	require.NoError(t, err)
+	require.NoError(t, os.Remove(filepath.Join(e.dir, stateFileName)))
+	r, _ := readRestoreResult(e.dir)
+	require.Equal(t, "earlier", r.Error)
+	restartKeepsRestore(t, e)
 }
