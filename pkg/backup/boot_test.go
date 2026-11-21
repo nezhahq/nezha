@@ -423,3 +423,137 @@ func TestBootRestoreCommitFailureKeepsPlan(t *testing.T) {
 	assert.True(t, boot.Applied())
 	assertOldDataAndNoRetry(t, e)
 }
+
+// Invalidating the pending request fails for real (permissions): nothing
+// was moved, the plan is kept and the dashboard does not start; the next
+// start invalidates the request first and only then rolls back, so the
+// request is never replayed.
+func TestBootRestoreKeepsPlanWhenPendingCannotBeInvalidated(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	pendingDir := filepath.Join(e.dir, pendingDirName)
+	require.NoError(t, os.Chmod(pendingDir, 0500))
+	_, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, os.Chmod(pendingDir, 0700))
+	require.ErrorContains(t, err, "cannot invalidate the pending restore")
+	require.ErrorIs(t, err, os.ErrPermission)
+	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+	require.NoError(t, err, "the plan is kept")
+	_, err = os.Stat(filepath.Join(pendingDir, pendingFileName))
+	require.NoError(t, err, "the request is still there")
+	entries, _ := os.ReadDir(filepath.Join(e.dir, rollbackDirName))
+	assert.Empty(t, entries, "nothing was moved")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// failSync makes the n-th directory sync after the operation `after` fail
+// with an I/O error.
+func failSync(after string) *bool {
+	seen := after == ""
+	failed := new(bool)
+	bootFault = func(op string) error {
+		if !seen && (op == after || strings.HasPrefix(op, after+" ")) {
+			seen = true
+			return nil
+		}
+		if seen && !*failed && strings.HasPrefix(op, "sync ") {
+			*failed = true
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	return failed
+}
+
+// The plan cannot be confirmed on disk: no file is moved and the dashboard
+// does not start.
+func TestBootRestoreRefusesWhenPlanSyncFails(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	failed := failSync("")
+	var moved bool
+	inner := bootFault
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "aside ") || strings.HasPrefix(op, "install ") {
+			moved = true
+		}
+		return inner(op)
+	}
+	_, err := BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.True(t, *failed)
+	require.ErrorContains(t, err, "injected I/O error")
+	assert.False(t, moved, "no file may move before the plan is on disk")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// The swapped entries cannot be confirmed on disk: the plan stays and the
+// dashboard does not start; the next start rolls back.
+func TestBootRestoreRefusesWhenSwapSyncFails(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	installs := 0
+	for _, op := range countBootOps(t) {
+		if strings.HasPrefix(op, "install ") {
+			installs++
+		}
+	}
+	require.Positive(t, installs)
+	failed := new(bool)
+	seen := 0
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "install ") {
+			seen++
+		}
+		if seen == installs && !*failed && strings.HasPrefix(op, "sync ") {
+			*failed = true
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	_, err := BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.True(t, *failed)
+	require.ErrorContains(t, err, "cannot persist the swapped files")
+	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+	require.NoError(t, err, "the plan is kept")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// Commit cannot confirm the plan's removal: it fails (the dashboard does
+// not serve); the next start rolls back.
+func TestBootRestoreCommitSyncFailureStopsStartup(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	failed := failSync("commit")
+	err = boot.Commit()
+	bootFault = nil
+	require.True(t, *failed)
+	require.ErrorContains(t, err, "injected I/O error")
+	assert.True(t, boot.Applied())
+	r, _ := readRestoreResult(e.dir)
+	if r != nil {
+		assert.NotEqual(t, "success", r.Status, "a commit that is not on disk is not reported as a success")
+	}
+}
+
+// The rolled-back entries cannot be confirmed on disk: the plan stays, the
+// dashboard does not start, and a later start finishes the rollback.
+func TestBootRestoreRollbackSyncFailureKeepsPlan(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	failed := failSync("rollback")
+	boot.Rollback(errors.New("listener failed"))
+	bootFault = nil
+	require.True(t, *failed)
+	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+	require.NoError(t, err, "the plan is kept")
+	assertOldDataAndNoRetry(t, e)
+}

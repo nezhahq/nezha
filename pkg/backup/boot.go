@@ -238,10 +238,12 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		return nil, err
 	}
 	if err := removeDurably(filepath.Join(pendingDir, pendingFileName)); err != nil {
-		if rerr := b.rollback(fmt.Errorf("cannot invalidate the pending restore: %w", err)); rerr != nil {
-			return nil, rerr
-		}
-		return b, nil
+		// Nothing has moved yet. Rolling back now would remove the plan while
+		// the request may still be there and could be replayed. Keep the
+		// plan and refuse to start: the next start invalidates the request
+		// first and only then rolls back.
+		crashed = true
+		return nil, fmt.Errorf("restore: cannot invalidate the pending restore, refusing to start: %w", err)
 	}
 
 	swap := func() error {
@@ -267,7 +269,15 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		}
 		return nil
 	}
-	if err := swap(); err != nil {
+	if err := swap(); err == nil {
+		// The moved entries must be on disk before the plan can ever be
+		// removed (by Commit). If that cannot be confirmed, keep the plan and
+		// refuse to start; the next start rolls back.
+		if err := syncDirs(st.dirs()); err != nil {
+			crashed = true
+			return nil, fmt.Errorf("restore: cannot persist the swapped files, refusing to start: %w", err)
+		}
+	} else {
 		if errors.Is(err, errSimulatedCrash) {
 			crashed = true
 			return nil, err
@@ -307,17 +317,64 @@ func removeDurably(path string) error {
 	if err := os.RemoveAll(path); err != nil {
 		return err
 	}
-	syncDir(filepath.Dir(path))
+	return syncDir(filepath.Dir(path))
+}
+
+// writeFileDurable replaces path with data (fsynced) and syncs the parent
+// directory, so that the new file is on disk once it returns.
+func writeFileDurable(path string, data []byte) error {
+	if err := writeFileAtomic(path, data); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// syncDir flushes the entries of a directory (renames, removals) to disk.
+// Errors are reported; only platforms and file systems that do not support
+// syncing a directory at all are treated as success (see syncDirectory).
+func syncDir(dir string) error {
+	if err := fault("sync " + dir); err != nil {
+		return err
+	}
+	if err := syncDirectory(dir); err != nil {
+		return fmt.Errorf("sync %s: %w", dir, err)
+	}
 	return nil
 }
 
-// syncDir flushes directory entries (renames, removals) to disk where the
-// platform supports it.
-func syncDir(dir string) {
-	if d, err := os.Open(dir); err == nil { // #nosec G304 -- data directory
-		_ = d.Sync()
-		_ = d.Close()
+// syncDirs syncs every directory that still exists; a directory that was
+// removed (the consumed staging) has no entries left to persist.
+func syncDirs(dirs []string) error {
+	for _, dir := range dirs {
+		if _, err := os.Stat(dir); os.IsNotExist(err) {
+			continue
+		}
+		if err := syncDir(dir); err != nil {
+			return err
+		}
 	}
+	return nil
+}
+
+// dirs returns every directory whose entries a swap or rollback changes.
+func (st *restoreState) dirs() []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(path string) {
+		if path == "" {
+			return
+		}
+		if d := filepath.Dir(path); !seen[d] {
+			seen[d] = true
+			out = append(out, d)
+		}
+	}
+	for _, step := range st.Steps {
+		add(step.Path)
+		add(step.Rollback)
+		add(step.Staged)
+	}
+	return out
 }
 
 func writeState(path string, st *restoreState) error {
@@ -325,7 +382,7 @@ func writeState(path string, st *restoreState) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(path, data)
+	return writeFileDurable(path, data)
 }
 
 // Commit records a restore whose start succeeded. Call it only once the
@@ -401,6 +458,15 @@ func (b *Boot) rollback(cause error) error {
 			continue
 		}
 		if err := moveFile(step.Rollback, step.Path); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	// The restored entries must be on disk before the plan is removed.
+	if len(errs) == 0 {
+		if err := syncDirs(st.dirs()); err != nil {
+			if errors.Is(err, errSimulatedCrash) {
+				return err
+			}
 			errs = append(errs, err)
 		}
 	}

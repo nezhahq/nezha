@@ -588,7 +588,7 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 	if err != nil {
 		return err
 	}
-	if err := writeFileAtomic(filepath.Join(m.opts.DataDir, pendingDirName, pendingFileName), data); err != nil {
+	if err := writeFileDurable(filepath.Join(m.opts.DataDir, pendingDirName, pendingFileName), data); err != nil {
 		return err
 	}
 	m.stage = nil
