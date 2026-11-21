@@ -100,6 +100,34 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 		}
 	}()
 
+	// 被删用户名下服务器的内存清理同样要等 UserLock 释放之后再做（defer 后进先出，
+	// 这一段在下面的 UserLock.Unlock 之后执行）。这些清理要拿告警锁和服务器列表锁，
+	// 而告警检查、监控结果处理是先拿那些锁再读 UserLock：在 UserLock 里面去拿，
+	// 两边就会互相等待，UserLock 永不释放，所有 agent 认证跟着卡死，只能重启面板。
+	var deletedServers []uint64
+	defer func() {
+		if len(deletedServers) == 0 {
+			return
+		}
+		AlertsLock.Lock()
+		for _, sid := range deletedServers {
+			for _, alert := range Alerts {
+				if AlertsCycleTransferStatsStore[alert.ID] != nil {
+					delete(AlertsCycleTransferStatsStore[alert.ID].ServerName, sid)
+					delete(AlertsCycleTransferStatsStore[alert.ID].Transfer, sid)
+					delete(AlertsCycleTransferStatsStore[alert.ID].NextUpdate, sid)
+				}
+			}
+		}
+		AlertsLock.Unlock()
+		// Cancel pending transfers before ServerShared drops the
+		// in-memory entry: same ordering rationale as batchDeleteServer.
+		if ServerTransferShared != nil {
+			ServerTransferShared.OnServersDeleted(deletedServers)
+		}
+		ServerShared.Delete(deletedServers)
+	}()
+
 	if len(id) < 1 {
 		return Localizer.ErrorT("user id not specified")
 	}
@@ -169,23 +197,7 @@ func OnUserDelete(id []uint64, errorFunc func(string, ...any) error) error {
 		}
 
 		if server {
-			AlertsLock.Lock()
-			for _, sid := range servers {
-				for _, alert := range Alerts {
-					if AlertsCycleTransferStatsStore[alert.ID] != nil {
-						delete(AlertsCycleTransferStatsStore[alert.ID].ServerName, sid)
-						delete(AlertsCycleTransferStatsStore[alert.ID].Transfer, sid)
-						delete(AlertsCycleTransferStatsStore[alert.ID].NextUpdate, sid)
-					}
-				}
-			}
-			AlertsLock.Unlock()
-			// Cancel pending transfers before ServerShared drops the
-			// in-memory entry: same ordering rationale as batchDeleteServer.
-			if ServerTransferShared != nil {
-				ServerTransferShared.OnServersDeleted(servers)
-			}
-			ServerShared.Delete(servers)
+			deletedServers = append(deletedServers, servers...)
 		}
 
 		secret := UserInfoMap[uid].AgentSecret
