@@ -115,7 +115,9 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	statePath := filepath.Join(dataDir, stateFileName)
 
 	pendingDir := filepath.Join(dataDir, pendingDirName)
-	if data, err := os.ReadFile(statePath); err == nil { // #nosec G304 -- data directory
+	data, err := os.ReadFile(statePath) // #nosec G304 -- data directory
+	switch {
+	case err == nil:
 		var st restoreState
 		if err := json.Unmarshal(data, &st); err != nil {
 			// Never guess: starting on a half-swapped data directory could
@@ -123,14 +125,19 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 			return nil, fmt.Errorf("restore: unreadable %s, refusing to start: %w", statePath, err)
 		}
 		b.state = &st
+		// That restore failed: make sure it can never be tried again before
+		// the plan that describes the rollback goes away.
+		if err := removeDurably(pendingDir); err != nil {
+			return nil, fmt.Errorf("restore: cannot invalidate the pending restore, refusing to start: %w", err)
+		}
 		if err := b.rollback(errors.New("the dashboard did not start with the restored data")); err != nil {
 			return nil, err
 		}
-		// That restore failed; do not try it again.
-		_ = os.RemoveAll(pendingDir)
+	case !os.IsNotExist(err):
+		return nil, fmt.Errorf("restore: cannot read %s, refusing to start: %w", statePath, err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(pendingDir, pendingFileName)) // #nosec G304 -- data directory
+	data, err = os.ReadFile(filepath.Join(pendingDir, pendingFileName)) // #nosec G304 -- data directory
 	if os.IsNotExist(err) {
 		// No restore pending: drop staging leftovers and the copy of the data
 		// a previous successful restore replaced.
@@ -143,7 +150,14 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer os.RemoveAll(pendingDir)
+	// Remove the staging when this start is done with it. A real crash runs
+	// no deferred calls; simulated crashes (tests) skip it the same way.
+	crashed := false
+	defer func() {
+		if !crashed {
+			_ = os.RemoveAll(pendingDir)
+		}
+	}()
 	var p pendingRestore
 	result := RestoreResult{Status: "failed", AppliedAt: time.Now().UTC()}
 	if err := json.Unmarshal(data, &p); err != nil || filepath.Base(p.Dir) != p.Dir || p.Dir == "." || p.Dir == ".." {
@@ -190,10 +204,15 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	// place, SQLite could replay them onto the restored one; moved with it,
 	// the old database keeps every committed transaction.
 	st := &restoreState{Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
+	var planErr error
 	plan := func(path, rollbackName, staged string) {
 		step := swapStep{Path: path, Staged: staged}
-		if _, err := os.Lstat(path); err == nil {
+		_, err := os.Lstat(path)
+		switch {
+		case err == nil:
 			step.Rollback = filepath.Join(rollbackDir, rollbackName)
+		case !os.IsNotExist(err):
+			planErr = errors.Join(planErr, err)
 		}
 		st.Steps = append(st.Steps, step)
 	}
@@ -204,10 +223,26 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	if _, ok := p.Files[FileConfig]; ok {
 		plan(configPath, FileConfig, filepath.Join(staged, FileConfig))
 	}
+	if planErr != nil {
+		return nil, fmt.Errorf("restore: cannot inspect the current data, refusing to start: %w", planErr)
+	}
 	if err := writeState(statePath, st); err != nil {
 		return nil, err
 	}
 	b.state = st
+	// From here on the plan alone describes this restore: invalidate the
+	// pending request first, so that no interruption can make a later start
+	// apply it again (the staged files stay where the plan points).
+	if err := fault("invalidate pending"); err != nil {
+		crashed = true
+		return nil, err
+	}
+	if err := removeDurably(filepath.Join(pendingDir, pendingFileName)); err != nil {
+		if rerr := b.rollback(fmt.Errorf("cannot invalidate the pending restore: %w", err)); rerr != nil {
+			return nil, rerr
+		}
+		return b, nil
+	}
 
 	swap := func() error {
 		for _, step := range st.Steps {
@@ -234,6 +269,7 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	}
 	if err := swap(); err != nil {
 		if errors.Is(err, errSimulatedCrash) {
+			crashed = true
 			return nil, err
 		}
 		if rerr := b.rollback(fmt.Errorf("swapping in the restored files failed: %w", err)); rerr != nil {
@@ -249,13 +285,39 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 // moveOnce moves src to dst unless that already happened (src gone, dst
 // present), so a swap step can be repeated after an interruption.
 func moveOnce(src, dst string) error {
-	if _, err := os.Lstat(src); os.IsNotExist(err) {
-		if _, err := os.Lstat(dst); err == nil {
-			return nil
-		}
-		return fmt.Errorf("%s is missing", src)
+	_, err := os.Lstat(src)
+	if err == nil {
+		return moveFile(src, dst)
 	}
-	return moveFile(src, dst)
+	if !os.IsNotExist(err) {
+		return err
+	}
+	if _, err := os.Lstat(dst); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s is missing", src)
+		}
+		return err
+	}
+	return nil
+}
+
+// removeDurably removes path (a file or a directory tree) and syncs its
+// parent directory, so the removal survives a crash.
+func removeDurably(path string) error {
+	if err := os.RemoveAll(path); err != nil {
+		return err
+	}
+	syncDir(filepath.Dir(path))
+	return nil
+}
+
+// syncDir flushes directory entries (renames, removals) to disk where the
+// platform supports it.
+func syncDir(dir string) {
+	if d, err := os.Open(dir); err == nil { // #nosec G304 -- data directory
+		_ = d.Sync()
+		_ = d.Close()
+	}
 }
 
 func writeState(path string, st *restoreState) error {
@@ -267,18 +329,27 @@ func writeState(path string, st *restoreState) error {
 }
 
 // Commit records a restore whose start succeeded. Call it only once the
-// dashboard is ready to serve (database, listeners, TLS).
-func (b *Boot) Commit() {
+// dashboard is ready to serve (database, listeners, TLS). If the plan cannot
+// be removed, the dashboard must not start: the next start would otherwise
+// roll back over data written in the meantime. The plan stays, so the next
+// start rolls the restore back instead.
+func (b *Boot) Commit() error {
 	if !b.Applied() {
-		return
+		return nil
+	}
+	if err := fault("commit"); err != nil {
+		return err
+	}
+	if err := removeDurably(filepath.Join(b.dataDir, stateFileName)); err != nil {
+		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
 	}
 	writeRestoreResult(b.dataDir, RestoreResult{
 		Status: "success", Name: b.state.Name, SHA256: b.state.SHA256,
 		AppliedAt: b.state.AppliedAt, FinishedAt: time.Now().UTC(),
 	})
-	_ = os.Remove(filepath.Join(b.dataDir, stateFileName))
 	log.Printf("NEZHA>> restore: dashboard started with backup %s", b.state.Name)
 	b.state = nil
+	return nil
 }
 
 // Rollback puts the previous files back after a failed start. If it cannot
@@ -319,6 +390,10 @@ func (b *Boot) rollback(cause error) error {
 			continue
 		}
 		if _, err := os.Lstat(step.Rollback); err != nil {
+			if !os.IsNotExist(err) {
+				// Unknown state of the kept copy: keep the plan and retry.
+				errs = append(errs, err)
+			}
 			continue
 		}
 		if err := os.Remove(step.Path); err != nil && !os.IsNotExist(err) {
@@ -341,7 +416,12 @@ func (b *Boot) rollback(cause error) error {
 	if len(errs) > 0 {
 		return errors.New(result.Error)
 	}
-	_ = os.Remove(filepath.Join(b.dataDir, stateFileName))
+	if err := fault("rollback finish"); err != nil {
+		return err
+	}
+	if err := removeDurably(filepath.Join(b.dataDir, stateFileName)); err != nil {
+		return fmt.Errorf("restore: rolled back, but cannot remove %s: %w", stateFileName, err)
+	}
 	_ = os.RemoveAll(filepath.Join(b.dataDir, rollbackDirName))
 	b.state = nil
 	return nil

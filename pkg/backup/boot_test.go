@@ -67,7 +67,7 @@ func TestBootRestoreSwapsAndCommits(t *testing.T) {
 	_, err = os.Stat(filepath.Join(e.dir, rollbackDirName, FileDatabase))
 	require.NoError(t, err, "previous data is kept until the next successful start")
 
-	boot.Commit()
+	require.NoError(t, boot.Commit())
 	r, err := readRestoreResult(e.dir)
 	require.NoError(t, err)
 	assert.Equal(t, "success", r.Status)
@@ -307,4 +307,119 @@ func TestBootRestoreRollbackFailureIsRetried(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, boot.Applied())
 	assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath))
+}
+
+func crashAt(target string) {
+	bootFault = func(op string) error {
+		if op == target || strings.HasPrefix(op, target+" ") {
+			return errSimulatedCrash
+		}
+		return nil
+	}
+}
+
+func assertOldDataAndNoRetry(t *testing.T, e *testEnv) {
+	t.Helper()
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath))
+	// One more start: the restore that was rolled back is never applied again.
+	boot, err = BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath))
+	_, err = os.Stat(filepath.Join(e.dir, pendingDirName))
+	assert.True(t, os.IsNotExist(err))
+}
+
+// The pending request is invalidated right after the plan is persisted and
+// before any file moves: once old files have been moved, no start can
+// treat the request as new again.
+func TestBootRestorePendingInvalidatedBeforeFilesMove(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	crashAt("aside") // first file move
+	_, err := BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.ErrorIs(t, err, errSimulatedCrash)
+	_, err = os.Stat(filepath.Join(e.dir, pendingDirName, pendingFileName))
+	assert.True(t, os.IsNotExist(err), "the pending request is gone before anything moved")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// Crash after the plan was written but before the pending request was
+// invalidated: the next start invalidates it before rolling back.
+func TestBootRestoreCrashBeforePendingInvalidated(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	crashAt("invalidate pending")
+	_, err := BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.ErrorIs(t, err, errSimulatedCrash)
+	_, err = os.Stat(filepath.Join(e.dir, pendingDirName, pendingFileName))
+	require.NoError(t, err, "test setup: the request is still pending")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// A crash after the rollback restored the files but before the plan was
+// removed: the next start repeats the (idempotent) rollback and the request
+// stays invalid. This is the interruption between rollback and cleanup.
+func TestBootRestoreCrashBeforePlanRemoved(t *testing.T) {
+	for _, first := range []string{"aside", "install"} {
+		t.Run(first, func(t *testing.T) {
+			e := stageRestore(t)
+			addWALOnlyRow(t, e.dbPath, "delta")
+			crashAt(first)
+			_, err := BootRestore(e.confPath, e.dbPath)
+			require.ErrorIs(t, err, errSimulatedCrash)
+			crashAt("rollback finish")
+			_, err = BootRestore(e.confPath, e.dbPath)
+			bootFault = nil
+			require.ErrorIs(t, err, errSimulatedCrash)
+			_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+			require.NoError(t, err, "test setup: the plan is still there")
+			assertOldDataAndNoRetry(t, e)
+		})
+	}
+}
+
+// An unreadable kept copy is not mistaken for a missing one: the rollback
+// keeps the plan and the copies, the dashboard refuses to start, and a
+// later start finishes the rollback.
+func TestBootRestoreRollbackKeepsPlanOnPermissionError(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	rollbackDir := filepath.Join(e.dir, rollbackDirName)
+	require.NoError(t, os.Chmod(rollbackDir, 0))
+	boot.Rollback(errors.New("listener failed"))
+	_, err = BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, os.Chmod(rollbackDir, 0700))
+	require.Error(t, err, "do not start while the previous data cannot be checked")
+	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+	require.NoError(t, err, "the plan is kept for a retry")
+	assertOldDataAndNoRetry(t, e)
+}
+
+// The commit cannot be recorded: Commit fails (the dashboard does not
+// start) and the next start rolls the restore back.
+func TestBootRestoreCommitFailureKeepsPlan(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(e.dir, 0500))
+	err = boot.Commit()
+	require.NoError(t, os.Chmod(e.dir, 0700))
+	require.Error(t, err)
+	assert.True(t, boot.Applied())
+	assertOldDataAndNoRetry(t, e)
 }
