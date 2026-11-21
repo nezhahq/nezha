@@ -24,8 +24,6 @@ const (
 	FileConfig      = "config.yaml"
 )
 
-var payloadFiles = map[string]bool{FileDatabase: true, FileConfig: true}
-
 // FileEntry describes one data file of a backup.
 type FileEntry struct {
 	Name   string `json:"name"`
@@ -206,18 +204,23 @@ func extractPayload(r io.Reader, dir string, maxBytes int64) (*extracted, error)
 				return nil, ErrCorrupt
 			}
 			out.MAC = string(raw)
-		default:
-			if !payloadFiles[name] {
-				return nil, fmt.Errorf("%w: unexpected entry %q", ErrCorrupt, name)
+		case FileDatabase, FileConfig:
+			// The path is built from the package constant, never from the
+			// name in the archive: only these two fixed names are written.
+			fixed := FileDatabase
+			if name == FileConfig {
+				fixed = FileConfig
 			}
-			path := filepath.Join(dir, name)
+			path := filepath.Join(dir, fixed)
 			entry, err := writeExclusive(path, tr, hdr.Size)
 			if err != nil {
 				return nil, err
 			}
-			entry.Name = name
-			hashes[name] = entry
-			out.Paths[name] = path
+			entry.Name = fixed
+			hashes[fixed] = entry
+			out.Paths[fixed] = path
+		default:
+			return nil, fmt.Errorf("%w: unexpected entry %q", ErrCorrupt, name)
 		}
 	}
 	if out.RawManifest == nil {

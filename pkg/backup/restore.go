@@ -69,7 +69,7 @@ const (
 	WarnVersionUnknown      = "version_unknown"
 	WarnTSDBNotRestored     = "tsdb_not_restored"
 	WarnAgentsAfterBackup   = "agents_after_backup_offline"
-	WarnRevokedCredentials  = "revoked_credentials_revived"
+	WarnRevokedCredentials  = "revoked_credentials_revived" // #nosec G101 -- warning code returned to the client, not a credential
 	WarnSessionsCleared     = "sessions_cleared"
 	WarnConfigNotInBackup   = "config_not_in_backup"
 	sourceStorage           = "storage"
