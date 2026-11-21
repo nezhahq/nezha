@@ -16,12 +16,21 @@ func TestTruncateTaskResultTextKeepsShortOutputAndCutsOnRuneBoundary(t *testing.
 		t.Fatal("output at the limit must be kept unchanged")
 	}
 
-	// "界" is three bytes; the limit is not a multiple of three once one ASCII
-	// byte is put in front, so a plain byte cut would split a character.
-	oversized := "a" + strings.Repeat("界", maxTaskResultTextBytes)
+	// "界" is three bytes. With two ASCII bytes in front the limit falls inside a
+	// character (the limit minus two is not a multiple of three), so a plain byte
+	// cut would split it. One byte in front would not: the limit minus one is.
+	const asciiPrefix = "ab"
+	if (maxTaskResultTextBytes-len(asciiPrefix))%len("界") == 0 {
+		t.Fatal("test setup: the limit must fall inside a multi-byte character")
+	}
+	oversized := asciiPrefix + strings.Repeat("界", maxTaskResultTextBytes)
 	got := truncateTaskResultText(oversized)
 	if !utf8.ValidString(got) {
 		t.Fatal("truncated output is not valid UTF-8")
+	}
+	kept := strings.TrimSuffix(got, taskResultTruncatedSuffix)
+	if len(kept) >= maxTaskResultTextBytes || len(kept) < maxTaskResultTextBytes-len("界") {
+		t.Fatalf("kept %d bytes, want the last whole character below the %d byte limit", len(kept), maxTaskResultTextBytes)
 	}
 	if !strings.HasSuffix(got, taskResultTruncatedSuffix) {
 		t.Fatal("truncated output does not say it was truncated")

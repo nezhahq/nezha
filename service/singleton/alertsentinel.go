@@ -362,9 +362,13 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 	}
 	// 评估周期流量规则会改写统计里的 map，而这里和读取方都只持有 AlertsLock 的读锁，
 	// 必须另外互斥（见 cycleTransferStatsMu）。
-	cycleTransferStatsMu.Lock()
-	point, known := alert.SnapshotStatusWithRuntime(AlertsCycleTransferStatsStore[alert.ID], server, runtime, DB)
-	cycleTransferStatsMu.Unlock()
+	// 解锁必须用 defer：本函数开头会 recover 评估过程中的 panic，不用 defer 的话
+	// 一次 panic 就让这把锁永远不释放，之后所有规则评估和 /service 接口全部卡死。
+	point, known := func() ([]bool, bool) {
+		cycleTransferStatsMu.Lock()
+		defer cycleTransferStatsMu.Unlock()
+		return alert.SnapshotStatusWithRuntime(AlertsCycleTransferStatsStore[alert.ID], server, runtime, DB)
+	}()
 	if !known {
 		alertsStore[alert.ID][server.ID] = nil
 		return

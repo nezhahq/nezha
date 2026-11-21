@@ -54,6 +54,26 @@ func truncateTaskResultText(text string) string {
 	return text[:keep] + taskResultTruncatedSuffix
 }
 
+// maxPendingTaskNotificationsPerStream 是一条 agent 任务流上同时在发的通知数上限。
+const maxPendingTaskNotificationsPerStream = 4
+
+// dispatchTaskNotification 异步发送一条通知，但同一条任务流上最多同时发
+// cap(pending) 条；名额用完后在调用方（这条流的接收循环）里同步发送。
+// 结果上报的频率由 agent 决定：不设上限的话，一台 agent 连续上报失败结果就能
+// 堆出任意多个各持有 64KiB 文本、最长挂 10 分钟的协程。超额时只让这台 agent
+// 自己的接收循环慢下来，不丢通知，也不影响其他 agent。
+func dispatchTaskNotification(pending chan struct{}, send func()) {
+	select {
+	case pending <- struct{}{}:
+		go func() {
+			defer func() { <-pending }()
+			send()
+		}()
+	default:
+		send()
+	}
+}
+
 type NezhaHandler struct {
 	Auth                   *authHandler
 	ioStreams              map[string]*ioStreamContext
@@ -151,6 +171,7 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 	// Returning the handler cancels the real gRPC stream and wakes a blocked Send.
 	// A single receiver allows the handler to observe send-side failure while Recv waits.
 	failed := server.TaskStreamFailure(stream)
+	pendingTaskNotifications := make(chan struct{}, maxPendingTaskNotificationsPerStream)
 	type taskReception struct {
 		result *pb.TaskResult
 		err    error
@@ -219,12 +240,18 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 				// 通知必须异步发：webhook 最长会等 10 分钟，同步发送会把这台 agent 的
 				// 接收循环卡住，期间它的探测结果和 MCP 调用结果都收不进来。
 				if cr.PushSuccessful && result.GetSuccessful() {
-					go singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
-						cr.Name, server.Name, result.GetData()), "", &curServer)
+					message := fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
+						cr.Name, server.Name, result.GetData())
+					dispatchTaskNotification(pendingTaskNotifications, func() {
+						singleton.NotificationShared.SendNotification(cr.NotificationGroupID, message, "", &curServer)
+					})
 				}
 				if !result.GetSuccessful() {
-					go singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
-						cr.Name, server.Name, result.GetData()), "", &curServer)
+					message := fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
+						cr.Name, server.Name, result.GetData())
+					dispatchTaskNotification(pendingTaskNotifications, func() {
+						singleton.NotificationShared.SendNotification(cr.NotificationGroupID, message, "", &curServer)
+					})
 				}
 				singleton.DB.Model(cr).Updates(model.Cron{
 					LastExecutedAt: time.Now().Add(time.Second * -1 * time.Duration(result.GetDelay())),
