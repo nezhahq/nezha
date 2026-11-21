@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -393,8 +394,8 @@ func TestBootRestoreCrashBeforePlanRemoved(t *testing.T) {
 // keeps the plan and the copies, the dashboard refuses to start, and a
 // later start finishes the rollback.
 func TestBootRestoreRollbackKeepsPlanOnPermissionError(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("permissions are not enforced for root")
+	if os.Getuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions are not enforced for root or on Windows")
 	}
 	e := stageRestore(t)
 	addWALOnlyRow(t, e.dbPath, "delta")
@@ -414,8 +415,8 @@ func TestBootRestoreRollbackKeepsPlanOnPermissionError(t *testing.T) {
 // The commit cannot be recorded: Commit fails (the dashboard does not
 // start) and the next start rolls the restore back.
 func TestBootRestoreCommitFailureKeepsPlan(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("permissions are not enforced for root")
+	if os.Getuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions are not enforced for root or on Windows")
 	}
 	e := stageRestore(t)
 	addWALOnlyRow(t, e.dbPath, "delta")
@@ -434,8 +435,8 @@ func TestBootRestoreCommitFailureKeepsPlan(t *testing.T) {
 // start invalidates the request first and only then rolls back, so the
 // request is never replayed.
 func TestBootRestoreKeepsPlanWhenPendingCannotBeInvalidated(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("permissions are not enforced for root")
+	if os.Getuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions are not enforced for root or on Windows")
 	}
 	e := stageRestore(t)
 	addWALOnlyRow(t, e.dbPath, "delta")

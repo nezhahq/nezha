@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -293,8 +294,8 @@ func TestRestoreRolledBackWhenHTTPSFails(t *testing.T) {
 // start rolls the restore back instead of serving data that a later start
 // would discard.
 func TestRestoreCommitFailureStopsStartup(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("permissions are not enforced for root")
+	if os.Getuid() == 0 || runtime.GOOS == "windows" {
+		t.Skip("directory permissions are not enforced for root or on Windows")
 	}
 	dir, dbPath, confPath := stagedRestore(t)
 	boot, err := backup.BootRestore(confPath, dbPath)

@@ -21,6 +21,26 @@ import (
 	"golang.org/x/mod/semver"
 )
 
+// opWait is how long a restore check or apply waits for a running backup
+// (e.g. one that has just uploaded and is still applying retention).
+const opWait = 30 * time.Second
+
+// lockOp takes the operation lock, waiting up to opWait for a running one.
+func (m *Manager) lockOp(ctx context.Context) bool {
+	ctx, cancel := context.WithTimeout(ctx, opWait)
+	defer cancel()
+	for {
+		if m.op.TryLock() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return false
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
 // RestoreTokenTTL is how long a prepared restore can be applied.
 const RestoreTokenTTL = 10 * time.Minute
 
@@ -170,7 +190,7 @@ func (m *Manager) Prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 	if req.Password == "" && req.RecoveryKey == "" {
 		return nil, errNoCredential
 	}
-	if !m.op.TryLock() {
+	if !m.lockOp(ctx) {
 		return nil, ErrBusy
 	}
 	defer m.op.Unlock()
@@ -519,7 +539,7 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 	if err := m.limiter.allow(req.Actor.UserID, "restore"); err != nil {
 		return err
 	}
-	if !m.op.TryLock() {
+	if !m.lockOp(ctx) {
 		return ErrBusy
 	}
 	defer m.op.Unlock()

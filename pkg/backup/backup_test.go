@@ -271,8 +271,11 @@ func TestSnapshotUnderConcurrentWrites(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		// Steady writes, like a dashboard under load; a writer that never
+		// pauses would starve any reader past the busy timeout.
 		for i := 0; ctx.Err() == nil; i++ {
 			_, _ = e.db.Exec("INSERT INTO servers (name) VALUES (?)", strings.Repeat("x", i%100))
+			time.Sleep(time.Millisecond)
 		}
 	}()
 	for range 3 {
@@ -765,4 +768,10 @@ func TestBackupSizeLimitMatchesRestore(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, res.CanApply)
 	assert.Equal(t, CheckPayload, lastCheck(res).Code)
+}
+
+func TestSQLiteURI(t *testing.T) {
+	assert.Equal(t, "file:///C:/nezha/data/sqlite.db?mode=ro", sqliteURIFromSlash("C:/nezha/data/sqlite.db", "ro"))
+	assert.Equal(t, "file:///dashboard/data/sqlite.db?mode=rw", sqliteURIFromSlash("/dashboard/data/sqlite.db", "rw"))
+	assert.Equal(t, "file:///data/a%20b%3Fc.db?mode=ro", sqliteURIFromSlash("/data/a b?c.db", "ro"))
 }

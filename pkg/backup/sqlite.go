@@ -32,8 +32,18 @@ func sqliteURI(path string, mode string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
-	return u.String() + "?mode=" + mode, nil
+	return sqliteURIFromSlash(filepath.ToSlash(abs), mode), nil
+}
+
+// sqliteURIFromSlash builds an SQLite file: URI for an absolute slash path.
+// A Windows path (C:/dir/db) needs a leading slash, file:///C:/dir/db;
+// without it "C:" would be read as the URI authority.
+func sqliteURIFromSlash(p, mode string) string {
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	u := url.URL{Scheme: "file", Path: p}
+	return u.String() + "?mode=" + mode
 }
 
 type dbInspection struct {
