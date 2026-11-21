@@ -8,6 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"runtime/debug"
@@ -193,20 +194,23 @@ func main() {
 		log.Fatal(finishRestoreStartup(restoreBoot, err))
 	}
 	receiptListener, err := openReceiptGateListener()
+	var httpsListener net.Listener
+	var httpsCertificate *tls.Certificate
 	if err == nil {
-		err = checkHTTPSReady(fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
+		httpsListener, httpsCertificate, err = openDashboardHTTPS(fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
 			singleton.Conf.HTTPS.ListenPort, singleton.Conf.HTTPS.TLSCertPath, singleton.Conf.HTTPS.TLSKeyPath)
 	}
-	if err != nil {
-		_ = l.Close()
-		if receiptListener != nil {
-			_ = receiptListener.Close()
+	// Database, configuration, listeners and certificate of a restored
+	// backup are in place: only now record the restore as successful. Any
+	// failure, including recording the commit, stops the dashboard.
+	if err = finishRestoreStartup(restoreBoot, err); err != nil {
+		for _, listener := range []net.Listener{l, receiptListener, httpsListener} {
+			if listener != nil {
+				_ = listener.Close()
+			}
 		}
-		log.Fatal(finishRestoreStartup(restoreBoot, err))
+		log.Fatal(err)
 	}
-	// Database, configuration and listeners of a restored backup are good:
-	// record the restore as successful.
-	_ = finishRestoreStartup(restoreBoot, nil)
 	if receiptListener != nil {
 		defer receiptListener.Close()
 		rpc.SetReceiptGateListener(receiptListener)
@@ -233,7 +237,7 @@ func main() {
 	muxServerHTTP.Protocols.SetUnencryptedHTTP2(true)
 
 	var muxServerHTTPS *http.Server
-	if singleton.Conf.HTTPS.ListenPort != 0 {
+	if httpsListener != nil {
 		muxServerHTTPS = &http.Server{
 			ReadHeaderTimeout: dashboardReadHeaderTimeout,
 			MaxHeaderBytes:    dashboardMaxHeaderBytes,
@@ -242,6 +246,7 @@ func main() {
 			Handler:           muxHandler,
 			TLSConfig: &tls.Config{
 				InsecureSkipVerify: singleton.Conf.HTTPS.InsecureTLS,
+				Certificates:       []tls.Certificate{*httpsCertificate},
 			},
 		}
 	}
@@ -251,9 +256,9 @@ func main() {
 
 	if err := graceful.GracefulContext(restartCtx, func() error {
 		log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort)
-		if singleton.Conf.HTTPS.ListenPort != 0 {
+		if muxServerHTTPS != nil {
 			go func() {
-				errChan <- serveDashboardHTTPS(muxServerHTTPS, singleton.Conf.HTTPS.TLSCertPath, singleton.Conf.HTTPS.TLSKeyPath)
+				errChan <- serveDashboardHTTPS(muxServerHTTPS, httpsListener)
 			}()
 			log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort)
 		}

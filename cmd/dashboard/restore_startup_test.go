@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
@@ -13,6 +14,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -223,18 +225,87 @@ func writeTestCertificate(t *testing.T, dir string) (string, string) {
 	return certPath, keyPath
 }
 
-func TestCheckHTTPSReady(t *testing.T) {
+// The HTTPS listener and certificate are obtained before the commit and
+// are exactly what the server then serves with.
+func TestOpenDashboardHTTPS(t *testing.T) {
 	dir := t.TempDir()
 	certPath, keyPath := writeTestCertificate(t, dir)
-	require.NoError(t, checkHTTPSReady("127.0.0.1:0", 0, "", ""), "HTTPS disabled")
-	require.NoError(t, checkHTTPSReady("127.0.0.1:0", 1, certPath, keyPath))
 
-	err := checkHTTPSReady("127.0.0.1:0", 1, filepath.Join(dir, "missing.pem"), keyPath)
-	require.Error(t, err)
-	assert.True(t, strings.Contains(err.Error(), "certificate"))
+	l, cert, err := openDashboardHTTPS("127.0.0.1:0", 0, "", "")
+	require.NoError(t, err, "HTTPS disabled")
+	assert.Nil(t, l)
+	assert.Nil(t, cert)
+
+	_, _, err = openDashboardHTTPS("127.0.0.1:0", 1, filepath.Join(dir, "missing.pem"), keyPath)
+	require.ErrorContains(t, err, "certificate")
 
 	busy, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	defer busy.Close()
-	require.Error(t, checkHTTPSReady(busy.Addr().String(), 1, certPath, keyPath))
+	_, _, err = openDashboardHTTPS(busy.Addr().String(), 1, certPath, keyPath)
+	require.Error(t, err)
+
+	l, cert, err = openDashboardHTTPS("127.0.0.1:0", 1, certPath, keyPath)
+	require.NoError(t, err)
+	server := &http.Server{
+		Handler:           http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "ok") }),
+		ReadHeaderTimeout: time.Second,
+		TLSConfig:         &tls.Config{Certificates: []tls.Certificate{*cert}},
+	}
+	done := make(chan error, 1)
+	go func() { done <- serveDashboardHTTPS(server, l) }()
+	defer func() {
+		_ = server.Close()
+		<-done
+	}()
+	pool := x509.NewCertPool()
+	pemData, err := os.ReadFile(certPath)
+	require.NoError(t, err)
+	require.True(t, pool.AppendCertsFromPEM(pemData))
+	// The certificate file changes after the commit: the server keeps the
+	// certificate that was checked.
+	require.NoError(t, os.WriteFile(certPath, []byte("garbage"), 0600))
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, ServerName: "localhost"}}}
+	resp, err := client.Get("https://" + l.Addr().String())
+	require.NoError(t, err)
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	assert.Equal(t, "ok", string(body))
+}
+
+// The restored configuration's HTTPS certificate is missing: startup fails
+// before the commit and the previous data and configuration come back.
+func TestRestoreRolledBackWhenHTTPSFails(t *testing.T) {
+	_, dbPath, confPath := stagedRestore(t)
+	boot, err := backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	require.True(t, boot.Applied())
+	_, _, httpsErr := openDashboardHTTPS("127.0.0.1:0", 1, filepath.Join(t.TempDir(), "missing.pem"), "missing-key.pem")
+	require.Error(t, httpsErr)
+	require.ErrorIs(t, finishRestoreStartup(boot, httpsErr), httpsErr)
+	assert.Equal(t, []string{"new"}, readNames(t, dbPath))
+	conf, err := os.ReadFile(confPath)
+	require.NoError(t, err)
+	assert.Equal(t, "listen_port: 9999\n", string(conf))
+}
+
+// The commit cannot be recorded: the dashboard must not start, and the next
+// start rolls the restore back instead of serving data that a later start
+// would discard.
+func TestRestoreCommitFailureStopsStartup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("permissions are not enforced for root")
+	}
+	dir, dbPath, confPath := stagedRestore(t)
+	boot, err := backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(dir, 0500))
+	err = finishRestoreStartup(boot, nil)
+	require.NoError(t, os.Chmod(dir, 0700))
+	require.Error(t, err)
+
+	boot, err = backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"new"}, readNames(t, dbPath), "the uncommitted restore was rolled back")
 }

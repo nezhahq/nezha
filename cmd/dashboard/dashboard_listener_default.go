@@ -13,6 +13,8 @@ func openDashboardListener(network, address string, _ dashboardListenerKind) (ne
 	return net.Listen(network, address)
 }
 
-func serveDashboardHTTPS(server *http.Server, certificatePath, keyPath string) error {
-	return server.ListenAndServeTLS(certificatePath, keyPath)
+// serveDashboardHTTPS serves on the listener opened by openDashboardHTTPS
+// with the certificate in server.TLSConfig.
+func serveDashboardHTTPS(server *http.Server, listener net.Listener) error {
+	return server.ServeTLS(listener, "", "")
 }
