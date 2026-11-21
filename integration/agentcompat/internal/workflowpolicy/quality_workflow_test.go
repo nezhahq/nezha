@@ -69,7 +69,7 @@ func TestPolicy_NezhaQualityWorkflow(t *testing.T) {
 	gosecStep := linuxJob.stepNamed(t, "Run Gosec Security Scanner")
 	require.Equal(t, "auto", gosecStep.Env.GoToolchain)
 	require.Equal(t, strings.Join([]string{
-		"go install github.com/securego/gosec/v2/cmd/gosec@v2.27.1",
+		"go install github.com/securego/gosec/v2/cmd/gosec@v2.30.0",
 		"gosec --exclude=G104,G115,G117,G203,G402,G703,G704 ./...",
 	}, "\n"), strings.TrimSpace(gosecStep.Run))
 
