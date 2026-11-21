@@ -36,14 +36,17 @@ type FileEntry struct {
 // Manifest is the encrypted description of a backup. It repeats the header
 // fields so that a tampered header is detected after decryption.
 type Manifest struct {
-	Format       int              `json:"format"`
-	Name         string           `json:"name"`
-	CreatedAt    time.Time        `json:"created_at"`
-	Trigger      Trigger          `json:"trigger"`
-	NezhaVersion string           `json:"nezha_version"`
-	KeyID        string           `json:"key_id"`
-	Files        []FileEntry      `json:"files"`
-	Tables       map[string]int64 `json:"tables"`
+	Format       int       `json:"format"`
+	Name         string    `json:"name"`
+	CreatedAt    time.Time `json:"created_at"`
+	Trigger      Trigger   `json:"trigger"`
+	NezhaVersion string    `json:"nezha_version"`
+	KeyID        string    `json:"key_id"`
+	// AuthKeyID identifies the dashboard key that made manifest.mac. A
+	// dashboard that holds this key must find a valid MAC.
+	AuthKeyID string           `json:"auth_key_id,omitempty"`
+	Files     []FileEntry      `json:"files"`
+	Tables    map[string]int64 `json:"tables"`
 }
 
 func (m *Manifest) file(name string) (FileEntry, bool) {
@@ -60,6 +63,15 @@ func (m *Manifest) matchesHeader(h Header) bool {
 		m.Trigger == h.Trigger && m.NezhaVersion == h.NezhaVersion && m.KeyID == h.KeyID
 }
 
+// authKeyID is the public fingerprint of a MAC key.
+func authKeyID(authKey []byte) string {
+	if len(authKey) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(append([]byte("nezha-backup-auth-key-id:"), authKey...))
+	return hex.EncodeToString(sum[:8])
+}
+
 func manifestMAC(authKey, raw []byte) string {
 	mac := hmac.New(sha256.New, authKey)
 	mac.Write(raw)
@@ -69,7 +81,11 @@ func manifestMAC(authKey, raw []byte) string {
 // writePayload writes the tar.gz payload: the data files named in sources
 // (entry name -> path on disk), then the manifest and its MAC. m.Files is
 // filled in while the files are copied.
-func writePayload(w io.Writer, m *Manifest, sources map[string]string, authKey []byte) error {
+//
+// It returns the total size of all entries, which is what extractPayload
+// limits on restore; the caller must apply the same limit.
+func writePayload(w io.Writer, m *Manifest, sources map[string]string, authKey []byte) (int64, error) {
+	var total int64
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 	m.Files = m.Files[:0]
@@ -80,26 +96,30 @@ func writePayload(w io.Writer, m *Manifest, sources map[string]string, authKey [
 		}
 		entry, err := addFile(tw, name, path, m.CreatedAt)
 		if err != nil {
-			return err
+			return 0, err
 		}
+		total += entry.Size
 		m.Files = append(m.Files, entry)
 	}
 	raw, err := json.Marshal(m)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if err := addBytes(tw, FileManifest, raw, m.CreatedAt); err != nil {
-		return err
+		return 0, err
 	}
+	total += int64(len(raw))
 	if len(authKey) > 0 {
-		if err := addBytes(tw, FileManifestMAC, []byte(manifestMAC(authKey, raw)), m.CreatedAt); err != nil {
-			return err
+		mac := manifestMAC(authKey, raw)
+		if err := addBytes(tw, FileManifestMAC, []byte(mac), m.CreatedAt); err != nil {
+			return 0, err
 		}
+		total += int64(len(mac))
 	}
 	if err := tw.Close(); err != nil {
-		return err
+		return 0, err
 	}
-	return gz.Close()
+	return total, gz.Close()
 }
 
 func addFile(tw *tar.Writer, name, path string, mtime time.Time) (FileEntry, error) {

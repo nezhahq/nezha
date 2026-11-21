@@ -186,7 +186,10 @@ func TestMovingStorageTargetRequiresSecret(t *testing.T) {
 		assert.Error(t, err, bad)
 	}
 	_, err = e.m.UpdateConfig(ConfigUpdate{S3: &S3Update{Endpoint: str("http://127.0.0.1:9000"), SecretAccessKey: str(mockSecretAccessKey)}}, admin)
-	assert.NoError(t, err, "plain http is allowed for a loopback MinIO")
+	assert.Error(t, err, "production accepts https only, also for loopback addresses")
+	e.m.opts.AllowLoopbackHTTP = true // integration tests only
+	_, err = e.m.UpdateConfig(ConfigUpdate{S3: &S3Update{Endpoint: str("http://127.0.0.1:9000"), SecretAccessKey: str(mockSecretAccessKey)}}, admin)
+	assert.NoError(t, err)
 	_, err = e.m.UpdateConfig(ConfigUpdate{S3: &S3Update{Prefix: str("../x")}}, admin)
 	assert.Error(t, err)
 }
@@ -591,4 +594,175 @@ func TestHeaderLimits(t *testing.T) {
 	require.ErrorIs(t, err, ErrNotBackup)
 	_, err = ReadHeader(io.MultiReader(strings.NewReader(fileMagic), bytes.NewReader([]byte{0xff, 0xff, 0xff, 0xff})))
 	require.ErrorIs(t, err, ErrBadHeader)
+}
+
+// repack decrypts a backup made by e, lets edit change its manifest / MAC
+// and encrypts it again to the same key, as an attacker who knows the
+// public key could.
+func repack(t *testing.T, e *testEnv, b BackupInfo, recovery string, edit func(m *Manifest, mac *string)) []byte {
+	t.Helper()
+	data := e.store.objects[DefaultPrefix+b.Name+FileExt].data
+	r := bytes.NewReader(data)
+	h, err := ReadHeader(r)
+	require.NoError(t, err)
+	id, err := ParseRecoveryKey(recovery)
+	require.NoError(t, err)
+	payload, err := decryptPayload(r, id)
+	require.NoError(t, err)
+	ex, err := extractPayload(payload, t.TempDir(), DefaultMaxBackupBytes)
+	require.NoError(t, err)
+	m := ex.Manifest
+	mac := ex.MAC
+	edit(&m, &mac)
+	raw, err := json.Marshal(m)
+	require.NoError(t, err)
+	return encryptedFile(t, *e.m.settings.Encryption, h.Name, func(tw *tar.Writer) {
+		for _, name := range []string{FileDatabase, FileConfig} {
+			content, err := os.ReadFile(ex.Paths[name])
+			require.NoError(t, err)
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0600, Size: int64(len(content)), Typeflag: tar.TypeReg}))
+			_, _ = tw.Write(content)
+		}
+		require.NoError(t, tw.WriteHeader(&tar.Header{Name: FileManifest, Mode: 0600, Size: int64(len(raw)), Typeflag: tar.TypeReg}))
+		_, _ = tw.Write(raw)
+		if mac != "" {
+			require.NoError(t, tw.WriteHeader(&tar.Header{Name: FileManifestMAC, Mode: 0600, Size: int64(len(mac)), Typeflag: tar.TypeReg}))
+			_, _ = tw.Write([]byte(mac))
+		}
+	})
+}
+
+func (e *testEnv) prepareUpload(data []byte) (*PrepareResult, error) {
+	e.t.Helper()
+	f, err := e.m.UploadTempFile()
+	require.NoError(e.t, err)
+	_, err = f.Write(data)
+	require.NoError(e.t, err)
+	require.NoError(e.t, f.Close())
+	return e.m.Prepare(context.Background(), PrepareRequest{UploadPath: f.Name(), Password: testPassword, Actor: admin})
+}
+
+func lastCheck(res *PrepareResult) Check { return res.Checks[len(res.Checks)-1] }
+
+// A backup that claims to come from this dashboard must authenticate; it
+// cannot be accepted by just acknowledging a warning.
+func TestOwnBackupWithBadOriginIsRejected(t *testing.T) {
+	e := newTestEnv(t)
+	recovery := e.configure()
+	b := e.backup(TriggerManual)
+
+	cases := map[string]func(m *Manifest, mac *string){
+		"wrong MAC": func(m *Manifest, mac *string) {
+			m.Tables["servers"] = 99 // tampered content, MAC no longer matches
+		},
+		"MAC removed": func(m *Manifest, mac *string) { *mac = "" },
+		"forged with our public key, no MAC, no auth key id": func(m *Manifest, mac *string) {
+			m.AuthKeyID = ""
+			*mac = ""
+		},
+	}
+	for label, edit := range cases {
+		t.Run(label, func(t *testing.T) {
+			e.advance(rateWindow)
+			res, err := e.prepareUpload(repack(t, e, b, recovery, edit))
+			require.NoError(t, err)
+			assert.False(t, res.CanApply)
+			assert.Empty(t, res.RestoreToken)
+			assert.Equal(t, CheckOrigin, lastCheck(res).Code)
+			assert.False(t, lastCheck(res).OK)
+		})
+	}
+
+	// The genuine file passes with a verified origin.
+	e.advance(rateWindow)
+	res, err := e.prepare(b, testPassword)
+	require.NoError(t, err)
+	require.True(t, res.CanApply)
+	assert.Contains(t, checkCodes(res), CheckOrigin)
+	assert.NotContains(t, warningCodes(res), WarnOriginUnverified)
+}
+
+// A backup from another dashboard (whose key this dashboard does not hold)
+// can be restored after an explicit acknowledgement, also when this
+// dashboard is configured itself.
+func TestForeignBackupNeedsAcknowledgementOnConfiguredDashboard(t *testing.T) {
+	src := newTestEnv(t)
+	src.configure()
+	b := src.backup(TriggerManual)
+	data := src.store.objects[DefaultPrefix+b.Name+FileExt].data
+
+	dst := newTestEnv(t)
+	dst.configure() // own key pair and MAC key
+	res, err := dst.prepareUpload(data)
+	require.NoError(t, err)
+	require.True(t, res.CanApply)
+	assert.Contains(t, warningCodes(res), WarnOriginUnverified)
+	assert.NotContains(t, warningCodes(res), WarnPreRestoreSkipped)
+	for _, w := range res.Warnings {
+		if w.Code == WarnOriginUnverified {
+			assert.True(t, w.RequireAck)
+		}
+	}
+	err = dst.m.Apply(context.Background(), ApplyRequest{Token: res.RestoreToken, Password: testPassword, Confirm: ConfirmWord(res.Name), Reauth: okReauth, Actor: admin})
+	require.ErrorIs(t, err, ErrAckRequired)
+	require.NoError(t, dst.apply(res, testPassword))
+}
+
+func checkCodes(res *PrepareResult) []string {
+	var out []string
+	for _, c := range res.Checks {
+		out = append(out, c.Code)
+	}
+	return out
+}
+
+// Backup and restore share one size limit on the unpacked content, so a
+// backup that compresses well below the limit is not produced if its
+// content could not be unpacked on restore.
+func TestBackupSizeLimitMatchesRestore(t *testing.T) {
+	const limit = 256 << 10
+	big := strings.Repeat("compressible ", 4000) // ~52 KiB per row, compresses to almost nothing
+
+	e := &testEnv{}
+	*e = *newTestEnv(t)
+	e.maxBytes = limit
+	e.m = e.newManager("v1.2.3")
+	e.configure()
+	for range 8 {
+		_, err := e.db.Exec("INSERT INTO servers (name) VALUES (?)", big)
+		require.NoError(t, err)
+	}
+	job, err := e.m.StartBackup(TriggerManual, admin)
+	require.NoError(t, err)
+	e.m.op.Lock()
+	e.m.op.Unlock()
+	list, err := e.m.List(context.Background())
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, job.Name, list[0].Name)
+	assert.Equal(t, StatusFailed, list[0].Status)
+	assert.Contains(t, list[0].Error, "size limit")
+	assert.Empty(t, e.store.keys(), "a backup that could not be restored is never uploaded")
+
+	// Under the limit: backed up and restorable.
+	_, err = e.db.Exec("DELETE FROM servers WHERE length(name) > 100; VACUUM")
+	require.NoError(t, err)
+	_, err = e.db.Exec("INSERT INTO servers (name) VALUES (?)", big)
+	require.NoError(t, err)
+	b := e.backup(TriggerManual)
+	require.Equal(t, StatusSuccess, b.Status, b.Error)
+	assert.Less(t, b.Size, int64(limit/4), "the file is compressed")
+	res, err := e.prepare(b, testPassword)
+	require.NoError(t, err)
+	assert.True(t, res.CanApply)
+
+	// The extraction limit is enforced on the unpacked size: a manager with
+	// a limit between the compressed and the unpacked size refuses it.
+	e.advance(rateWindow)
+	e.maxBytes = b.Size * 2
+	small := e.newManager("v1.2.3")
+	res, err = small.Prepare(context.Background(), PrepareRequest{Name: b.Name, SHA256: b.SHA256, Password: testPassword, Actor: admin})
+	require.NoError(t, err)
+	assert.False(t, res.CanApply)
+	assert.Equal(t, CheckPayload, lastCheck(res).Code)
 }

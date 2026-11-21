@@ -156,6 +156,7 @@ type testEnv struct {
 	store    *memStorage
 	m        *Manager
 	restarts atomic.Int32
+	maxBytes int64
 	now      time.Time
 	nowMu    sync.Mutex
 }
@@ -207,10 +208,11 @@ func (e *testEnv) newManager(version string) *Manager {
 			_, err := e.db.ExecContext(ctx, "VACUUM INTO ?", dst)
 			return err
 		},
-		NewStorage: func(S3Settings) (Storage, error) { return e.store, nil },
-		Restart:    func() { e.restarts.Add(1) },
-		Now:        e.clock,
-		RetryDelay: time.Millisecond,
+		NewStorage:     func(S3Settings) (Storage, error) { return e.store, nil },
+		Restart:        func() { e.restarts.Add(1) },
+		Now:            e.clock,
+		RetryDelay:     time.Millisecond,
+		MaxBackupBytes: e.maxBytes,
 	})
 	require.NoError(e.t, err)
 	e.t.Cleanup(m.Close)

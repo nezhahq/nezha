@@ -93,6 +93,18 @@ type Settings struct {
 	// AuthKey (hex) authenticates the manifests of backups made by this
 	// dashboard. It survives password changes and key resets.
 	AuthKey string `json:"auth_key,omitempty"`
+	// KnownKeyIDs lists every key pair this dashboard created (current and
+	// earlier ones). A backup encrypted to one of them must carry a valid MAC.
+	KnownKeyIDs []string `json:"known_key_ids,omitempty"`
+}
+
+// ownKeyIDs returns the key ids of every key pair made by this dashboard.
+func (s *Settings) ownKeyIDs() []string {
+	ids := append([]string(nil), s.KnownKeyIDs...)
+	if s.Encryption != nil {
+		ids = append(ids, s.Encryption.KeyID)
+	}
+	return ids
 }
 
 func (s *Settings) applyDefaults() {
@@ -116,6 +128,7 @@ func (s *Settings) clone() Settings {
 		k := *s.Encryption
 		c.Encryption = &k
 	}
+	c.KnownKeyIDs = append([]string(nil), s.KnownKeyIDs...)
 	if s.S3.UsePathStyle != nil {
 		v := *s.S3.UsePathStyle
 		c.S3.UsePathStyle = &v

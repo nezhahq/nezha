@@ -83,6 +83,9 @@ type Options struct {
 	Restart        func()
 	MaxBackupBytes int64
 	Now            func() time.Time
+	// AllowLoopbackHTTP accepts http:// endpoints on loopback addresses.
+	// Integration tests against a local MinIO only; the dashboard never sets it.
+	AllowLoopbackHTTP bool
 	// RetryDelay is the base delay between upload attempts.
 	RetryDelay time.Duration
 }
@@ -129,7 +132,8 @@ func NewManager(opts Options) (*Manager, error) {
 		opts.CronParser = cron.NewParser(cron.Second | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)
 	}
 	if opts.NewStorage == nil {
-		opts.NewStorage = newS3Storage
+		allow := opts.AllowLoopbackHTTP
+		opts.NewStorage = func(s S3Settings) (Storage, error) { return newS3Storage(s, allow) }
 	}
 	if opts.MaxBackupBytes <= 0 {
 		opts.MaxBackupBytes = DefaultMaxBackupBytes
@@ -318,7 +322,7 @@ func validBucket(b string) bool {
 // mergeS3 applies u to cur (the file values) and validates the result.
 // effective is cur with environment overrides applied, used for the
 // "changing endpoint or bucket needs the secret again" rule.
-func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3Update) (S3Settings, error) {
+func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3Update, allowLoopbackHTTP bool) (S3Settings, error) {
 	if u == nil {
 		return cur, nil
 	}
@@ -381,7 +385,7 @@ func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3
 		return cur, ErrSecretRequired
 	}
 	if next.Endpoint != "" {
-		if _, _, err := s3store.ParseEndpoint(next.Endpoint); err != nil {
+		if _, _, err := s3store.ParseEndpoint(next.Endpoint, allowLoopbackHTTP); err != nil {
 			return cur, err
 		}
 	}
@@ -405,7 +409,7 @@ func (m *Manager) UpdateConfig(u ConfigUpdate, actor Actor) (ConfigView, error) 
 	eff, locked := m.effective()
 	m.mu.Lock()
 	next := m.settings.clone()
-	s3, err := mergeS3(next.S3, eff.S3, locked, u.S3)
+	s3, err := mergeS3(next.S3, eff.S3, locked, u.S3, m.opts.AllowLoopbackHTTP)
 	if err != nil {
 		m.mu.Unlock()
 		return ConfigView{}, err
@@ -453,7 +457,7 @@ func (m *Manager) TestConnection(ctx context.Context, u *S3Update, actor Actor) 
 	m.mu.Lock()
 	cur := m.settings.S3
 	m.mu.Unlock()
-	candidate, err := mergeS3(cur, eff.S3, locked, u)
+	candidate, err := mergeS3(cur, eff.S3, locked, u, m.opts.AllowLoopbackHTTP)
 	if err != nil {
 		return err
 	}
@@ -574,6 +578,9 @@ func (m *Manager) newKeyLocked(password, action string, actor Actor) (string, En
 	}
 	next := m.settings.clone()
 	next.Encryption = &km
+	if !slices.Contains(next.KnownKeyIDs, km.KeyID) {
+		next.KnownKeyIDs = append(next.KnownKeyIDs, km.KeyID)
+	}
 	if err := next.ensureAuthKey(); err != nil {
 		return "", EncryptionView{}, err
 	}
@@ -721,6 +728,18 @@ func (m *Manager) runBackup(ctx context.Context, name string, s Settings) (Backu
 			sources[FileConfig] = m.opts.ConfigPath
 		}
 	}
+	// A restore refuses payloads whose unpacked size exceeds the limit, so a
+	// backup that could not be restored must not be produced at all. Check
+	// early (compression could hide it) and again exactly after packing.
+	var unpacked int64
+	for _, path := range sources {
+		if st, err := os.Stat(path); err == nil {
+			unpacked += st.Size()
+		}
+	}
+	if unpacked > m.opts.MaxBackupBytes {
+		return BackupInfo{}, m.tooLarge(unpacked)
+	}
 
 	header := Header{
 		Format:          formatVersion,
@@ -734,14 +753,18 @@ func (m *Manager) runBackup(ctx context.Context, name string, s Settings) (Backu
 	manifest := &Manifest{
 		Format: formatVersion, Name: name, CreatedAt: created, Trigger: trigger,
 		NezhaVersion: m.opts.Version, KeyID: s.Encryption.KeyID, Tables: insp.tables,
+		AuthKeyID: authKeyID(s.authKey()),
 	}
 	outPath := filepath.Join(tmp, name+FileExt)
-	sum, size, err := writeBackupFile(outPath, header, s.Encryption.Recipient, manifest, sources, s.authKey())
+	sum, size, unpacked, err := writeBackupFile(outPath, header, s.Encryption.Recipient, manifest, sources, s.authKey())
 	if err != nil {
 		return BackupInfo{}, err
 	}
+	if unpacked > m.opts.MaxBackupBytes {
+		return BackupInfo{}, m.tooLarge(unpacked)
+	}
 	if size > m.opts.MaxBackupBytes {
-		return BackupInfo{}, fmt.Errorf("backup is larger than the %d byte limit", m.opts.MaxBackupBytes)
+		return BackupInfo{}, m.tooLarge(size)
 	}
 	meta := map[string]string{metaSHA256: sum, metaVersion: m.opts.Version, metaTrigger: string(trigger), metaKeyID: s.Encryption.KeyID}
 	key := s.S3.Prefix + name + FileExt
@@ -755,15 +778,24 @@ func (m *Manager) runBackup(ctx context.Context, name string, s Settings) (Backu
 	}, nil
 }
 
-func writeBackupFile(path string, h Header, recipient string, manifest *Manifest, sources map[string]string, authKey []byte) (string, int64, error) {
+// tooLarge is the error of a backup that would exceed the size limit shared
+// by backup, download, upload and restore.
+func (m *Manager) tooLarge(n int64) error {
+	return fmt.Errorf("%w: %d bytes, the limit is %d bytes", ErrTooLarge, n, m.opts.MaxBackupBytes)
+}
+
+// writeBackupFile returns the checksum and size of the file and the
+// unpacked size of its payload.
+func writeBackupFile(path string, h Header, recipient string, manifest *Manifest, sources map[string]string, authKey []byte) (string, int64, int64, error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600) // #nosec G304 -- dashboard temp dir
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
+	var unpacked int64
 	hw := newHashingWriter(f)
 	w, err := encryptTo(hw, h, recipient)
 	if err == nil {
-		err = writePayload(w, manifest, sources, authKey)
+		unpacked, err = writePayload(w, manifest, sources, authKey)
 		if cerr := w.Close(); err == nil {
 			err = cerr
 		}
@@ -775,9 +807,9 @@ func writeBackupFile(path string, h Header, recipient string, manifest *Manifest
 		err = cerr
 	}
 	if err != nil {
-		return "", 0, err
+		return "", 0, 0, err
 	}
-	return hw.sum(), hw.n, nil
+	return hw.sum(), hw.n, unpacked, nil
 }
 
 func (m *Manager) upload(ctx context.Context, st Storage, key, path string, size int64, meta map[string]string) error {

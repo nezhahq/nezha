@@ -61,6 +61,7 @@ const (
 	CheckVersion  = "version"
 	CheckDatabase = "database_integrity"
 	CheckAdmin    = "admin_user"
+	CheckOrigin   = "origin"
 
 	WarnOriginUnverified    = "origin_unverified"
 	WarnPreRestoreSkipped   = "pre_restore_skipped"
@@ -317,6 +318,21 @@ func (m *Manager) prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 		NezhaVersion: ex.Manifest.NezhaVersion, KeyID: ex.Manifest.KeyID, Tables: ex.Manifest.Tables, HasConfig: hasConfig,
 	}
 
+	// Origin. A backup that claims to come from this dashboard (its MAC key
+	// id is ours, or it is encrypted to a key pair this dashboard created)
+	// must carry a valid MAC; anything else can only be accepted after the
+	// administrator explicitly acknowledges that its origin is unverifiable.
+	authKey := s.authKey()
+	macOK := len(authKey) > 0 && ex.MAC != "" && hmac.Equal([]byte(manifestMAC(authKey, ex.RawManifest)), []byte(ex.MAC))
+	ours := len(authKey) > 0 && (ex.Manifest.AuthKeyID == authKeyID(authKey) || slices.Contains(s.ownKeyIDs(), header.KeyID))
+	originVerified := macOK
+	if ours && !macOK {
+		return fail(CheckOrigin, errors.New("the backup claims to come from this dashboard but its authentication code does not match"))
+	}
+	if originVerified {
+		res.Checks = append(res.Checks, Check{Code: CheckOrigin, OK: true})
+	}
+
 	if c, w := m.versionCheck(ex.Manifest.NezhaVersion); !c.OK {
 		return fail(CheckVersion, errors.New(c.Message))
 	} else {
@@ -352,8 +368,7 @@ func (m *Manager) prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 	}
 	_ = os.Remove(backupPath)
 
-	authKey := s.authKey()
-	if len(authKey) == 0 || ex.MAC == "" || !hmac.Equal([]byte(manifestMAC(authKey, ex.RawManifest)), []byte(ex.MAC)) {
+	if !originVerified {
 		res.Warnings = append(res.Warnings, Warning{Code: WarnOriginUnverified, RequireAck: true,
 			Message: "This backup was not made by this dashboard (or its key changed); its origin cannot be verified."})
 	}
