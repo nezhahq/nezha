@@ -38,7 +38,13 @@ const (
 func restRequestBodyLimitMiddleware(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Body != nil && c.Request.Body != http.NoBody {
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes)
+			limit := maxBytes
+			// The restore upload carries a whole backup file; it streams the
+			// body to disk with its own limit instead of binding it.
+			if c.Request.Method == http.MethodPost && c.FullPath() == backupUploadPath {
+				limit = backupUploadBodyLimit()
+			}
+			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
 		}
 		c.Next()
 	}

@@ -219,6 +219,7 @@ func routers(r *gin.Engine, frontendDist fs.FS) {
 	auth.PATCH("/setting", restScopeMiddleware(model.ScopeAdminAll), adminHandler(updateConfig))
 	auth.POST("/maintenance", restScopeMiddleware(model.ScopeAdminAll), adminHandler(runMaintenance))
 	registerFrontendRoutes(auth)
+	registerBackupRoutes(auth, patForbidden)
 
 	r.NoRoute(fallbackToFrontend(frontendDist))
 }

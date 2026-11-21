@@ -12,6 +12,7 @@ import (
 	"os"
 	"runtime/debug"
 	"strings"
+	"sync/atomic"
 	_ "time/tzdata"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +23,7 @@ import (
 	"github.com/nezhahq/nezha/cmd/dashboard/controller/waf"
 	"github.com/nezhahq/nezha/cmd/dashboard/rpc"
 	"github.com/nezhahq/nezha/model"
+	"github.com/nezhahq/nezha/pkg/backup"
 	"github.com/nezhahq/nezha/pkg/grpcx"
 	"github.com/nezhahq/nezha/pkg/idcodec"
 	"github.com/nezhahq/nezha/pkg/utils"
@@ -143,6 +145,14 @@ func main() {
 		os.Exit(0)
 	}
 
+	// A restore staged from the dashboard is swapped in before the config
+	// and the database are opened; a restore whose start never completed is
+	// rolled back here.
+	restoreBoot, err := backup.BootRestore(dashboardCliParam.ConfigFile, dashboardCliParam.DatabaseLocation)
+	if err != nil {
+		log.Fatal(err)
+	}
+
 	serviceSentinelDispatchBus := make(chan *model.Service)
 	if err := utils.FirstError(singleton.InitFrontendTemplates,
 		func() error { return singleton.InitConfigFromPath(dashboardCliParam.ConfigFile) },
@@ -157,8 +167,27 @@ func main() {
 		},
 		func() error { return singleton.InitDBFromPath(dashboardCliParam.DatabaseLocation) },
 		singleton.InitTSDB,
-		func() error { return initSystem(serviceSentinelDispatchBus) }); err != nil {
+		func() error { return initSystem(serviceSentinelDispatchBus) },
+		func() error {
+			return singleton.InitBackup(dashboardCliParam.ConfigFile, dashboardCliParam.DatabaseLocation)
+		}); err != nil {
+		// Put the previous data back so that the next start (by the
+		// supervisor) runs with it; the failure is shown after login.
+		restoreBoot.Rollback(err)
 		log.Fatal(err)
+	}
+	restoreBoot.Commit()
+
+	// Applying a restore shuts the dashboard down gracefully and exits with
+	// a non-zero status, so that restart policies limited to failures
+	// (Restart=on-failure, restart: on-failure) start it again as well.
+	restartCtx, requestRestart := context.WithCancel(context.Background())
+	defer requestRestart()
+	var restartRequested atomic.Bool
+	singleton.RequestRestart = func() {
+		log.Println("NEZHA>> Restarting to apply a restore")
+		restartRequested.Store(true)
+		requestRestart()
 	}
 
 	l, err := openDashboardListener("tcp", dashboardListenerAddress(singleton.Conf.ListenHost, singleton.Conf.ListenPort), dashboardHTTPListener)
@@ -211,7 +240,7 @@ func main() {
 	errChan := make(chan error, 2)
 	errHTTPS := errors.New("error from https server")
 
-	if err := graceful.Graceful(func() error {
+	if err := graceful.GracefulContext(restartCtx, func() error {
 		log.Printf("NEZHA>> Dashboard::START ON %s:%d", singleton.Conf.ListenHost, singleton.Conf.ListenPort)
 		if singleton.Conf.HTTPS.ListenPort != 0 {
 			go func() {
@@ -243,6 +272,10 @@ func main() {
 	}
 
 	close(errChan)
+	if restartRequested.Load() {
+		log.Println("NEZHA>> Exiting so that the supervisor restarts the dashboard with the restored data")
+		os.Exit(3)
+	}
 }
 
 // wireNATDashboardCredentialGate connects the NAT ingress to the real
