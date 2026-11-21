@@ -27,13 +27,9 @@ import (
 // @Router /service [get]
 func showService(c *gin.Context) (*model.ServiceResponse, error) {
 	res, err, _ := requestGroup.Do(serviceResponseCacheKey(c), func() (any, error) {
-		singleton.AlertsLock.RLock()
-		defer singleton.AlertsLock.RUnlock()
 		stats := filterServiceStatsForViewer(c, singleton.ServiceSentinelShared.CopyStats())
-		var cycleTransferStats map[uint64]model.CycleTransferStats
-		copier.Copy(&cycleTransferStats, singleton.AlertsCycleTransferStatsStore)
 		return []any{
-			stats, filterCycleTransferStatsForViewer(c, cycleTransferStats),
+			stats, filterCycleTransferStatsForViewer(c, singleton.CopyCycleTransferStats()),
 		}, nil
 	})
 	if err != nil {

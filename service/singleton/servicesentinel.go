@@ -362,6 +362,13 @@ func (ss *ServiceSentinel) Dispatch(r ReportData) {
 	ss.serviceReportChannel <- r
 }
 
+// NewServiceSentinelForReportCapture returns a sentinel that only accepts
+// Dispatch and hands every report to reports. Tests in other packages use it
+// to observe what the RPC layer forwards.
+func NewServiceSentinelForReportCapture(reports chan ReportData) *ServiceSentinel {
+	return &ServiceSentinel{serviceReportChannel: reports}
+}
+
 // sortServices 按 DisplayIndex 降序、ID 升序排列服务列表
 func sortServices(services []*model.Service) {
 	slices.SortFunc(services, func(a, b *model.Service) int {

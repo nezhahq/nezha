@@ -7,6 +7,11 @@ on:
     branches:
       - dev
 
+# 仓库的默认 workflow 权限是可写。构建会执行第三方主题的下载脚本和大量依赖代码，
+# 默认只给读权限，发版和推镜像的 job 再各自申请需要的那一项。
+permissions:
+  contents: read
+
 jobs:
   build:
     strategy:
@@ -28,7 +33,10 @@ jobs:
       - name: Install dependencies
         run: |
           apt update && apt install unzip curl -y
-          wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 -O /usr/bin/yq
+          # 固定版本并校验摘要：这个二进制随后就在发版构建里执行，
+          # 不能跟着上游的 latest 走。
+          wget https://github.com/mikefarah/yq/releases/download/v4.54.3/yq_linux_amd64 -O /usr/bin/yq
+          echo "129534601871538efe0ba4c5e62a34fb1d5f469bcb975c4fddeb467d82974973  /usr/bin/yq" | sha256sum -c -
           chmod +x /usr/bin/yq
 
       - run: git config --global --add safe.directory /__w/nezha/nezha
@@ -53,7 +61,7 @@ jobs:
 
       - name: generate swagger docs
         run: |
-          go install github.com/swaggo/swag/cmd/swag@latest
+          go install github.com/swaggo/swag/cmd/swag@v1.16.6
           swag init --pd -d cmd/dashboard -g main.go -o cmd/dashboard/docs
           go mod tidy
 
@@ -130,6 +138,9 @@ jobs:
     if: github.event_name == 'push' && contains(github.ref, 'refs/tags/')
     needs: build
     name: Release
+    permissions:
+      contents: write # 创建 release、上传产物
+      actions: write # 触发镜像站同步 workflow
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v8
@@ -177,6 +188,9 @@ jobs:
     if: github.event_name == 'push'
     needs: build
     name: Release Docker images
+    permissions:
+      contents: read
+      packages: write # 推送 GHCR 镜像
     steps:
       - uses: actions/checkout@v7.0.1
 

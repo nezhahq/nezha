@@ -190,10 +190,19 @@ func (c *ServerClass) UUIDToID(uuid string) (id uint64, ok bool) {
 }
 
 func (c *ServerClass) UpdateDDNS(server *model.Server, ip *model.IP) error {
+	// 地址未知时不能发起更新。服务器的地址只存在内存里：面板重启后、agent 离线时
+	// 都是空的，而 DDNS 更新把“地址为空”当成“删除这条记录”。以前在这个窗口里保存
+	// 一次服务器，正常机器的 A / AAAA 记录就被删掉了。
+	if ip == nil && server.GeoIP != nil {
+		ip = &server.GeoIP.IP
+	}
+	if ip == nil || (ip.IPv4Addr == "" && ip.IPv6Addr == "") {
+		return nil
+	}
 	confServers := strings.Split(Conf.DNSServers, ",")
 	ctx := context.WithValue(context.Background(), ddns.DNSServerKey{}, utils.IfOr(confServers[0] != "", confServers, utils.DNSServers))
 
-	providers, err := DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, utils.IfOr(ip != nil, ip, &server.GeoIP.IP), server.GetUserID())
+	providers, err := DDNSShared.GetDDNSProvidersFromProfiles(server.DDNSProfiles, ip, server.GetUserID())
 	if err != nil {
 		return err
 	}

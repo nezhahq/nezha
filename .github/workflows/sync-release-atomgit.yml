@@ -3,6 +3,10 @@ name: Sync Release to AtomGit
 on:
   workflow_dispatch:
 
+# 仓库的默认 workflow 权限是可写；同步只需要读代码，显式收紧。
+permissions:
+  contents: read
+
 jobs:
   sync-release-to-atomgit:
     runs-on: ubuntu-latest

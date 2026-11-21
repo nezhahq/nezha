@@ -7,6 +7,7 @@ import (
 	"log"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jinzhu/copier"
 	"github.com/nezhahq/nezha/pkg/tsdb"
@@ -33,6 +34,25 @@ const maxConfigReportBytes = 64 * 1024
 // ErrConfigReportTooLarge is handed to the waiting config reader in place of
 // a report, or a failure reason, longer than maxConfigReportBytes.
 var ErrConfigReportTooLarge = errors.New("agent config report too large")
+
+// maxTaskResultTextBytes bounds the Agent-chosen output of scheduled tasks and
+// service monitors. Both are meant for a human to read in a notification.
+const maxTaskResultTextBytes = 64 * 1024
+
+const taskResultTruncatedSuffix = "\n...(truncated)"
+
+// truncateTaskResultText cuts oversized output on a rune boundary so the kept
+// part stays valid UTF-8 for JSON and the database.
+func truncateTaskResultText(text string) string {
+	if len(text) <= maxTaskResultTextBytes {
+		return text
+	}
+	keep := maxTaskResultTextBytes
+	for keep > 0 && !utf8.RuneStart(text[keep]) {
+		keep--
+	}
+	return text[:keep] + taskResultTruncatedSuffix
+}
 
 type NezhaHandler struct {
 	Auth                   *authHandler
@@ -181,6 +201,12 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 		if result != nil {
 			result.Delay = float32(model.FiniteStateValue(float64(result.Delay)))
 		}
+		// Scheduled-task and service-monitor results end up in notification
+		// bodies, monitor history and the service API. The agent chooses their
+		// length, so an agent could push megabytes per message into all three.
+		if result.GetType() == model.TaskTypeCommand || model.IsServiceSentinelNeeded(result.GetType()) {
+			result.Data = truncateTaskResultText(result.GetData())
+		}
 		switch result.GetType() {
 		case model.TaskTypeCommand:
 			// 处理上报的计划任务
@@ -190,12 +216,14 @@ func (s *NezhaHandler) RequestTask(stream pb.NezhaService_RequestTaskServer) err
 				// 保存当前服务器状态信息
 				var curServer model.Server
 				copier.Copy(&curServer, server)
+				// 通知必须异步发：webhook 最长会等 10 分钟，同步发送会把这台 agent 的
+				// 接收循环卡住，期间它的探测结果和 MCP 调用结果都收不进来。
 				if cr.PushSuccessful && result.GetSuccessful() {
-					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
+					go singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Successfully"),
 						cr.Name, server.Name, result.GetData()), "", &curServer)
 				}
 				if !result.GetSuccessful() {
-					singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
+					go singleton.NotificationShared.SendNotification(cr.NotificationGroupID, fmt.Sprintf("[%s] %s, %s\n%s", singleton.Localizer.T("Scheduled Task Executed Failed"),
 						cr.Name, server.Name, result.GetData()), "", &curServer)
 				}
 				singleton.DB.Model(cr).Updates(model.Cron{

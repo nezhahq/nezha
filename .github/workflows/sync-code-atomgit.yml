@@ -4,12 +4,18 @@ on:
   push:
     branches: [master]
 
+# 仓库的默认 workflow 权限是可写；同步只需要读代码，显式收紧。
+permissions:
+  contents: read
+
 jobs:
   sync-code-to-atomgit:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: adambirds/sync-github-to-gitlab-action@v1.1.0
+      # 这个第三方 action 会拿到镜像仓库的 SSH 私钥，固定到提交 SHA，
+      # tag 被改写时不会跟着执行新代码。
+      - uses: adambirds/sync-github-to-gitlab-action@654ee4b668b2746fe8367c7c3c254b6575ee1bab # v1.1.0
         with:
           destination_repository: git@atomgit.com:naiba/nezha-dashboard.git
           destination_branch_name: master

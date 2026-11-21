@@ -3,6 +3,7 @@ package singleton
 import (
 	"fmt"
 	"log"
+	"maps"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -35,6 +36,35 @@ var (
 	alertDeliveries               map[uint64]map[uint64]*alertDeliveryEntry
 	alertEventSequence            atomic.Uint64
 )
+
+// cycleTransferStatsMu guards the maps inside AlertsCycleTransferStatsStore
+// entries. The alert evaluator writes them and the public /service endpoint
+// reads them, and both hold AlertsLock for reading only, so AlertsLock does not
+// keep them apart. Go aborts the whole process on a concurrent map read and
+// write. Always taken after AlertsLock.
+var cycleTransferStatsMu sync.Mutex
+
+// CopyCycleTransferStats returns a copy of the cycle transfer statistics that
+// shares no map with the store and is safe to read and filter without a lock.
+func CopyCycleTransferStats() map[uint64]model.CycleTransferStats {
+	AlertsLock.RLock()
+	defer AlertsLock.RUnlock()
+	cycleTransferStatsMu.Lock()
+	defer cycleTransferStatsMu.Unlock()
+
+	copied := make(map[uint64]model.CycleTransferStats, len(AlertsCycleTransferStatsStore))
+	for alertID, stats := range AlertsCycleTransferStatsStore {
+		if stats == nil {
+			continue
+		}
+		statsCopy := *stats
+		statsCopy.ServerName = maps.Clone(stats.ServerName)
+		statsCopy.Transfer = maps.Clone(stats.Transfer)
+		statsCopy.NextUpdate = maps.Clone(stats.NextUpdate)
+		copied[alertID] = statsCopy
+	}
+	return copied
+}
 
 type alertDeliveryEntry struct {
 	cancel chan struct{}
@@ -330,7 +360,11 @@ func checkStatusForServer(alert *model.AlertRule, server *model.Server) {
 		}
 		alertsLastMetricSeq[alert.ID][server.ID] = runtime.ReportSequence
 	}
+	// 评估周期流量规则会改写统计里的 map，而这里和读取方都只持有 AlertsLock 的读锁，
+	// 必须另外互斥（见 cycleTransferStatsMu）。
+	cycleTransferStatsMu.Lock()
 	point, known := alert.SnapshotStatusWithRuntime(AlertsCycleTransferStatsStore[alert.ID], server, runtime, DB)
+	cycleTransferStatsMu.Unlock()
 	if !known {
 		alertsStore[alert.ID][server.ID] = nil
 		return
