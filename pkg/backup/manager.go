@@ -27,6 +27,7 @@ const (
 	rollbackDirName = "restore-rollback"
 	pendingFileName = "pending.json"
 	stateFileName   = "restore-state.json"
+	commitFileName  = "restore-committed.json"
 	resultFileName  = "restore-result.json"
 	auditFileName   = "backup-audit.log"
 )

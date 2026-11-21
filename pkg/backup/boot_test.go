@@ -211,6 +211,11 @@ func TestBootRestoreCrashDuringSwapKeepsOldData(t *testing.T) {
 	ops := countBootOps(t)
 	require.GreaterOrEqual(t, len(ops), 4, "%v", ops)
 	for i := range ops {
+		if i == 0 && strings.HasPrefix(ops[i], "write ") {
+			// Before the plan exists nothing has happened; covered by
+			// TestBootRestoreCrashBeforePlanWrittenRetries.
+			continue
+		}
 		t.Run(ops[i], func(t *testing.T) {
 			e := stageRestore(t)
 			addWALOnlyRow(t, e.dbPath, "delta")
@@ -523,60 +528,171 @@ func TestBootRestoreRefusesWhenSwapSyncFails(t *testing.T) {
 	assertOldDataAndNoRetry(t, e)
 }
 
-// Commit cannot confirm the plan's removal on disk, whichever directory
-// sync fails: Commit fails (the dashboard does not serve) and the next start
-// (a supervisor restart) rolls back to the previous database, including its
-// WAL data, and the previous configuration, and records a rolled-back
-// failure.
-func TestBootRestoreCommitSyncFailureRollsBackOnRestart(t *testing.T) {
-	cases := map[string]func(op string, n int) bool{
-		"before the plan is removed":               func(op string, n int) bool { return n == 1 },
-		"after the plan is removed":                func(op string, n int) bool { return n == 2 },
-		"after removal, and putting the plan back": func(op string, n int) bool { return n >= 2 },
+// restartRollsBack simulates the supervisor restarting the dashboard and
+// checks what that start finds on disk: the previous database (including
+// its WAL data), the previous configuration, a rolled-back result, and no
+// replay later.
+func restartRollsBack(t *testing.T, e *testEnv) {
+	t.Helper()
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath), "previous database incl. WAL data")
+	conf, err := os.ReadFile(e.confPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(conf), "agent_secret_key: changed", "previous configuration")
+	r, err := readRestoreResult(e.dir)
+	require.NoError(t, err)
+	assert.Equal(t, "failed", r.Status)
+	assert.True(t, r.RolledBack)
+	assertOldDataAndNoRetry(t, e)
+}
+
+// restartKeepsRestore checks that the next start finishes a commit: the
+// restored data and configuration stay, the result is a success and the
+// plan, the commit record and the previous copies are gone.
+func restartKeepsRestore(t *testing.T, e *testEnv) {
+	t.Helper()
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath))
+	conf, err := os.ReadFile(e.confPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(conf), "agent_secret_key: original")
+	r, err := readRestoreResult(e.dir)
+	require.NoError(t, err)
+	assert.Equal(t, "success", r.Status)
+	for _, name := range []string{stateFileName, commitFileName, rollbackDirName} {
+		_, err := os.Stat(filepath.Join(e.dir, name))
+		assert.True(t, os.IsNotExist(err), name)
 	}
-	for label, fail := range cases {
-		t.Run(label, func(t *testing.T) {
-			e := stageRestore(t)
-			addWALOnlyRow(t, e.dbPath, "delta")
-			boot, err := BootRestore(e.confPath, e.dbPath)
-			require.NoError(t, err)
-			require.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath), "restored data in place")
+}
 
-			committing, syncs := false, 0
-			bootFault = func(op string) error {
-				if op == "commit" {
-					committing = true
-					return nil
-				}
-				if committing && strings.HasPrefix(op, "sync ") {
-					syncs++
-					if fail(op, syncs) {
-						return errors.New("injected I/O error")
-					}
-				}
-				return nil
-			}
-			err = boot.Commit()
+func swappedEnv(t *testing.T) (*testEnv, *Boot) {
+	t.Helper()
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	require.True(t, boot.Applied())
+	require.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath), "restored data in place")
+	return e, boot
+}
+
+// The commit record cannot be written at all (fails before the rename):
+// Commit fails, and the restart, which finds the plan without a record,
+// rolls back.
+func TestBootRestoreCommitRecordWriteFails(t *testing.T) {
+	e, boot := swappedEnv(t)
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "write ") && strings.HasSuffix(op, commitFileName) {
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	err := boot.Commit()
+	bootFault = nil
+	require.ErrorContains(t, err, "injected I/O error")
+	_, err = os.Stat(filepath.Join(e.dir, commitFileName))
+	require.True(t, os.IsNotExist(err))
+	restartRollsBack(t, e)
+}
+
+// The record was renamed into place but its directory sync failed: Commit
+// fails and withdraws the record, so the restart rolls back.
+func TestBootRestoreCommitRecordSyncFailsIsWithdrawn(t *testing.T) {
+	e, boot := swappedEnv(t)
+	failed := failSync("write")
+	err := boot.Commit()
+	bootFault = nil
+	require.True(t, *failed)
+	require.ErrorContains(t, err, "injected I/O error")
+	restartRollsBack(t, e)
+}
+
+// Same, but the record cannot be withdrawn either: the restart finds the
+// record, confirms it on disk and finishes the commit (the dashboard had not
+// served anything, so the restored data is complete and consistent). If the
+// record could not be confirmed on disk, the start would refuse to run.
+func TestBootRestoreCommitRecordUnconfirmedAndNotWithdrawn(t *testing.T) {
+	e, boot := swappedEnv(t)
+	seenWrite := false
+	bootFault = func(op string) error {
+		switch {
+		case strings.HasPrefix(op, "write ") && strings.HasSuffix(op, commitFileName):
+			seenWrite = true
+		case seenWrite && strings.HasPrefix(op, "sync "):
+			seenWrite = false
+			return errors.New("injected I/O error")
+		case op == "withdraw commit":
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	err := boot.Commit()
+	require.ErrorContains(t, err, "injected I/O error")
+
+	// While the record cannot be confirmed on disk, no start proceeds.
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "sync ") {
+			return errors.New("injected I/O error")
+		}
+		return nil
+	}
+	_, err = BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.ErrorContains(t, err, "cannot confirm the commit record")
+	_, err = os.Stat(filepath.Join(e.dir, rollbackDirName, FileDatabase))
+	require.NoError(t, err, "the previous copies are kept")
+
+	restartKeepsRestore(t, e)
+}
+
+// The process dies after the commit record is on disk, before the plan is
+// removed (the interruption right around the removal): the restart
+// finishes the commit. Dying after the plan was removed but before the
+// record was: the restart removes the stale record and keeps the data.
+func TestBootRestoreCrashDuringCommitCleanup(t *testing.T) {
+	for _, op := range []string{"commit cleanup", "commit record cleanup"} {
+		t.Run(op, func(t *testing.T) {
+			e, boot := swappedEnv(t)
+			crashAt(op)
+			err := boot.Commit()
 			bootFault = nil
-			require.ErrorContains(t, err, "injected I/O error")
-			_, err = os.Stat(filepath.Join(e.dir, stateFileName))
-			require.NoError(t, err, "the plan is visible to the next start")
-
-			// The supervisor restarts the dashboard.
-			boot, err = BootRestore(e.confPath, e.dbPath)
-			require.NoError(t, err)
-			assert.False(t, boot.Applied())
-			assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath), "previous database incl. WAL data")
-			conf, err := os.ReadFile(e.confPath)
-			require.NoError(t, err)
-			assert.Contains(t, string(conf), "agent_secret_key: changed", "previous configuration")
-			r, err := readRestoreResult(e.dir)
-			require.NoError(t, err)
-			assert.Equal(t, "failed", r.Status)
-			assert.True(t, r.RolledBack)
-			assertOldDataAndNoRetry(t, e)
+			require.ErrorIs(t, err, errSimulatedCrash)
+			restartKeepsRestore(t, e)
 		})
 	}
+}
+
+// A crash before the commit record exists, and the plan was never removed:
+// the restart rolls back.
+func TestBootRestoreCrashBeforeCommitRecord(t *testing.T) {
+	e, boot := swappedEnv(t)
+	crashAt("commit")
+	require.ErrorIs(t, boot.Commit(), errSimulatedCrash)
+	bootFault = nil
+	restartRollsBack(t, e)
+}
+
+// The plan is removed only after the commit record: at no point does the
+// disk hold neither, so a missing plan never stands for an unknown commit.
+func TestBootRestorePlanRemovedOnlyAfterRecord(t *testing.T) {
+	e, boot := swappedEnv(t)
+	var order []string
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "write ") || op == "commit cleanup" {
+			order = append(order, op)
+		}
+		return nil
+	}
+	require.NoError(t, boot.Commit())
+	bootFault = nil
+	require.Len(t, order, 2, "%v", order) // record write, then plan removal
+	assert.True(t, strings.HasSuffix(order[0], commitFileName))
+	assert.Equal(t, "commit cleanup", order[1])
+	restartKeepsRestore(t, e)
 }
 
 // The rolled-back entries cannot be confirmed on disk: the plan stays, the
@@ -593,4 +709,21 @@ func TestBootRestoreRollbackSyncFailureKeepsPlan(t *testing.T) {
 	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
 	require.NoError(t, err, "the plan is kept")
 	assertOldDataAndNoRetry(t, e)
+}
+
+// A crash before the plan file exists: nothing was moved and the request is
+// still pending, so the next start simply applies the restore.
+func TestBootRestoreCrashBeforePlanWrittenRetries(t *testing.T) {
+	e := stageRestore(t)
+	crashAt("write")
+	_, err := BootRestore(e.confPath, e.dbPath)
+	bootFault = nil
+	require.ErrorIs(t, err, errSimulatedCrash)
+	_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+	require.True(t, os.IsNotExist(err))
+	assert.Equal(t, []string{"beta", "gamma"}, serverNames(t, e.dbPath), "nothing moved")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.True(t, boot.Applied())
+	assert.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath))
 }

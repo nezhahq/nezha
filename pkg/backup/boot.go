@@ -47,6 +47,8 @@ type swapStep struct {
 // rollback, or before Commit) is rolled back by the next start. Every step
 // is idempotent and can be repeated after an interruption.
 type restoreState struct {
+	// ID ties a commit record to this plan.
+	ID        string     `json:"id"`
 	Name      string     `json:"name"`
 	SHA256    string     `json:"sha256"`
 	AppliedAt time.Time  `json:"applied_at"`
@@ -125,8 +127,21 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 			return nil, fmt.Errorf("restore: unreadable %s, refusing to start: %w", statePath, err)
 		}
 		b.state = &st
-		// That restore failed: make sure it can never be tried again before
-		// the plan that describes the rollback goes away.
+		committed, err := readCommitRecord(dataDir, st.ID)
+		if err != nil {
+			return nil, err
+		}
+		if committed {
+			// The previous start committed the restore (the record is on
+			// disk, confirmed above) but did not finish removing the plan.
+			if err := b.finishCommit(); err != nil {
+				return nil, err
+			}
+			break
+		}
+		// No commit record: the restore was never committed, whatever
+		// else happened. Make sure it can never be tried again before the
+		// plan that describes the rollback goes away.
 		if err := removeDurably(pendingDir); err != nil {
 			return nil, fmt.Errorf("restore: cannot invalidate the pending restore, refusing to start: %w", err)
 		}
@@ -135,6 +150,12 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		}
 	case !os.IsNotExist(err):
 		return nil, fmt.Errorf("restore: cannot read %s, refusing to start: %w", statePath, err)
+	default:
+		// No plan: a commit record can only be left over from a commit
+		// whose plan was already removed.
+		if err := removeCommitRecord(dataDir); err != nil {
+			return nil, err
+		}
 	}
 
 	data, err = os.ReadFile(filepath.Join(pendingDir, pendingFileName)) // #nosec G304 -- data directory
@@ -203,7 +224,16 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	// -journal / -wal / -shm files belong to the old database: left in
 	// place, SQLite could replay them onto the restored one; moved with it,
 	// the old database keeps every committed transaction.
-	st := &restoreState{Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
+	planID, err := randomHex(16)
+	if err != nil {
+		return nil, err
+	}
+	// A commit record left from an earlier restore must not be mistaken
+	// for this one (it carries another plan id, but remove it anyway).
+	if err := removeCommitRecord(dataDir); err != nil {
+		return nil, err
+	}
+	st := &restoreState{ID: planID, Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
 	var planErr error
 	plan := func(path, rollbackName, staged string) {
 		step := swapStep{Path: path, Staged: staged}
@@ -227,7 +257,10 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 		return nil, fmt.Errorf("restore: cannot inspect the current data, refusing to start: %w", planErr)
 	}
 	if err := writeState(statePath, st); err != nil {
-		return nil, err
+		// Nothing has moved. Keep the request: if the plan is not there the
+		// next start tries again, if it is the next start rolls back.
+		crashed = true
+		return nil, fmt.Errorf("restore: cannot write the restore plan, refusing to start: %w", err)
 	}
 	b.state = st
 	// From here on the plan alone describes this restore: invalidate the
@@ -323,6 +356,9 @@ func removeDurably(path string) error {
 // writeFileDurable replaces path with data (fsynced) and syncs the parent
 // directory, so that the new file is on disk once it returns.
 func writeFileDurable(path string, data []byte) error {
+	if err := fault("write " + path); err != nil {
+		return err
+	}
 	if err := writeFileAtomic(path, data); err != nil {
 		return err
 	}
@@ -385,11 +421,45 @@ func writeState(path string, st *restoreState) error {
 	return writeFileDurable(path, data)
 }
 
+type commitRecord struct {
+	ID          string    `json:"id"`
+	CommittedAt time.Time `json:"committed_at"`
+}
+
+// readCommitRecord reports whether a commit record for plan id exists and
+// is on disk. A record whose durability cannot be confirmed, or that cannot
+// be read, stops the start: the outcome of the commit is unknown.
+func readCommitRecord(dataDir, id string) (bool, error) {
+	path := filepath.Join(dataDir, commitFileName)
+	data, err := os.ReadFile(path) // #nosec G304 -- data directory
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("restore: cannot read %s, refusing to start: %w", commitFileName, err)
+	}
+	var rec commitRecord
+	if err := json.Unmarshal(data, &rec); err != nil {
+		return false, fmt.Errorf("restore: unreadable %s, refusing to start: %w", commitFileName, err)
+	}
+	if rec.ID != id {
+		return false, nil // left over from another restore
+	}
+	if err := syncDir(dataDir); err != nil {
+		return false, fmt.Errorf("restore: cannot confirm the commit record on disk, refusing to start: %w", err)
+	}
+	return true, nil
+}
+
 // Commit records a restore whose start succeeded. Call it only once the
-// dashboard is ready to serve (database, listeners, TLS). If the plan cannot
-// be removed, the dashboard must not start: the next start would otherwise
-// roll back over data written in the meantime. The plan stays, so the next
-// start rolls the restore back instead.
+// dashboard is ready to serve (database, listeners, TLS).
+//
+// The restore counts as committed exactly when a commit record carrying the
+// plan's id is on disk; the plan is only removed after that. A start that
+// finds the plan without a matching record therefore always rolls back, and
+// a start that finds both finishes the commit. If the record cannot be
+// written and confirmed, Commit fails, the dashboard must not serve, and
+// the next start rolls back.
 func (b *Boot) Commit() error {
 	if !b.Applied() {
 		return nil
@@ -397,27 +467,57 @@ func (b *Boot) Commit() error {
 	if err := fault("commit"); err != nil {
 		return err
 	}
-	statePath := filepath.Join(b.dataDir, stateFileName)
-	// Check first that the directory can be synced at all, while the plan
-	// is still untouched: a failure here leaves everything for the next
-	// start to roll back.
-	if err := syncDir(b.dataDir); err != nil {
-		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
+	commitPath := filepath.Join(b.dataDir, commitFileName)
+	data, err := json.Marshal(commitRecord{ID: b.state.ID, CommittedAt: time.Now().UTC()})
+	if err != nil {
+		return err
 	}
-	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
-	}
-	if err := syncDir(b.dataDir); err != nil {
-		// The removal is not confirmed on disk, but it is visible to this
-		// system: a supervisor restart would keep the restored data and skip
-		// the rollback. Put the plan back so that the next start, whatever
-		// survives, rolls the restore back.
-		if werr := writeState(statePath, b.state); werr != nil {
-			if _, serr := os.Stat(statePath); serr != nil {
-				return fmt.Errorf("restore: cannot record the restore as committed (%v) and cannot restore the plan: %w", err, werr)
+	if err := writeFileDurable(commitPath, data); err != nil {
+		// Not confirmed on disk. Withdraw the record if it became visible,
+		// so that the next start rolls back; if that fails too, the next
+		// start finds a record it can only use after confirming it on disk.
+		if uerr := fault("withdraw commit"); uerr == nil {
+			uerr = os.Remove(commitPath)
+			if uerr != nil && !os.IsNotExist(uerr) {
+				log.Printf("NEZHA>> restore: cannot withdraw the unconfirmed commit record: %v", uerr)
 			}
 		}
 		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
+	}
+	// Committed. What follows is cleanup; the next start repeats it if it
+	// is interrupted.
+	if err := b.finishCommit(); err != nil {
+		if errors.Is(err, errSimulatedCrash) {
+			return err
+		}
+		log.Printf("NEZHA>> restore: committed, cleanup continues at the next start: %v", err)
+		b.state = nil
+	}
+	return nil
+}
+
+// removeCommitRecord removes a commit record that does not belong to the
+// current plan, if there is one.
+func removeCommitRecord(dataDir string) error {
+	path := filepath.Join(dataDir, commitFileName)
+	if _, err := os.Lstat(path); os.IsNotExist(err) {
+		return nil
+	}
+	if err := removeDurably(path); err != nil {
+		return fmt.Errorf("restore: cannot remove an old commit record, refusing to start: %w", err)
+	}
+	return nil
+}
+
+// finishCommit removes the plan of a committed restore, records the result
+// and removes the commit record. The previous files are removed at the next
+// start that finds no plan.
+func (b *Boot) finishCommit() error {
+	if err := fault("commit cleanup"); err != nil {
+		return err
+	}
+	if err := removeDurably(filepath.Join(b.dataDir, stateFileName)); err != nil {
+		return fmt.Errorf("restore: committed, but cannot remove the plan: %w", err)
 	}
 	writeRestoreResult(b.dataDir, RestoreResult{
 		Status: "success", Name: b.state.Name, SHA256: b.state.SHA256,
@@ -425,6 +525,10 @@ func (b *Boot) Commit() error {
 	})
 	log.Printf("NEZHA>> restore: dashboard started with backup %s", b.state.Name)
 	b.state = nil
+	if err := fault("commit record cleanup"); err != nil {
+		return err
+	}
+	_ = removeDurably(filepath.Join(b.dataDir, commitFileName))
 	return nil
 }
 
