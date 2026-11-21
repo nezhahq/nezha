@@ -397,7 +397,26 @@ func (b *Boot) Commit() error {
 	if err := fault("commit"); err != nil {
 		return err
 	}
-	if err := removeDurably(filepath.Join(b.dataDir, stateFileName)); err != nil {
+	statePath := filepath.Join(b.dataDir, stateFileName)
+	// Check first that the directory can be synced at all, while the plan
+	// is still untouched: a failure here leaves everything for the next
+	// start to roll back.
+	if err := syncDir(b.dataDir); err != nil {
+		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
+	}
+	if err := os.Remove(statePath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
+	}
+	if err := syncDir(b.dataDir); err != nil {
+		// The removal is not confirmed on disk, but it is visible to this
+		// system: a supervisor restart would keep the restored data and skip
+		// the rollback. Put the plan back so that the next start, whatever
+		// survives, rolls the restore back.
+		if werr := writeState(statePath, b.state); werr != nil {
+			if _, serr := os.Stat(statePath); serr != nil {
+				return fmt.Errorf("restore: cannot record the restore as committed (%v) and cannot restore the plan: %w", err, werr)
+			}
+		}
 		return fmt.Errorf("restore: cannot record the restore as committed: %w", err)
 	}
 	writeRestoreResult(b.dataDir, RestoreResult{

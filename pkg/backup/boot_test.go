@@ -523,22 +523,59 @@ func TestBootRestoreRefusesWhenSwapSyncFails(t *testing.T) {
 	assertOldDataAndNoRetry(t, e)
 }
 
-// Commit cannot confirm the plan's removal: it fails (the dashboard does
-// not serve); the next start rolls back.
-func TestBootRestoreCommitSyncFailureStopsStartup(t *testing.T) {
-	e := stageRestore(t)
-	addWALOnlyRow(t, e.dbPath, "delta")
-	boot, err := BootRestore(e.confPath, e.dbPath)
-	require.NoError(t, err)
-	failed := failSync("commit")
-	err = boot.Commit()
-	bootFault = nil
-	require.True(t, *failed)
-	require.ErrorContains(t, err, "injected I/O error")
-	assert.True(t, boot.Applied())
-	r, _ := readRestoreResult(e.dir)
-	if r != nil {
-		assert.NotEqual(t, "success", r.Status, "a commit that is not on disk is not reported as a success")
+// Commit cannot confirm the plan's removal on disk, whichever directory
+// sync fails: Commit fails (the dashboard does not serve) and the next start
+// (a supervisor restart) rolls back to the previous database, including its
+// WAL data, and the previous configuration, and records a rolled-back
+// failure.
+func TestBootRestoreCommitSyncFailureRollsBackOnRestart(t *testing.T) {
+	cases := map[string]func(op string, n int) bool{
+		"before the plan is removed":               func(op string, n int) bool { return n == 1 },
+		"after the plan is removed":                func(op string, n int) bool { return n == 2 },
+		"after removal, and putting the plan back": func(op string, n int) bool { return n >= 2 },
+	}
+	for label, fail := range cases {
+		t.Run(label, func(t *testing.T) {
+			e := stageRestore(t)
+			addWALOnlyRow(t, e.dbPath, "delta")
+			boot, err := BootRestore(e.confPath, e.dbPath)
+			require.NoError(t, err)
+			require.Equal(t, []string{"alpha", "beta"}, serverNames(t, e.dbPath), "restored data in place")
+
+			committing, syncs := false, 0
+			bootFault = func(op string) error {
+				if op == "commit" {
+					committing = true
+					return nil
+				}
+				if committing && strings.HasPrefix(op, "sync ") {
+					syncs++
+					if fail(op, syncs) {
+						return errors.New("injected I/O error")
+					}
+				}
+				return nil
+			}
+			err = boot.Commit()
+			bootFault = nil
+			require.ErrorContains(t, err, "injected I/O error")
+			_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+			require.NoError(t, err, "the plan is visible to the next start")
+
+			// The supervisor restarts the dashboard.
+			boot, err = BootRestore(e.confPath, e.dbPath)
+			require.NoError(t, err)
+			assert.False(t, boot.Applied())
+			assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath), "previous database incl. WAL data")
+			conf, err := os.ReadFile(e.confPath)
+			require.NoError(t, err)
+			assert.Contains(t, string(conf), "agent_secret_key: changed", "previous configuration")
+			r, err := readRestoreResult(e.dir)
+			require.NoError(t, err)
+			assert.Equal(t, "failed", r.Status)
+			assert.True(t, r.RolledBack)
+			assertOldDataAndNoRetry(t, e)
+		})
 	}
 }
 
