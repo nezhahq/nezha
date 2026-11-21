@@ -20,14 +20,15 @@ const MinPasswordLength = 12
 const maxPasswordLength = 1024
 
 // ScryptWorkFactor is the scrypt cost (log2 N) used to wrap the private key
-// with the backup password. 16 costs about 64 MiB and a fraction of a second,
-// which keeps restores possible on small VPS instances while still making
-// every offline password guess expensive. Tests lower it.
-var ScryptWorkFactor = 16
+// with the backup password: 18 is age's default (about 256 MiB and a second
+// per attempt), which makes every offline password guess expensive. Tests
+// lower it.
+var ScryptWorkFactor = 18
 
 // maxScryptWorkFactor bounds the cost accepted when unwrapping, so a crafted
-// backup header cannot make the dashboard allocate gigabytes for scrypt.
-const maxScryptWorkFactor = 20
+// backup header cannot make the dashboard allocate more memory than its own
+// backups need.
+const maxScryptWorkFactor = 18
 
 var (
 	ErrPasswordTooShort   = errors.New("backup password must be at least 12 characters")

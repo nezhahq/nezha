@@ -187,17 +187,23 @@ func TestParseEndpoint(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://abc.r2.cloudflarestorage.com": "abc.r2.cloudflarestorage.com",
 		"https://s3.example.com:8443/":         "s3.example.com:8443",
-		"http://127.0.0.1:9000":                "127.0.0.1:9000",
-		"http://localhost:9000":                "localhost:9000",
-		"http://[::1]:9000":                    "[::1]:9000",
+		"https://127.0.0.1:9000":               "127.0.0.1:9000",
 	} {
-		host, _, err := ParseEndpoint(in)
+		host, _, err := ParseEndpoint(in, false)
 		require.NoError(t, err, in)
 		assert.Equal(t, want, host)
 	}
-	for _, bad := range []string{"", "s3.example.com", "http://s3.example.com", "http://10.0.0.1:9000", "https://u:p@s3.example.com",
-		"https://s3.example.com/bucket", "https://s3.example.com?x=1", "ftp://s3.example.com"} {
-		_, _, err := ParseEndpoint(bad)
+	for _, bad := range []string{"", "s3.example.com", "http://s3.example.com", "http://127.0.0.1:9000", "http://localhost:9000",
+		"https://u:p@s3.example.com", "https://s3.example.com/bucket", "https://s3.example.com?x=1", "ftp://s3.example.com"} {
+		_, _, err := ParseEndpoint(bad, false)
 		assert.Error(t, err, bad)
 	}
+	// Test-only: plain http to a loopback MinIO.
+	for _, in := range []string{"http://127.0.0.1:9000", "http://localhost:9000", "http://[::1]:9000"} {
+		_, secure, err := ParseEndpoint(in, true)
+		require.NoError(t, err, in)
+		assert.False(t, secure)
+	}
+	_, _, err := ParseEndpoint("http://10.0.0.1:9000", true)
+	assert.Error(t, err, "only loopback addresses may use http even in tests")
 }

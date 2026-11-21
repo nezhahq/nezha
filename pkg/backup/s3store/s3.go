@@ -39,6 +39,8 @@ type Config struct {
 	SecretAccessKey string
 	// Transport overrides the HTTP transport (tests).
 	Transport http.RoundTripper
+	// AllowLoopbackHTTP accepts http:// to a loopback address (tests only).
+	AllowLoopbackHTTP bool
 }
 
 // Store reads and writes objects of one bucket.
@@ -48,9 +50,10 @@ type Store struct {
 }
 
 // ParseEndpoint validates an endpoint URL and returns its host[:port] and
-// whether TLS is used. HTTPS is required; plain HTTP is accepted only for
-// loopback addresses (a local MinIO for development or tests).
-func ParseEndpoint(endpoint string) (host string, secure bool, err error) {
+// whether TLS is used. HTTPS is required. allowLoopbackHTTP additionally
+// accepts plain HTTP to a loopback address; it exists for integration tests
+// against a local MinIO and is never set from configuration.
+func ParseEndpoint(endpoint string, allowLoopbackHTTP bool) (host string, secure bool, err error) {
 	u, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || u.Host == "" || u.Opaque != "" {
 		return "", false, errors.New("endpoint must be an absolute URL such as https://s3.example.com")
@@ -58,14 +61,11 @@ func ParseEndpoint(endpoint string) (host string, secure bool, err error) {
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return "", false, errors.New("endpoint must not contain credentials, a path, a query or a fragment")
 	}
-	switch u.Scheme {
-	case "https":
+	switch {
+	case u.Scheme == "https":
 		return u.Host, true, nil
-	case "http":
-		if isLoopback(u.Hostname()) {
-			return u.Host, false, nil
-		}
-		return "", false, errors.New("endpoint must use https:// (plain http is only allowed for loopback addresses)")
+	case u.Scheme == "http" && allowLoopbackHTTP && isLoopback(u.Hostname()):
+		return u.Host, false, nil
 	default:
 		return "", false, errors.New("endpoint must use https://")
 	}
@@ -81,7 +81,7 @@ func isLoopback(host string) bool {
 
 // New returns a Store for cfg. It does not contact the server.
 func New(cfg Config) (*Store, error) {
-	host, secure, err := ParseEndpoint(cfg.Endpoint)
+	host, secure, err := ParseEndpoint(cfg.Endpoint, cfg.AllowLoopbackHTTP)
 	if err != nil {
 		return nil, err
 	}

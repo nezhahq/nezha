@@ -31,7 +31,10 @@ func TestS3Integration(t *testing.T) {
 
 	e := newTestEnv(t)
 	pathStyle := os.Getenv("NZ_TEST_S3_PATH_STYLE") != "false"
-	e.m.opts.NewStorage = newS3Storage
+	// The test MinIO listens on plain http on loopback; production never
+	// allows that.
+	e.m.opts.AllowLoopbackHTTP = true
+	e.m.opts.NewStorage = func(s S3Settings) (Storage, error) { return newS3Storage(s, true) }
 	_, err = e.m.UpdateConfig(ConfigUpdate{S3: &S3Update{
 		Endpoint: str(endpoint), Bucket: str(os.Getenv("NZ_TEST_S3_BUCKET")), Region: str(region), Prefix: str(prefix),
 		UsePathStyle: &pathStyle, AccessKeyID: str(os.Getenv("NZ_TEST_S3_ACCESS_KEY_ID")), SecretAccessKey: str(os.Getenv("NZ_TEST_S3_SECRET_ACCESS_KEY")),
@@ -43,7 +46,7 @@ func TestS3Integration(t *testing.T) {
 	t.Cleanup(func() {
 		// The manager refuses work after Apply; clean up through the storage.
 		s, _ := e.m.effective()
-		st, err := newS3Storage(s.S3)
+		st, err := newS3Storage(s.S3, true)
 		if err != nil {
 			return
 		}

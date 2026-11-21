@@ -11,8 +11,10 @@ import (
 // s3Storage adapts s3store.Store to Storage.
 type s3Storage struct{ s *s3store.Store }
 
-func newS3Storage(s S3Settings) (Storage, error) {
-	st, err := s3store.New(s.storeConfig())
+func newS3Storage(s S3Settings, allowLoopbackHTTP bool) (Storage, error) {
+	cfg := s.storeConfig()
+	cfg.AllowLoopbackHTTP = allowLoopbackHTTP
+	st, err := s3store.New(cfg)
 	if err != nil {
 		return nil, err
 	}
