@@ -173,10 +173,8 @@ func main() {
 		}); err != nil {
 		// Put the previous data back so that the next start (by the
 		// supervisor) runs with it; the failure is shown after login.
-		restoreBoot.Rollback(err)
-		log.Fatal(err)
+		log.Fatal(finishRestoreStartup(restoreBoot, err))
 	}
-	restoreBoot.Commit()
 
 	// Applying a restore shuts the dashboard down gracefully and exits with
 	// a non-zero status, so that restart policies limited to failures
@@ -192,12 +190,23 @@ func main() {
 
 	l, err := openDashboardListener("tcp", dashboardListenerAddress(singleton.Conf.ListenHost, singleton.Conf.ListenPort), dashboardHTTPListener)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal(finishRestoreStartup(restoreBoot, err))
 	}
 	receiptListener, err := openReceiptGateListener()
-	if err != nil {
-		log.Fatal(err)
+	if err == nil {
+		err = checkHTTPSReady(fmt.Sprintf("%s:%d", singleton.Conf.ListenHost, singleton.Conf.HTTPS.ListenPort),
+			singleton.Conf.HTTPS.ListenPort, singleton.Conf.HTTPS.TLSCertPath, singleton.Conf.HTTPS.TLSKeyPath)
 	}
+	if err != nil {
+		_ = l.Close()
+		if receiptListener != nil {
+			_ = receiptListener.Close()
+		}
+		log.Fatal(finishRestoreStartup(restoreBoot, err))
+	}
+	// Database, configuration and listeners of a restored backup are good:
+	// record the restore as successful.
+	_ = finishRestoreStartup(restoreBoot, nil)
 	if receiptListener != nil {
 		defer receiptListener.Close()
 		rpc.SetReceiptGateListener(receiptListener)

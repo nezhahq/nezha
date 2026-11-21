@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -160,4 +161,150 @@ func TestBootRestoreWithMemoryDatabase(t *testing.T) {
 	_, err = NewManager(Options{DataDir: ""})
 	require.ErrorIs(t, err, ErrDisabled)
 	_ = context.Background()
+}
+
+// addWALOnlyRow commits a row that exists only in the -wal file of the
+// database at dbPath (as after a crash, before any checkpoint).
+func addWALOnlyRow(t *testing.T, dbPath, name string) {
+	t.Helper()
+	db, err := sql.Open("sqlite3", dbPath)
+	require.NoError(t, err)
+	db.SetMaxOpenConns(1)
+	for _, stmt := range []string{"PRAGMA journal_mode=WAL", "PRAGMA wal_autocheckpoint=0"} {
+		_, err := db.Exec(stmt)
+		require.NoError(t, err)
+	}
+	_, err = db.Exec("INSERT INTO servers (name) VALUES (?)", name)
+	require.NoError(t, err)
+	main, err := os.ReadFile(dbPath)
+	require.NoError(t, err)
+	wal, err := os.ReadFile(dbPath + "-wal")
+	require.NoError(t, err)
+	require.NotEmpty(t, wal)
+	require.NoError(t, db.Close()) // checkpoints; put the pre-checkpoint files back
+	require.NoError(t, os.WriteFile(dbPath, main, 0600))
+	require.NoError(t, os.WriteFile(dbPath+"-wal", wal, 0600))
+	_ = os.Remove(dbPath + "-shm")
+	// Without its WAL the database does not have the row.
+	bare := filepath.Join(t.TempDir(), "bare.db")
+	require.NoError(t, os.WriteFile(bare, main, 0600))
+	require.NotContains(t, serverNames(t, bare), name)
+}
+
+// countBootOps returns the file operations of one complete swap.
+func countBootOps(t *testing.T) []string {
+	t.Helper()
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	var ops []string
+	bootFault = func(op string) error { ops = append(ops, op); return nil }
+	defer func() { bootFault = nil }()
+	_, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	return ops
+}
+
+// A start that dies at any point of the swap is rolled back by the next
+// start, and the previous database keeps the transactions committed only in
+// its WAL.
+func TestBootRestoreCrashDuringSwapKeepsOldData(t *testing.T) {
+	ops := countBootOps(t)
+	require.GreaterOrEqual(t, len(ops), 4, "%v", ops)
+	for i := range ops {
+		t.Run(ops[i], func(t *testing.T) {
+			e := stageRestore(t)
+			addWALOnlyRow(t, e.dbPath, "delta")
+			n := 0
+			bootFault = func(string) error {
+				if n == i {
+					return errSimulatedCrash
+				}
+				n++
+				return nil
+			}
+			_, err := BootRestore(e.confPath, e.dbPath)
+			bootFault = nil
+			require.ErrorIs(t, err, errSimulatedCrash)
+
+			boot, err := BootRestore(e.confPath, e.dbPath)
+			require.NoError(t, err)
+			assert.False(t, boot.Applied())
+			assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath), "old data incl. its WAL")
+			conf, _ := os.ReadFile(e.confPath)
+			assert.Contains(t, string(conf), "agent_secret_key: changed")
+			r, err := readRestoreResult(e.dir)
+			require.NoError(t, err)
+			assert.Equal(t, "failed", r.Status)
+			assert.True(t, r.RolledBack)
+			_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+			assert.True(t, os.IsNotExist(err))
+			_, err = os.Stat(filepath.Join(e.dir, pendingDirName))
+			assert.True(t, os.IsNotExist(err), "a failed restore is not retried")
+		})
+	}
+}
+
+// A rollback that dies half-way is finished by the next start.
+func TestBootRestoreCrashDuringRollbackKeepsOldData(t *testing.T) {
+	ops := countBootOps(t)
+	for k := range ops { // rollback has one operation per planned path at most
+		t.Run(ops[k], func(t *testing.T) {
+			e := stageRestore(t)
+			addWALOnlyRow(t, e.dbPath, "delta")
+			boot, err := BootRestore(e.confPath, e.dbPath)
+			require.NoError(t, err)
+			require.True(t, boot.Applied())
+			// The restored database created its own WAL before startup failed.
+			require.NoError(t, os.WriteFile(e.dbPath+"-wal", []byte("restored wal"), 0600))
+
+			n := 0
+			bootFault = func(op string) error {
+				if !strings.HasPrefix(op, "rollback ") {
+					return nil
+				}
+				if n == k {
+					return errSimulatedCrash
+				}
+				n++
+				return nil
+			}
+			boot.Rollback(errors.New("listener failed"))
+			bootFault = nil
+
+			boot, err = BootRestore(e.confPath, e.dbPath)
+			require.NoError(t, err)
+			assert.False(t, boot.Applied())
+			assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath))
+			conf, _ := os.ReadFile(e.confPath)
+			assert.Contains(t, string(conf), "agent_secret_key: changed")
+			_, err = os.Stat(filepath.Join(e.dir, stateFileName))
+			assert.True(t, os.IsNotExist(err))
+		})
+	}
+}
+
+// A rollback that cannot finish keeps the plan and the kept copies, and
+// the next start refuses to run on the mixed data until it can finish.
+func TestBootRestoreRollbackFailureIsRetried(t *testing.T) {
+	e := stageRestore(t)
+	addWALOnlyRow(t, e.dbPath, "delta")
+	boot, err := BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	bootFault = func(op string) error {
+		if strings.HasPrefix(op, "rollback ") {
+			return errors.New("disk busy")
+		}
+		return nil
+	}
+	boot.Rollback(errors.New("listener failed"))
+	_, err = BootRestore(e.confPath, e.dbPath)
+	require.Error(t, err, "do not start on half-restored data")
+	bootFault = nil
+	_, err = os.Stat(filepath.Join(e.dir, rollbackDirName, FileDatabase))
+	require.NoError(t, err, "the previous database is kept until the rollback succeeds")
+
+	boot, err = BootRestore(e.confPath, e.dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	assert.Equal(t, []string{"beta", "gamma", "delta"}, serverNames(t, e.dbPath))
 }

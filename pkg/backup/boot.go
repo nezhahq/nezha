@@ -33,20 +33,39 @@ type RestoreResult struct {
 	Error      string    `json:"error,omitempty"`
 }
 
-type movedFile struct {
-	Original string `json:"original"`
-	Rollback string `json:"rollback"`
-	Restored bool   `json:"restored"` // a restored file now sits at Original
+// swapStep is one live path touched by a restore. Rollback is where the
+// previous file is kept ("" if the path did not exist before the restore);
+// Staged is the verified file installed at Path ("" for SQLite sidecars).
+type swapStep struct {
+	Path     string `json:"path"`
+	Rollback string `json:"rollback,omitempty"`
+	Staged   string `json:"staged,omitempty"`
 }
 
-// restoreState is written right after the files are swapped. If the process
-// dies before Commit, the next start finds it and puts the old files back.
+// restoreState is the swap plan. It is written before the first file is
+// moved, so that a start that dies at any point (during the swap, during a
+// rollback, or before Commit) is rolled back by the next start. Every step
+// is idempotent and can be repeated after an interruption.
 type restoreState struct {
-	DBPath    string      `json:"db_path"`
-	Name      string      `json:"name"`
-	SHA256    string      `json:"sha256"`
-	AppliedAt time.Time   `json:"applied_at"`
-	Moved     []movedFile `json:"moved"`
+	Name      string     `json:"name"`
+	SHA256    string     `json:"sha256"`
+	AppliedAt time.Time  `json:"applied_at"`
+	Steps     []swapStep `json:"steps"`
+}
+
+// errSimulatedCrash is returned by bootFault in tests to stop BootRestore
+// as if the process died at that point.
+var errSimulatedCrash = errors.New("simulated crash")
+
+// bootFault, when set (tests only), is called before every file operation of
+// a swap or rollback; returning errSimulatedCrash aborts like a crash.
+var bootFault func(op string) error
+
+func fault(op string) error {
+	if bootFault != nil {
+		return bootFault(op)
+	}
+	return nil
 }
 
 // Boot is a restore applied during this start.
@@ -95,17 +114,22 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	b := &Boot{dataDir: dataDir}
 	statePath := filepath.Join(dataDir, stateFileName)
 
+	pendingDir := filepath.Join(dataDir, pendingDirName)
 	if data, err := os.ReadFile(statePath); err == nil { // #nosec G304 -- data directory
 		var st restoreState
-		if json.Unmarshal(data, &st) == nil {
-			b.state = &st
-			b.rollback(errors.New("the dashboard did not start with the restored data"))
-		} else {
-			_ = os.Remove(statePath)
+		if err := json.Unmarshal(data, &st); err != nil {
+			// Never guess: starting on a half-swapped data directory could
+			// lose data. The operator has to look at it.
+			return nil, fmt.Errorf("restore: unreadable %s, refusing to start: %w", statePath, err)
 		}
+		b.state = &st
+		if err := b.rollback(errors.New("the dashboard did not start with the restored data")); err != nil {
+			return nil, err
+		}
+		// That restore failed; do not try it again.
+		_ = os.RemoveAll(pendingDir)
 	}
 
-	pendingDir := filepath.Join(dataDir, pendingDirName)
 	data, err := os.ReadFile(filepath.Join(pendingDir, pendingFileName)) // #nosec G304 -- data directory
 	if os.IsNotExist(err) {
 		// No restore pending: drop staging leftovers and the copy of the data
@@ -161,58 +185,77 @@ func BootRestore(configPath, dbDSN string) (*Boot, error) {
 	if err := os.MkdirAll(rollbackDir, 0700); err != nil {
 		return nil, err
 	}
-	st := &restoreState{DBPath: dbPath, Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
+	// Plan every step and persist the plan before anything is moved. The
+	// -journal / -wal / -shm files belong to the old database: left in
+	// place, SQLite could replay them onto the restored one; moved with it,
+	// the old database keeps every committed transaction.
+	st := &restoreState{Name: p.Name, SHA256: p.SHA256, AppliedAt: result.AppliedAt}
+	plan := func(path, rollbackName, staged string) {
+		step := swapStep{Path: path, Staged: staged}
+		if _, err := os.Lstat(path); err == nil {
+			step.Rollback = filepath.Join(rollbackDir, rollbackName)
+		}
+		st.Steps = append(st.Steps, step)
+	}
+	for _, suffix := range []string{"-journal", "-wal", "-shm"} {
+		plan(dbPath+suffix, FileDatabase+suffix, "")
+	}
+	plan(dbPath, FileDatabase, filepath.Join(staged, FileDatabase))
+	if _, ok := p.Files[FileConfig]; ok {
+		plan(configPath, FileConfig, filepath.Join(staged, FileConfig))
+	}
+	if err := writeState(statePath, st); err != nil {
+		return nil, err
+	}
 	b.state = st
-	// Move the current files aside. The -journal / -wal / -shm files belong
-	// to the old database: left in place, SQLite could replay them onto the
-	// restored one and corrupt it.
-	move := func(original, name string) error {
-		if _, err := os.Lstat(original); os.IsNotExist(err) {
-			return nil
+
+	swap := func() error {
+		for _, step := range st.Steps {
+			if step.Rollback != "" {
+				if err := fault("aside " + step.Path); err != nil {
+					return err
+				}
+				if err := moveOnce(step.Path, step.Rollback); err != nil {
+					return err
+				}
+			}
 		}
-		dst := filepath.Join(rollbackDir, name)
-		if err := moveFile(original, dst); err != nil {
-			return err
+		for _, step := range st.Steps {
+			if step.Staged != "" {
+				if err := fault("install " + step.Path); err != nil {
+					return err
+				}
+				if err := moveOnce(step.Staged, step.Path); err != nil {
+					return err
+				}
+			}
 		}
-		st.Moved = append(st.Moved, movedFile{Original: original, Rollback: dst})
-		return writeState(statePath, st)
+		return nil
 	}
-	var swapErr error
-	for _, suffix := range []string{"", "-journal", "-wal", "-shm"} {
-		if swapErr = move(dbPath+suffix, FileDatabase+suffix); swapErr != nil {
-			break
+	if err := swap(); err != nil {
+		if errors.Is(err, errSimulatedCrash) {
+			return nil, err
 		}
-	}
-	if _, ok := p.Files[FileConfig]; ok && swapErr == nil {
-		swapErr = move(configPath, FileConfig)
-	}
-	for name := range p.Files {
-		if swapErr != nil {
-			break
+		if rerr := b.rollback(fmt.Errorf("swapping in the restored files failed: %w", err)); rerr != nil {
+			return nil, rerr
 		}
-		if swapErr = moveFile(filepath.Join(staged, name), targets[name]); swapErr == nil {
-			markRestored(st, targets[name])
-			swapErr = writeState(statePath, st)
-		}
-	}
-	if swapErr != nil {
-		b.rollback(fmt.Errorf("swapping in the restored files failed: %w", swapErr))
 		return b, nil
 	}
+	_ = os.RemoveAll(pendingDir)
 	log.Printf("NEZHA>> restore: swapped in backup %s; previous data kept in %s until the next successful start", p.Name, rollbackDir)
 	return b, nil
 }
 
-func markRestored(st *restoreState, original string) {
-	for i := range st.Moved {
-		if st.Moved[i].Original == original {
-			st.Moved[i].Restored = true
-			return
+// moveOnce moves src to dst unless that already happened (src gone, dst
+// present), so a swap step can be repeated after an interruption.
+func moveOnce(src, dst string) error {
+	if _, err := os.Lstat(src); os.IsNotExist(err) {
+		if _, err := os.Lstat(dst); err == nil {
+			return nil
 		}
+		return fmt.Errorf("%s is missing", src)
 	}
-	// The target did not exist before (e.g. no config.yaml): remember it so a
-	// rollback removes the restored file.
-	st.Moved = append(st.Moved, movedFile{Original: original, Restored: true})
+	return moveFile(src, dst)
 }
 
 func writeState(path string, st *restoreState) error {
@@ -223,7 +266,8 @@ func writeState(path string, st *restoreState) error {
 	return writeFileAtomic(path, data)
 }
 
-// Commit records a restore whose start succeeded.
+// Commit records a restore whose start succeeded. Call it only once the
+// dashboard is ready to serve (database, listeners, TLS).
 func (b *Boot) Commit() {
 	if !b.Applied() {
 		return
@@ -237,42 +281,51 @@ func (b *Boot) Commit() {
 	b.state = nil
 }
 
-// Rollback puts the previous files back after a failed start.
+// Rollback puts the previous files back after a failed start. If it cannot
+// finish, the plan stays on disk and the next start tries again.
 func (b *Boot) Rollback(cause error) {
 	if !b.Applied() {
 		return
 	}
-	b.rollback(cause)
+	_ = b.rollback(cause)
 }
 
-func (b *Boot) rollback(cause error) {
+// rollback undoes the plan in reverse order. It is idempotent:
+//   - a path that had a previous file: if the kept copy is in the rollback
+//     directory, whatever sits at the path now came from the restore and is
+//     replaced by it; otherwise the previous file was never moved (or is
+//     already back) and is left alone;
+//   - a path that did not exist before: anything there came from the
+//     restore (including journal files the restored database created) and
+//     is removed.
+//
+// The plan and the kept copies are removed only after every step succeeded.
+func (b *Boot) rollback(cause error) error {
 	st := b.state
 	var errs []error
-	// Journal files next to the database now belong to the restored
-	// database (it may have been opened); they must never be replayed onto
-	// the previous one. The previous database's own journal files, if any,
-	// are moved back from the rollback directory below.
-	if st.DBPath != "" {
-		for _, suffix := range []string{"-journal", "-wal", "-shm"} {
-			if err := os.Remove(st.DBPath + suffix); err != nil && !os.IsNotExist(err) {
-				errs = append(errs, err)
+	for i := len(st.Steps) - 1; i >= 0; i-- {
+		step := st.Steps[i]
+		if err := fault("rollback " + step.Path); err != nil {
+			if errors.Is(err, errSimulatedCrash) {
+				return err
 			}
-		}
-	}
-	for i := len(st.Moved) - 1; i >= 0; i-- {
-		mv := st.Moved[i]
-		if mv.Restored {
-			if err := os.Remove(mv.Original); err != nil && !os.IsNotExist(err) {
-				errs = append(errs, err)
-			}
-		}
-		if mv.Rollback == "" {
+			errs = append(errs, err)
 			continue
 		}
-		if _, err := os.Lstat(mv.Rollback); err != nil {
+		if step.Rollback == "" {
+			if err := os.Remove(step.Path); err != nil && !os.IsNotExist(err) {
+				errs = append(errs, err)
+			}
 			continue
 		}
-		if err := moveFile(mv.Rollback, mv.Original); err != nil {
+		if _, err := os.Lstat(step.Rollback); err != nil {
+			continue
+		}
+		if err := os.Remove(step.Path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, err)
+			continue
+		}
+		if err := moveFile(step.Rollback, step.Path); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -281,14 +334,17 @@ func (b *Boot) rollback(cause error) {
 		FinishedAt: time.Now().UTC(), RolledBack: len(errs) == 0, Error: cause.Error(),
 	}
 	if len(errs) > 0 {
-		result.Error = fmt.Sprintf("%v; rolling back failed: %v (previous data is in %s)", cause, errors.Join(errs...), filepath.Join(b.dataDir, rollbackDirName))
+		result.Error = fmt.Sprintf("%v; rolling back failed: %v (previous data is in %s; the next start retries)", cause, errors.Join(errs...), filepath.Join(b.dataDir, rollbackDirName))
 	}
 	writeRestoreResult(b.dataDir, result)
-	if len(errs) == 0 {
-		_ = os.Remove(filepath.Join(b.dataDir, stateFileName))
-	}
 	log.Printf("NEZHA>> restore: %s", result.Error)
+	if len(errs) > 0 {
+		return errors.New(result.Error)
+	}
+	_ = os.Remove(filepath.Join(b.dataDir, stateFileName))
+	_ = os.RemoveAll(filepath.Join(b.dataDir, rollbackDirName))
 	b.state = nil
+	return nil
 }
 
 // moveFile renames src to dst, copying when they are on different file systems.
@@ -301,7 +357,10 @@ func moveFile(src, dst string) error {
 		return err
 	}
 	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- dashboard data files
+	// Copy to a temporary name next to dst and rename it into place, so an
+	// interrupted copy never leaves a truncated file at dst.
+	tmp := dst + ".nezha-tmp"
+	out, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600) // #nosec G304 -- dashboard data files
 	if err != nil {
 		return err
 	}
@@ -312,7 +371,11 @@ func moveFile(src, dst string) error {
 	if cerr := out.Close(); err == nil {
 		err = cerr
 	}
+	if err == nil {
+		err = os.Rename(tmp, dst)
+	}
 	if err != nil {
+		_ = os.Remove(tmp)
 		return err
 	}
 	in.Close()
