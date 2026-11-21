@@ -295,6 +295,19 @@ func NewServerTransferClass() *ServerTransferClass {
 		if !ok || server == nil || server.GetUserID() != t.FromUserID {
 			continue
 		}
+		// 只有这台服务器最新的一条转移才可能还在等回滚确认。之后又发起过转移的话，
+		// 运行时在新转移登记、确认时已经把这条的推送和恢复记录清掉了；这里再装回来，
+		// agent 重连时就会被推送一份早已作废的回滚密钥，盖掉它现在持有的凭据。
+		var newerTransfers int64
+		if err := DB.Model(&model.ServerTransfer{}).
+			Where("server_id = ? AND id > ?", t.ServerID, t.ID).
+			Count(&newerTransfers).Error; err != nil {
+			log.Printf("NEZHA>> ServerTransferClass: failed to check for transfers newer than %d: %v", t.ID, err)
+			continue
+		}
+		if newerTransfers > 0 {
+			continue
+		}
 		c.revertDeliveries[t.ServerID] = &t
 		c.terminalSecretRecovery[t.ServerID] = &t
 	}

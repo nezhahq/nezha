@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/nezhahq/nezha/model"
 )
@@ -25,7 +26,25 @@ func ServerControlTransitioning(serverID uint64) bool {
 	}
 	transfer.mu.RLock()
 	defer transfer.mu.RUnlock()
-	return transfer.initiating[serverID] || transfer.pending[serverID] != nil || transfer.terminalSecretRecovery[serverID] != nil || transfer.revertDeliveries[serverID] != nil
+	return transfer.initiating[serverID] || transfer.pending[serverID] != nil ||
+		rollbackAwaitsAgentRotation(transfer.terminalSecretRecovery[serverID]) ||
+		rollbackAwaitsAgentRotation(transfer.revertDeliveries[serverID])
+}
+
+// rollbackAwaitsAgentRotation 判断一条已回滚的转移是否仍要求“等 agent 换回凭据”
+// 才放行对服务器的操作。两种情况不再等：
+//
+//   - 超过了恢复窗口。这两张表只在按密钥查找时才顺带清理过期项，没有人查的话
+//     记录会一直留着；只看“记录在不在”，来源用户就永远开不了自己服务器的终端。
+//   - 转移是以 Failed 结束的。Failed 只有两个来源：agent 版本太旧不认识这个任务，
+//     或 agent 明确回报拒绝（明文 gRPC、InsecureTLS、禁用命令执行时一律拒绝）。
+//     两种情况下 agent 都没有动过凭据，没有什么需要换回来的；而它对随后的回滚
+//     推送同样会拒绝，永远等不到确认。
+func rollbackAwaitsAgentRotation(t *model.ServerTransfer) bool {
+	if t == nil || t.Status == model.ServerTransferStatusFailed {
+		return false
+	}
+	return !t.UpdatedAt.Before(time.Now().Add(-defaultRevertDeliveryRecoveryWindow))
 }
 
 // ServerOwnershipSettled reports whether userID owns the server with no
