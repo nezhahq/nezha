@@ -27,6 +27,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/nezhahq/nezha/pkg/backup"
+	"github.com/nezhahq/nezha/service/singleton"
 )
 
 type memStore struct {
@@ -101,7 +102,7 @@ func readNames(t *testing.T, path string) []string {
 
 // stagedRestore backs up a data directory, changes it and applies the
 // backup, leaving a restore that the next start swaps in.
-func stagedRestore(t *testing.T) (dir, dbPath, confPath string) {
+func stagedRestore(t *testing.T, extraSQL ...string) (dir, dbPath, confPath string) {
 	t.Helper()
 	backup.ScryptWorkFactor = 10
 	dir = t.TempDir()
@@ -109,10 +110,10 @@ func stagedRestore(t *testing.T) (dir, dbPath, confPath string) {
 	require.NoError(t, os.WriteFile(confPath, []byte("listen_port: 8008\n"), 0600))
 	db, err := sql.Open("sqlite3", dbPath)
 	require.NoError(t, err)
-	for _, stmt := range []string{
+	for _, stmt := range append([]string{
 		"CREATE TABLE users (id INTEGER PRIMARY KEY, role INTEGER)", "INSERT INTO users VALUES (1, 0)",
 		"CREATE TABLE servers (id INTEGER PRIMARY KEY, name TEXT)", "INSERT INTO servers (name) VALUES ('old')",
-	} {
+	}, extraSQL...) {
 		_, err := db.Exec(stmt)
 		require.NoError(t, err)
 	}
@@ -309,4 +310,104 @@ func TestRestoreCommitFailureStopsStartup(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(t, boot.Applied())
 	assert.Equal(t, []string{"new"}, readNames(t, dbPath), "the uncommitted restore was rolled back")
+}
+
+// openRestoredDashboard runs the dashboard's own startup steps for the
+// configuration and the database on the restored files, as main does.
+func openRestoredDashboard(t *testing.T, confPath, dbPath string) error {
+	t.Helper()
+	oldDB, oldConf := singleton.DB, singleton.Conf
+	t.Cleanup(func() {
+		if singleton.DB != nil && singleton.DB != oldDB {
+			if sqlDB, err := singleton.DB.DB(); err == nil {
+				_ = sqlDB.Close()
+			}
+		}
+		singleton.DB, singleton.Conf = oldDB, oldConf
+	})
+	if err := singleton.InitFrontendTemplates(); err != nil {
+		return err
+	}
+	if err := singleton.InitConfigFromPath(confPath); err != nil {
+		return err
+	}
+	return singleton.InitDBFromPath(dbPath)
+}
+
+// A backup made by an older version: its database lacks most tables and
+// columns, and its config.yaml lacks most settings. The dashboard's normal
+// startup fills both in (AutoMigrate and configuration defaults), so the
+// restore commits like any upgrade from that version.
+func TestRestoreOldBackupIsUpgradedOnStartup(t *testing.T) {
+	_, dbPath, confPath := stagedRestore(t)
+	boot, err := backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	require.True(t, boot.Applied())
+
+	require.NoError(t, openRestoredDashboard(t, confPath, dbPath))
+	assert.Equal(t, uint16(8008), singleton.Conf.ListenPort)
+	assert.Equal(t, "en_US", singleton.Conf.Language, "settings missing from the old config.yaml get their defaults")
+	assert.NotEmpty(t, singleton.Conf.AgentSecretKey)
+	for _, table := range []string{"api_tokens", "notifications", "crons"} {
+		assert.True(t, singleton.DB.Migrator().HasTable(table), table)
+	}
+	assert.True(t, singleton.DB.Migrator().HasColumn("users", "username"), "AutoMigrate adds missing columns")
+	var name string
+	require.NoError(t, singleton.DB.Raw("SELECT name FROM servers").Scan(&name).Error)
+	assert.Equal(t, "old", name, "the restored rows are kept")
+	require.NoError(t, finishRestoreStartup(boot, nil))
+}
+
+// A schema change AutoMigrate cannot apply (here: a new unique index over
+// data that violates it) fails the dashboard's startup; the restore is then
+// rolled back and the previous database and configuration come back.
+func TestRestoreRolledBackWhenMigrationFails(t *testing.T) {
+	dir, dbPath, confPath := stagedRestore(t,
+		"CREATE TABLE api_tokens (id INTEGER PRIMARY KEY, token_hash TEXT)",
+		"INSERT INTO api_tokens (token_hash) VALUES ('same'), ('same')")
+	boot, err := backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	require.True(t, boot.Applied())
+
+	startErr := openRestoredDashboard(t, confPath, dbPath)
+	require.ErrorContains(t, startErr, "UNIQUE", "AutoMigrate cannot add the unique index over duplicate data")
+	require.ErrorIs(t, finishRestoreStartup(boot, startErr), startErr)
+
+	assert.Equal(t, []string{"new"}, readNames(t, dbPath), "previous database is back")
+	conf, err := os.ReadFile(confPath)
+	require.NoError(t, err)
+	assert.Equal(t, "listen_port: 9999\n", string(conf), "previous configuration is back")
+	m, err := backup.NewManager(backup.Options{DataDir: dir, ConfigPath: confPath})
+	require.NoError(t, err)
+	defer m.Close()
+	r, err := m.RestoreStatus()
+	require.NoError(t, err)
+	assert.Equal(t, "failed", r.Status)
+	assert.True(t, r.RolledBack)
+}
+
+// Upgrading a dashboard that never used backups: no backup.yaml, no
+// restore files. The start changes nothing on disk and backups are simply
+// not configured.
+func TestUpgradeWithoutBackupSettings(t *testing.T) {
+	dir := t.TempDir()
+	dbPath, confPath := filepath.Join(dir, "sqlite.db"), filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(confPath, []byte("listen_port: 8008\n"), 0600))
+	require.NoError(t, os.WriteFile(dbPath, nil, 0600))
+	before, err := os.ReadDir(dir)
+	require.NoError(t, err)
+
+	boot, err := backup.BootRestore(confPath, dbPath)
+	require.NoError(t, err)
+	assert.False(t, boot.Applied())
+	m, err := backup.NewManager(backup.Options{DataDir: dir, ConfigPath: confPath})
+	require.NoError(t, err)
+	defer m.Close()
+	v := m.View()
+	assert.False(t, v.Configured)
+	assert.False(t, v.Schedule.Enabled, "no scheduled backups until configured")
+
+	after, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Equal(t, len(before), len(after), "nothing is created or removed in the data directory")
 }

@@ -775,3 +775,50 @@ func TestSQLiteURI(t *testing.T) {
 	assert.Equal(t, "file:///dashboard/data/sqlite.db?mode=rw", sqliteURIFromSlash("/dashboard/data/sqlite.db", "rw"))
 	assert.Equal(t, "file:///data/a%20b%3Fc.db?mode=ro", sqliteURIFromSlash("/data/a b?c.db", "ro"))
 }
+
+// Restoring a backup made by an older version is allowed with an
+// informational warning; a version that cannot be compared (dev builds)
+// gives a warning as well.
+func TestOlderAndUnknownBackupVersions(t *testing.T) {
+	e := newTestEnv(t)
+	e.configure()
+	b := e.backup(TriggerManual) // made by v1.2.3
+	for version, warning := range map[string]string{"v1.3.0": WarnOlderVersion, "debug": WarnVersionUnknown} {
+		e.advance(rateWindow)
+		m := e.newManager(version)
+		res, err := m.Prepare(context.Background(), PrepareRequest{Name: b.Name, SHA256: b.SHA256, Password: testPassword, Actor: admin})
+		require.NoError(t, err)
+		assert.True(t, res.CanApply, version)
+		assert.Contains(t, warningCodes(res), warning, version)
+	}
+}
+
+// A backup written by a future format version is refused before anything
+// is decrypted or staged; so is a file without the format magic.
+func TestUnknownBackupFormatIsRefused(t *testing.T) {
+	e := newTestEnv(t)
+	e.configure()
+	b := e.backup(TriggerManual)
+	data := e.store.objects[DefaultPrefix+b.Name+FileExt].data
+	h, err := ReadHeader(bytes.NewReader(data))
+	require.NoError(t, err)
+	hdrLen := int(data[len(fileMagic)])<<24 | int(data[len(fileMagic)+1])<<16 | int(data[len(fileMagic)+2])<<8 | int(data[len(fileMagic)+3])
+	rest := data[len(fileMagic)+4+hdrLen:]
+
+	h.Format = 2
+	raw, err := json.Marshal(h)
+	require.NoError(t, err)
+	var future bytes.Buffer
+	future.WriteString(fileMagic)
+	future.Write([]byte{byte(len(raw) >> 24), byte(len(raw) >> 16), byte(len(raw) >> 8), byte(len(raw))})
+	future.Write(raw)
+	future.Write(rest)
+	_, err = e.prepareUpload(future.Bytes())
+	require.ErrorIs(t, err, ErrUnsupported)
+
+	e.advance(rateWindow)
+	_, err = e.prepareUpload(append([]byte("NZBAK2\n"), data[len(fileMagic):]...))
+	require.ErrorIs(t, err, ErrNotBackup)
+	entries, _ := os.ReadDir(filepath.Join(e.dir, pendingDirName))
+	assert.Empty(t, entries, "nothing is staged")
+}
