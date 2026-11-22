@@ -58,11 +58,20 @@ var (
 	ErrResetConfirm      = errors.New("type RESET to confirm resetting the backup password")
 	ErrSecretRequired    = errors.New("re-enter the secret access key when changing the endpoint or bucket")
 	ErrDisabled          = errors.New("backups are unavailable: the database is not a file")
-	errInvalidCron       = errors.New("invalid backup schedule")
-	errInvalidRetention  = fmt.Errorf("retention must be between 1 and %d", MaxRetention)
-	errLockedByEnv       = errors.New("this setting is managed by an environment variable")
-	errInvalidBucketName = errors.New("invalid bucket name")
+	ErrInvalidCron       = errors.New("invalid backup schedule")
+	ErrInvalidRetention  = fmt.Errorf("retention must be between 1 and %d", MaxRetention)
+	ErrLockedByEnv       = errors.New("this setting is managed by an environment variable")
+	ErrInvalidBucketName = errors.New("invalid bucket name")
+	ErrRegionTooLong     = errors.New("region is too long")
 )
+
+// LockedError reports a setting that is managed by an environment variable.
+type LockedError struct{ Field string }
+
+func (e *LockedError) Error() string { return e.Field + ": " + ErrLockedByEnv.Error() }
+
+// Is makes errors.Is(err, ErrLockedByEnv) hold.
+func (e *LockedError) Is(target error) bool { return target == ErrLockedByEnv }
 
 // Options configures a Manager.
 type Options struct {
@@ -334,7 +343,7 @@ func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3
 		v := strings.TrimSpace(*in)
 		if locked[field] {
 			if v != "" && v != effectiveVal {
-				return fmt.Errorf("%s: %w", field, errLockedByEnv)
+				return &LockedError{Field: field}
 			}
 			return nil
 		}
@@ -359,7 +368,7 @@ func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3
 		next.Prefix = p
 	} else if u.Prefix != nil {
 		if p, _ := NormalizePrefix(*u.Prefix); p != effective.Prefix {
-			return cur, fmt.Errorf("prefix: %w", errLockedByEnv)
+			return cur, &LockedError{Field: "prefix"}
 		}
 	}
 	if u.UsePathStyle != nil {
@@ -374,7 +383,7 @@ func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3
 	secretGiven := u.SecretAccessKey != nil && *u.SecretAccessKey != ""
 	if secretGiven {
 		if locked["secret_access_key"] {
-			return cur, fmt.Errorf("secret_access_key: %w", errLockedByEnv)
+			return cur, &LockedError{Field: "secret_access_key"}
 		}
 		next.SecretAccessKey = *u.SecretAccessKey
 	}
@@ -391,10 +400,10 @@ func mergeS3(cur S3Settings, effective S3Settings, locked map[string]bool, u *S3
 		}
 	}
 	if next.Bucket != "" && !validBucket(next.Bucket) {
-		return cur, errInvalidBucketName
+		return cur, ErrInvalidBucketName
 	}
 	if len(next.Region) > 64 {
-		return cur, errors.New("region is too long")
+		return cur, ErrRegionTooLong
 	}
 	if next.Region == "" {
 		next.Region = DefaultRegion
@@ -428,11 +437,11 @@ func (m *Manager) UpdateConfig(u ConfigUpdate, actor Actor) (ConfigView, error) 
 		}
 		if next.Schedule.Retention < 1 || next.Schedule.Retention > MaxRetention {
 			m.mu.Unlock()
-			return ConfigView{}, errInvalidRetention
+			return ConfigView{}, ErrInvalidRetention
 		}
 		if _, err := m.opts.CronParser.Parse(next.Schedule.Cron); err != nil {
 			m.mu.Unlock()
-			return ConfigView{}, fmt.Errorf("%w: %v", errInvalidCron, err)
+			return ConfigView{}, fmt.Errorf("%w: %v", ErrInvalidCron, err)
 		}
 	}
 	if err := saveSettings(m.opts.SettingsPath, next); err != nil {
@@ -527,7 +536,7 @@ func (m *Manager) rescheduleLocked(s ScheduleSettings) error {
 	}
 	id, err := m.cron.AddFunc(s.Cron, m.scheduledBackup)
 	if err != nil {
-		return fmt.Errorf("%w: %v", errInvalidCron, err)
+		return fmt.Errorf("%w: %v", ErrInvalidCron, err)
 	}
 	m.entry = id
 	return nil

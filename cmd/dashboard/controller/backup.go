@@ -15,6 +15,7 @@ import (
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/pkg/backup"
+	"github.com/nezhahq/nezha/pkg/backup/s3store"
 	"github.com/nezhahq/nezha/service/singleton"
 )
 
@@ -24,20 +25,120 @@ import (
 // routes are covered by the group-wide CSRF middleware.
 func registerBackupRoutes(auth *gin.RouterGroup, patForbidden gin.HandlerFunc) {
 	b := auth.Group("/backup", patForbidden)
-	b.GET("", adminHandler(listBackups))
-	b.POST("", adminHandler(createBackup))
-	b.GET("/config", adminHandler(getBackupConfig))
-	b.PATCH("/config", adminHandler(updateBackupConfig))
-	b.POST("/config/test", adminHandler(testBackupStorage))
-	b.POST("/password", adminHandler(setBackupPassword))
-	b.PATCH("/password", adminHandler(changeBackupPassword))
-	b.POST("/password/reset", adminHandler(resetBackupPassword))
-	b.GET("/restore/status", adminHandler(getRestoreStatus))
-	b.POST("/restore/prepare", adminHandler(prepareRestore))
-	b.POST("/restore/apply", adminHandler(applyRestore))
-	b.DELETE("/restore/:token", adminHandler(cancelRestore))
-	b.GET("/:name/download", adminHandler(downloadBackup))
-	auth.POST("/batch-delete/backup", patForbidden, adminHandler(batchDeleteBackup))
+	b.GET("", backupHandler(listBackups))
+	b.POST("", backupHandler(createBackup))
+	b.GET("/config", backupHandler(getBackupConfig))
+	b.PATCH("/config", backupHandler(updateBackupConfig))
+	b.POST("/config/test", backupHandler(testBackupStorage))
+	b.POST("/password", backupHandler(setBackupPassword))
+	b.PATCH("/password", backupHandler(changeBackupPassword))
+	b.POST("/password/reset", backupHandler(resetBackupPassword))
+	b.GET("/restore/status", backupHandler(getRestoreStatus))
+	b.POST("/restore/prepare", backupHandler(prepareRestore))
+	b.POST("/restore/apply", backupHandler(applyRestore))
+	b.DELETE("/restore/:token", backupHandler(cancelRestore))
+	b.GET("/:name/download", backupHandler(downloadBackup))
+	auth.POST("/batch-delete/backup", patForbidden, backupHandler(batchDeleteBackup))
+}
+
+// backupHandler is adminHandler with the errors of the backup feature
+// translated for the user (see localizeBackupError).
+func backupHandler[T any](handler handlerFunc[T]) func(*gin.Context) {
+	return adminHandler(func(c *gin.Context) (T, error) {
+		v, err := handler(c)
+		return v, localizeBackupError(err)
+	})
+}
+
+// localizeBackupError returns the user-facing errors of the backup feature
+// through the dashboard's gettext catalogue. The messages are literals so
+// that script/i18n.sh (xgettext -kErrorT) extracts them; the English text is
+// the msgid, so untranslated languages show the same text as before. Other
+// errors (request binding, internal ones) are returned unchanged.
+func localizeBackupError(err error) error {
+	if err == nil || errors.Is(err, errNoop) {
+		return err
+	}
+	l := singleton.Localizer
+	if l == nil {
+		return err
+	}
+	var locked *backup.LockedError
+	var storageErr *s3store.Error
+	switch {
+	case errors.As(err, &locked):
+		return l.ErrorT("%s: this setting is managed by an environment variable", locked.Field)
+	case errors.Is(err, backup.ErrPreRestore):
+		return l.ErrorT("pre-restore backup failed, nothing was changed")
+	case errors.As(err, &storageErr):
+		if storageErr.Code != "" {
+			return l.ErrorT("storage error %s: %s", storageErr.Code, storageErr.Message)
+		}
+		return l.ErrorT("storage error: %s", storageErr.Message)
+	case errors.Is(err, backup.ErrInvalidCron):
+		return l.ErrorT("invalid backup schedule: %s", strings.TrimPrefix(err.Error(), backup.ErrInvalidCron.Error()+": "))
+	case errors.Is(err, backup.ErrInvalidRetention):
+		return l.ErrorT("retention must be between 1 and %d", backup.MaxRetention)
+	case errors.Is(err, backup.ErrTooLarge) && singleton.BackupShared != nil:
+		return l.ErrorT("backup file exceeds the size limit (%d MiB)", singleton.BackupShared.MaxBackupBytes()>>20)
+	case errors.Is(err, backup.ErrTooLarge):
+		return l.ErrorT("backup file exceeds the size limit")
+	}
+	for _, m := range []struct {
+		target error
+		msg    func() error
+	}{
+		{backup.ErrNotConfigured, func() error { return l.ErrorT("backup storage and password must be configured first") }},
+		{backup.ErrStorageMissing, func() error { return l.ErrorT("backup storage is not configured") }},
+		{backup.ErrBusy, func() error { return l.ErrorT("another backup or restore operation is in progress") }},
+		{backup.ErrRestarting, func() error { return l.ErrorT("the dashboard is restarting to apply a restore") }},
+		{backup.ErrInvalidName, func() error { return l.ErrorT("invalid backup name") }},
+		{backup.ErrPasswordSet, func() error { return l.ErrorT("backup password is already set; change or reset it instead") }},
+		{backup.ErrPasswordNotSet, func() error { return l.ErrorT("backup password is not set") }},
+		{backup.ErrResetConfirm, func() error { return l.ErrorT("type RESET to confirm resetting the backup password") }},
+		{backup.ErrSecretRequired, func() error {
+			return l.ErrorT("re-enter the secret access key when changing the endpoint or bucket")
+		}},
+		{backup.ErrInvalidBucketName, func() error { return l.ErrorT("invalid bucket name") }},
+		{backup.ErrRegionTooLong, func() error { return l.ErrorT("region is too long") }},
+		{backup.ErrInvalidPrefix, func() error {
+			return l.ErrorT("prefix may only contain letters, digits, '/', '_' and '-', must not start with '/' or contain '//'")
+		}},
+		{s3store.ErrEndpointNotURL, func() error { return l.ErrorT("endpoint must be an absolute URL such as https://s3.example.com") }},
+		{s3store.ErrEndpointParts, func() error {
+			return l.ErrorT("endpoint must not contain credentials, a path, a query or a fragment")
+		}},
+		{s3store.ErrEndpointScheme, func() error { return l.ErrorT("endpoint must use https://") }},
+		{backup.ErrPasswordTooShort, func() error { return l.ErrorT("backup password must be at least 12 characters") }},
+		{backup.ErrPasswordTooLong, func() error { return l.ErrorT("backup password is too long") }},
+		{backup.ErrWrongPassword, func() error { return l.ErrorT("wrong backup password or recovery key") }},
+		{backup.ErrInvalidRecoveryKey, func() error { return l.ErrorT("invalid recovery key") }},
+		{backup.ErrKeyMismatch, func() error { return l.ErrorT("the key does not belong to this backup") }},
+		{backup.ErrNoCredential, func() error { return l.ErrorT("enter the backup password or the recovery key") }},
+		{backup.ErrRateLimited, func() error { return l.ErrorT("too many attempts, try again later") }},
+		{backup.ErrRestoreToken, func() error { return l.ErrorT("restore token is invalid or expired; run the check again") }},
+		{backup.ErrChecksumMismatch, func() error { return l.ErrorT("the backup does not match the selected checksum") }},
+		{backup.ErrConfirmWord, func() error { return l.ErrorT("the confirmation text does not match the backup name") }},
+		{backup.ErrAckRequired, func() error {
+			return l.ErrorT("all warnings that require confirmation must be acknowledged")
+		}},
+		{backup.ErrNotBackup, func() error { return l.ErrorT("not a nezha backup file") }},
+		{backup.ErrBadHeader, func() error { return l.ErrorT("malformed backup header") }},
+		{backup.ErrUnsupported, func() error { return l.ErrorT("unsupported backup format version") }},
+		{backup.ErrCorrupt, func() error { return l.ErrorT("backup file is corrupt or has been modified") }},
+		{backup.ErrNotFound, func() error { return l.ErrorT("backup not found") }},
+		{errBackupUnavailable, func() error { return l.ErrorT("backups are unavailable on this dashboard") }},
+		{errLoginPasswordNeed, func() error { return l.ErrorT("enter your login password to apply the restore") }},
+		{errLoginPasswordWrong, func() error { return l.ErrorT("wrong login password") }},
+		{errReauthNeeded, func() error { return l.ErrorT("sign in again (within the last 10 minutes) to apply the restore") }},
+		{errUploadMultiple, func() error { return l.ErrorT("only one file can be uploaded") }},
+		{errUploadMissing, func() error { return l.ErrorT("no backup file uploaded") }},
+	} {
+		if errors.Is(err, m.target) {
+			return m.msg()
+		}
+	}
+	return err
 }
 
 // backupUploadPath is the only route whose body may exceed the API limit.
@@ -61,6 +162,8 @@ var (
 	errLoginPasswordNeed  = errors.New("enter your login password to apply the restore")
 	errLoginPasswordWrong = errors.New("wrong login password")
 	errReauthNeeded       = errors.New("sign in again (within the last 10 minutes) to apply the restore")
+	errUploadMultiple     = errors.New("only one file can be uploaded")
+	errUploadMissing      = errors.New("no backup file uploaded")
 )
 
 func backupManager() (*backup.Manager, error) {
@@ -431,7 +534,7 @@ func readRestoreUpload(c *gin.Context, m *backup.Manager, req *backup.PrepareReq
 		switch part.FormName() {
 		case "file":
 			if req.UploadPath != "" {
-				return errors.New("only one file can be uploaded")
+				return errUploadMultiple
 			}
 			f, err := m.UploadTempFile()
 			if err != nil {
@@ -463,7 +566,7 @@ func readRestoreUpload(c *gin.Context, m *backup.Manager, req *backup.PrepareReq
 		_ = part.Close()
 	}
 	if req.UploadPath == "" {
-		return errors.New("no backup file uploaded")
+		return errUploadMissing
 	}
 	return nil
 }

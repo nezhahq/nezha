@@ -20,6 +20,14 @@ import (
 // ErrNotFound is returned when an object does not exist.
 var ErrNotFound = errors.New("object not found")
 
+// Endpoint and configuration errors.
+var (
+	ErrEndpointNotURL = errors.New("endpoint must be an absolute URL such as https://s3.example.com")
+	ErrEndpointParts  = errors.New("endpoint must not contain credentials, a path, a query or a fragment")
+	ErrEndpointScheme = errors.New("endpoint must use https://")
+	ErrIncomplete     = errors.New("bucket and credentials are required")
+)
+
 // ObjectInfo describes a stored object. Metadata keys are lower-case.
 type ObjectInfo struct {
 	Key          string
@@ -56,10 +64,10 @@ type Store struct {
 func ParseEndpoint(endpoint string, allowLoopbackHTTP bool) (host string, secure bool, err error) {
 	u, err := url.Parse(strings.TrimSpace(endpoint))
 	if err != nil || u.Host == "" || u.Opaque != "" {
-		return "", false, errors.New("endpoint must be an absolute URL such as https://s3.example.com")
+		return "", false, ErrEndpointNotURL
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
-		return "", false, errors.New("endpoint must not contain credentials, a path, a query or a fragment")
+		return "", false, ErrEndpointParts
 	}
 	switch {
 	case u.Scheme == "https":
@@ -67,7 +75,7 @@ func ParseEndpoint(endpoint string, allowLoopbackHTTP bool) (host string, secure
 	case u.Scheme == "http" && allowLoopbackHTTP && isLoopback(u.Hostname()):
 		return u.Host, false, nil
 	default:
-		return "", false, errors.New("endpoint must use https://")
+		return "", false, ErrEndpointScheme
 	}
 }
 
@@ -86,7 +94,7 @@ func New(cfg Config) (*Store, error) {
 		return nil, err
 	}
 	if cfg.Bucket == "" || cfg.AccessKeyID == "" || cfg.SecretAccessKey == "" {
-		return nil, errors.New("bucket and credentials are required")
+		return nil, ErrIncomplete
 	}
 	lookup := minio.BucketLookupDNS
 	if cfg.UsePathStyle {

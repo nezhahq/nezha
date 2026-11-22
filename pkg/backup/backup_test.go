@@ -11,6 +11,8 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -198,7 +200,7 @@ func TestEnvironmentCredentialsLockTarget(t *testing.T) {
 	t.Setenv(EnvS3SecretAccessKey, "fake-secret-from-env-for-tests")
 	e := newTestEnv(t)
 	_, err := e.m.UpdateConfig(ConfigUpdate{S3: &S3Update{Endpoint: str("https://s3.example.com")}}, admin)
-	require.ErrorIs(t, err, errLockedByEnv, "with an environment secret the target cannot be changed from the dashboard")
+	require.ErrorIs(t, err, ErrLockedByEnv, "with an environment secret the target cannot be changed from the dashboard")
 	v := e.m.View()
 	assert.Contains(t, v.S3.EnvLocked, "secret_access_key")
 	assert.Contains(t, v.S3.EnvLocked, "endpoint")
@@ -348,7 +350,7 @@ func TestPrepareRejectsWrongSelection(t *testing.T) {
 	_, err = e.prepare(b, "wrong password!!")
 	require.ErrorIs(t, err, ErrWrongPassword)
 	_, err = e.m.Prepare(context.Background(), PrepareRequest{Name: b.Name, SHA256: b.SHA256, Actor: admin})
-	require.ErrorIs(t, err, errNoCredential)
+	require.ErrorIs(t, err, ErrNoCredential)
 	assert.Nil(t, e.m.stage)
 	entries, _ := os.ReadDir(filepath.Join(e.dir, pendingDirName))
 	assert.Empty(t, entries, "failed checks leave nothing staged")
@@ -397,8 +399,8 @@ func TestApplyBindsTokenToSessionAndFiles(t *testing.T) {
 	e.advance(rateWindow) // stay below the attempt limit; the token lives longer in this test
 	e.m.stage.expires = e.m.stage.expires.Add(rateWindow)
 	other = base
-	other.Reauth = func() error { return errLockedByEnv }
-	require.ErrorIs(t, e.m.Apply(context.Background(), other), errLockedByEnv)
+	other.Reauth = func() error { return ErrLockedByEnv }
+	require.ErrorIs(t, e.m.Apply(context.Background(), other), ErrLockedByEnv)
 	require.Nil(t, e.m.stage, "the third failure discards the staged restore")
 	require.ErrorIs(t, e.m.Apply(context.Background(), base), ErrRestoreToken)
 }
@@ -910,4 +912,30 @@ func TestSettingsFormatVersion(t *testing.T) {
 	got, err = os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(got), "format: 1")
+}
+
+// The swagger enums of Check.Code and Warning.Code (used by the frontend to
+// type and translate codes) list exactly the codes the code can produce.
+func TestCodeEnumsMatchConstants(t *testing.T) {
+	tag := func(v any) []string {
+		f, ok := reflect.TypeOf(v).FieldByName("Code")
+		require.True(t, ok)
+		return strings.Split(f.Tag.Get("enums"), ",")
+	}
+	checks := []string{CheckChecksum, CheckDecrypt, CheckPayload, CheckOrigin, CheckVersion, CheckDatabase, CheckAdmin}
+	warnings := []string{WarnOriginUnverified, WarnPreRestoreSkipped, WarnOlderVersion, WarnVersionUnknown, WarnVersionDiffers,
+		WarnTSDBNotRestored, WarnAgentsAfterBackup, WarnRevokedCredentials, WarnSessionsCleared, WarnConfigNotInBackup}
+	assert.ElementsMatch(t, checks, tag(Check{}))
+	assert.ElementsMatch(t, warnings, tag(Warning{}))
+
+	// Every Check*/Warn* constant in restore.go is in one of the lists.
+	src, err := os.ReadFile("restore.go")
+	require.NoError(t, err)
+	for _, m := range regexp.MustCompile(`(?m)^\s+(Check|Warn)[A-Za-z]+\s+= "([a-z_]+)"`).FindAllStringSubmatch(string(src), -1) {
+		if m[1] == "Check" {
+			assert.Contains(t, checks, m[2])
+		} else {
+			assert.Contains(t, warnings, m[2])
+		}
+	}
 }

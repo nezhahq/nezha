@@ -53,14 +53,15 @@ var (
 	ErrConfirmWord      = errors.New("the confirmation text does not match the backup name")
 	ErrAckRequired      = errors.New("all warnings that require confirmation must be acknowledged")
 	ErrTooLarge         = errors.New("backup file exceeds the size limit")
-	errNoCredential     = errors.New("enter the backup password or the recovery key")
+	ErrPreRestore       = errors.New("pre-restore backup failed, nothing was changed")
+	ErrNoCredential     = errors.New("enter the backup password or the recovery key")
 )
 
 var sha256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // Check is one verification step of a restore check.
 type Check struct {
-	Code    string `json:"code"`
+	Code    string `json:"code" enums:"checksum,decrypt,payload,origin,version,database_integrity,admin_user"`
 	OK      bool   `json:"ok"`
 	Message string `json:"message,omitempty"`
 }
@@ -68,7 +69,7 @@ type Check struct {
 // Warning is something the administrator must know before applying a
 // restore. Warnings with RequireAck must be acknowledged explicitly.
 type Warning struct {
-	Code       string `json:"code"`
+	Code       string `json:"code" enums:"origin_unverified,pre_restore_skipped,older_version,version_unknown,version_differs,tsdb_not_restored,agents_after_backup_offline,revoked_credentials_revived,sessions_cleared,config_not_in_backup"`
 	Message    string `json:"message"`
 	RequireAck bool   `json:"require_ack"`
 }
@@ -189,7 +190,7 @@ func (m *Manager) Prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 		return nil, err
 	}
 	if req.Password == "" && req.RecoveryKey == "" {
-		return nil, errNoCredential
+		return nil, ErrNoCredential
 	}
 	if !m.lockOp(ctx) {
 		return nil, ErrBusy
@@ -478,7 +479,7 @@ func (m *Manager) unlock(h Header, password, recovery string, s Settings) (*age.
 		return id, nil
 	}
 	if password == "" {
-		return nil, errNoCredential
+		return nil, ErrNoCredential
 	}
 	if id, err := UnwrapIdentity(h.WrappedIdentity, password); err == nil && identityKeyID(id) == h.KeyID {
 		return id, nil
@@ -624,7 +625,7 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 		info, err := m.runBackup(ctx, name, s)
 		m.audit.record(auditEntry{Action: "backup", Actor: req.Actor, Name: name, SHA256: info.SHA256, Result: resultOf(err), Error: errString(err)})
 		if err != nil {
-			return fmt.Errorf("pre-restore backup failed, nothing was changed: %w", err)
+			return fmt.Errorf("%w: %w", ErrPreRestore, err)
 		}
 		m.applyRetention(ctx, s, TriggerPreRestore, PreRestoreKeep)
 	}

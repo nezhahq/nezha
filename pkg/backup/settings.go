@@ -160,6 +160,9 @@ func (s *Settings) ensureAuthKey() error {
 	return nil
 }
 
+// ErrInvalidPrefix rejects an object key prefix.
+var ErrInvalidPrefix = errors.New("prefix may only contain letters, digits, '/', '_' and '-', must not start with '/' or contain '//'")
+
 var prefixRe = regexp.MustCompile(`^[a-zA-Z0-9/_-]*$`)
 
 // NormalizePrefix validates an object key prefix and makes it end with "/".
@@ -169,7 +172,7 @@ func NormalizePrefix(p string) (string, error) {
 		return DefaultPrefix, nil
 	}
 	if len(p) > 200 || !prefixRe.MatchString(p) || strings.HasPrefix(p, "/") || strings.Contains(p, "//") {
-		return "", errors.New("prefix may only contain letters, digits, '/', '_' and '-', must not start with '/' or contain '//'")
+		return "", ErrInvalidPrefix
 	}
 	if !strings.HasSuffix(p, "/") {
 		p += "/"
