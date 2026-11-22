@@ -534,7 +534,9 @@ func (m *Manager) versionCheck(backupVersion string) (Check, *Warning) {
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnOlderVersion,
 			Message: fmt.Sprintf("The backup was made by %s; its database is upgraded when the dashboard starts.", backupVersion)}
 	}
-	if semver.Canonical(canonicalVersion(backupVersion)) != semver.Canonical(canonicalVersion(m.opts.Version)) {
+	// Build identity: the whole version, including +build metadata, which
+	// semver.Canonical would drop.
+	if canonicalVersion(backupVersion) != canonicalVersion(m.opts.Version) {
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionDiffers, RequireAck: true,
 			Message: fmt.Sprintf("The backup was made by %s and this dashboard is %s: same release line, different build.", backupVersion, m.opts.Version)}
 	}

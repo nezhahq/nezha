@@ -847,6 +847,11 @@ func TestVersionCheckByCoreVersion(t *testing.T) {
 		{"2.7.0-selfhost.1-int.6631de9c", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
 		{"2.7.0-selfhost.1-int.6631de9c", "2.7.0-selfhost.1-int.1a2b3c4d", want{true, WarnVersionDiffers, true}},
 		{"v2.7.0-selfhost.1", "2.7.0-selfhost.1", want{true, "", false}},
+		// builds that differ only in +build metadata are different builds
+		{"2.7.0+build-a", "2.7.0+build-b", want{true, WarnVersionDiffers, true}},
+		{"2.7.0-selfhost.1+a", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
+		{"2.7.0+build-a", "2.7.0+build-a", want{true, "", false}},
+		{"2.8.0+x", "2.7.0+x", want{false, "", false}},
 		// development builds cannot be compared
 		{"debug", "2.7.0", want{true, WarnVersionUnknown, true}},
 		{"2.8.0", "debug", want{true, WarnVersionUnknown, true}},
