@@ -102,6 +102,25 @@ type backupTestEnv struct {
 	csrf     string
 	pat      string
 	restarts atomic.Int32
+	skew     atomic.Int64 // added to the manager's clock
+	dir      string
+}
+
+func (env *backupTestEnv) now() time.Time { return time.Now().Add(time.Duration(env.skew.Load())) }
+
+func (env *backupTestEnv) managerOptions() backup.Options {
+	return backup.Options{
+		DataDir:    env.dir,
+		ConfigPath: filepath.Join(env.dir, "config.yaml"),
+		Version:    "v1.2.3",
+		Snapshot: func(ctx context.Context, dst string) error {
+			return singleton.DB.WithContext(ctx).Exec("VACUUM INTO ?", dst).Error
+		},
+		NewStorage: func(backup.S3Settings) (backup.Storage, error) { return env.store, nil },
+		Restart:    func() { env.restarts.Add(1) },
+		RetryDelay: time.Millisecond,
+		Now:        env.now,
+	}
 }
 
 func newBackupTestEnv(t *testing.T) *backupTestEnv {
@@ -121,17 +140,8 @@ func newBackupTestEnv(t *testing.T) *backupTestEnv {
 	env := &backupTestEnv{store: &backupMemStorage{objects: map[string][]byte{}, meta: map[string]map[string]string{}}}
 	oldBackup, oldRestart := singleton.BackupShared, singleton.RequestRestart
 	t.Cleanup(func() { singleton.BackupShared, singleton.RequestRestart = oldBackup, oldRestart })
-	m, err := backup.NewManager(backup.Options{
-		DataDir:    dir,
-		ConfigPath: filepath.Join(dir, "config.yaml"),
-		Version:    "v1.2.3",
-		Snapshot: func(ctx context.Context, dst string) error {
-			return singleton.DB.WithContext(ctx).Exec("VACUUM INTO ?", dst).Error
-		},
-		NewStorage: func(backup.S3Settings) (backup.Storage, error) { return env.store, nil },
-		Restart:    func() { env.restarts.Add(1) },
-		RetryDelay: time.Millisecond,
-	})
+	env.dir = dir
+	m, err := backup.NewManager(env.managerOptions())
 	require.NoError(t, err)
 	t.Cleanup(m.Close)
 	singleton.BackupShared = m
@@ -400,4 +410,59 @@ func TestRestoreReauthForOAuthOnlyAdmin(t *testing.T) {
 	require.NoError(t, singleton.DB.Model(&model.JWTSession{}).Where("user_id = ?", 1).Update("created_at", time.Now()).Error)
 	resp = decodeResponse[any](t, env.as(env.adminCaller(), "POST", "/api/v1/backup/restore/apply", apply))
 	assert.True(t, resp.Success, resp.Error)
+}
+
+// An apply with a restore token that is invalid, cancelled, expired,
+// discarded after failed attempts or already used fails with the
+// untranslated ApiErrorRestoreToken prefix, which the admin panel uses to go
+// back to the check.
+func TestRestoreTokenErrorsCarryTheSignal(t *testing.T) {
+	env := newBackupTestEnv(t)
+	env.configure(t)
+	b := env.createBackup(t)
+	prepare := func() string {
+		env.skew.Add(int64(16 * time.Minute)) // stay below the attempt limit
+		rec := env.as(env.adminCaller(), "POST", "/api/v1/backup/restore/prepare", map[string]any{"name": b.Name, "sha256": b.SHA256, "password": mockBackupPassword})
+		resp := decodeResponse[RestorePrepareResponse](t, rec)
+		require.True(t, resp.Success, rec.Body.String())
+		return resp.Data.RestoreToken
+	}
+	apply := func(token, confirm string) model.CommonResponse[any] {
+		return decodeResponse[any](t, env.as(env.adminCaller(), "POST", "/api/v1/backup/restore/apply", map[string]any{
+			"restore_token": token, "password": mockBackupPassword, "confirm": confirm, "login_password": mockBackupLoginPassword}))
+	}
+	assertSignal := func(label string, resp model.CommonResponse[any]) {
+		t.Helper()
+		assert.False(t, resp.Success, label)
+		assert.True(t, strings.HasPrefix(resp.Error, RestoreTokenErrorCode+": "), "%s: %q", label, resp.Error)
+	}
+	confirm := backup.ConfirmWord(b.Name)
+
+	prepare()
+	assertSignal("unknown token", apply(strings.Repeat("0", 64), confirm))
+
+	token := prepare()
+	require.True(t, decodeResponse[any](t, env.as(env.adminCaller(), "DELETE", "/api/v1/backup/restore/"+token, nil)).Success)
+	assertSignal("cancelled token", apply(token, confirm))
+
+	token = prepare()
+	env.skew.Add(int64(backup.RestoreTokenTTL + time.Second))
+	assertSignal("expired token", apply(token, confirm))
+
+	token = prepare()
+	for range 3 {
+		resp := apply(token, "nope")
+		require.False(t, resp.Success)
+		require.False(t, strings.HasPrefix(resp.Error, RestoreTokenErrorCode), "a wrong confirmation is not a token error")
+	}
+	assertSignal("token discarded after failed attempts", apply(token, confirm))
+
+	token = prepare()
+	require.True(t, apply(token, confirm).Success)
+	// The dashboard restarts; the next process has no staged restore.
+	m, err := backup.NewManager(env.managerOptions())
+	require.NoError(t, err)
+	t.Cleanup(m.Close)
+	singleton.BackupShared = m
+	assertSignal("used token", apply(token, confirm))
 }

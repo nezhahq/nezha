@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -29,7 +30,7 @@ func TestBackupErrorsAreLocalized(t *testing.T) {
 		backup.ErrInvalidBucketName, backup.ErrRegionTooLong, backup.ErrInvalidPrefix,
 		s3store.ErrEndpointNotURL, s3store.ErrEndpointParts, s3store.ErrEndpointScheme,
 		backup.ErrPasswordTooShort, backup.ErrPasswordTooLong, backup.ErrWrongPassword, backup.ErrInvalidRecoveryKey,
-		backup.ErrKeyMismatch, backup.ErrNoCredential, backup.ErrRateLimited, backup.ErrRestoreToken,
+		backup.ErrKeyMismatch, backup.ErrNoCredential, backup.ErrRateLimited,
 		backup.ErrChecksumMismatch, backup.ErrConfirmWord, backup.ErrAckRequired, backup.ErrNotBackup, backup.ErrBadHeader,
 		backup.ErrUnsupported, backup.ErrCorrupt, backup.ErrNotFound, backup.ErrPreRestore,
 		errBackupUnavailable, errLoginPasswordNeed, errLoginPasswordWrong, errReauthNeeded, errUploadMultiple, errUploadMissing,
@@ -66,5 +67,18 @@ func TestBackupErrorMsgidsAreLiterals(t *testing.T) {
 	require.NotEmpty(t, calls)
 	for _, c := range calls {
 		assert.Equal(t, `"`, c[1], "ErrorT must be called with a string literal")
+	}
+}
+
+// The restore-token error carries a fixed, untranslated prefix that clients
+// use to go back to the check, whatever the language of the message.
+func TestRestoreTokenErrorSignal(t *testing.T) {
+	old := singleton.Localizer
+	t.Cleanup(func() { singleton.Localizer = old })
+	for _, lang := range []string{"en_US", "zh_CN", "de_DE"} {
+		singleton.Localizer = i18n.NewLocalizer(lang, "nezha", "translations", i18n.Translations)
+		got := localizeBackupError(fmt.Errorf("apply: %w", backup.ErrRestoreToken)).Error()
+		assert.True(t, strings.HasPrefix(got, RestoreTokenErrorCode+": "), "%s: %q", lang, got)
+		assert.Equal(t, RestoreTokenErrorCode+": "+singleton.Localizer.T("restore token is invalid or expired; run the check again"), got, lang)
 	}
 }

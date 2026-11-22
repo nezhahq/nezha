@@ -2,6 +2,7 @@ package controller
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -50,6 +51,13 @@ func backupHandler[T any](handler handlerFunc[T]) func(*gin.Context) {
 	})
 }
 
+// RestoreTokenErrorCode prefixes the error of an apply whose restore token
+// is invalid, expired, already used or discarded, in the style of the
+// dashboard's other machine-readable errors (ApiErrorUnauthorized,
+// ApiErrorForbidden). Clients must test for this prefix, not for the
+// message, which is translated.
+const RestoreTokenErrorCode = "ApiErrorRestoreToken"
+
 // localizeBackupError returns the user-facing errors of the backup feature
 // through the dashboard's gettext catalogue. The messages are literals so
 // that script/i18n.sh (xgettext -kErrorT) extracts them; the English text is
@@ -68,6 +76,10 @@ func localizeBackupError(err error) error {
 	switch {
 	case errors.As(err, &locked):
 		return l.ErrorT("%s: this setting is managed by an environment variable", locked.Field)
+	case errors.Is(err, backup.ErrRestoreToken):
+		// Clients go back to the check on this error. The prefix is the
+		// signal and is never translated; the text after it is.
+		return fmt.Errorf("%s: %w", RestoreTokenErrorCode, l.ErrorT("restore token is invalid or expired; run the check again"))
 	case errors.Is(err, backup.ErrPreRestore):
 		return l.ErrorT("pre-restore backup failed, nothing was changed")
 	case errors.As(err, &storageErr):
@@ -116,7 +128,6 @@ func localizeBackupError(err error) error {
 		{backup.ErrKeyMismatch, func() error { return l.ErrorT("the key does not belong to this backup") }},
 		{backup.ErrNoCredential, func() error { return l.ErrorT("enter the backup password or the recovery key") }},
 		{backup.ErrRateLimited, func() error { return l.ErrorT("too many attempts, try again later") }},
-		{backup.ErrRestoreToken, func() error { return l.ErrorT("restore token is invalid or expired; run the check again") }},
 		{backup.ErrChecksumMismatch, func() error { return l.ErrorT("the backup does not match the selected checksum") }},
 		{backup.ErrConfirmWord, func() error { return l.ErrorT("the confirmation text does not match the backup name") }},
 		{backup.ErrAckRequired, func() error {
@@ -636,6 +647,7 @@ type restoreApplyForm struct {
 // @Summary Apply a staged restore
 // @Security BearerAuth
 // @Schemes
+// @Description An invalid, expired, already used or discarded restore token fails with an error starting with "ApiErrorRestoreToken:" (the rest is translated); clients should then run the check again.
 // @Description Re-verifies the administrator (backup password or recovery key, confirmation text = last 6 characters of the backup name, login password or a recent login) and the staged files, takes a pre-restore backup and restarts the dashboard, which swaps the data in before opening the database.
 // @Tags admin required
 // @Accept json
