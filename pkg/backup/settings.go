@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -87,6 +88,9 @@ func (s S3Settings) storeConfig() s3store.Config {
 // MAC key) and must never be serialized into an API response; handlers build
 // their responses from View.
 type Settings struct {
+	// Format is the version of this file's structure (settingsFormat). A
+	// file without it predates the field and is format 1.
+	Format     int              `json:"format"`
 	Schedule   ScheduleSettings `json:"schedule"`
 	S3         S3Settings       `json:"s3"`
 	Encryption *KeyMaterial     `json:"encryption,omitempty"`
@@ -196,6 +200,15 @@ func envOverrides(s *S3Settings) map[string]bool {
 	return locked
 }
 
+// settingsFormat is the structure version of backup.yaml written by this
+// build. Change it whenever fields are renamed, removed or reinterpreted.
+const settingsFormat = 1
+
+// ErrSettingsFormat means backup.yaml was written by a newer dashboard. The
+// backup feature stays off and the file is left untouched, so that saving
+// settings cannot silently drop what that version stored.
+var ErrSettingsFormat = errors.New("backup settings were written by a newer dashboard version")
+
 func loadSettings(path string) (Settings, error) {
 	var s Settings
 	data, err := os.ReadFile(path) // #nosec G304 -- operator-configured data directory
@@ -207,10 +220,15 @@ func loadSettings(path string) (Settings, error) {
 			return s, err
 		}
 	}
+	if s.Format > settingsFormat {
+		return s, fmt.Errorf("%w (format %d, this version reads %d)", ErrSettingsFormat, s.Format, settingsFormat)
+	}
+	s.Format = settingsFormat
 	return s, nil
 }
 
 func saveSettings(path string, s Settings) error {
+	s.Format = settingsFormat
 	data, err := yaml.Marshal(s)
 	if err != nil {
 		return err

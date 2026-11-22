@@ -87,6 +87,7 @@ const (
 	WarnPreRestoreSkipped   = "pre_restore_skipped"
 	WarnOlderVersion        = "older_version"
 	WarnVersionUnknown      = "version_unknown"
+	WarnVersionDiffers      = "version_differs"
 	WarnTSDBNotRestored     = "tsdb_not_restored"
 	WarnAgentsAfterBackup   = "agents_after_backup_offline"
 	WarnRevokedCredentials  = "revoked_credentials_revived" // #nosec G101 -- warning code returned to the client, not a credential
@@ -498,18 +499,44 @@ func canonicalVersion(v string) string {
 	return v
 }
 
+// coreVersion returns the canonical vX.Y.Z of v without any pre-release or
+// build suffix (-selfhost.N, -int.<sha>, ...), or "" if v is not a version.
+func coreVersion(v string) string {
+	c := semver.Canonical(canonicalVersion(v))
+	if c == "" {
+		return ""
+	}
+	if i := strings.IndexAny(c, "-+"); i >= 0 {
+		c = c[:i]
+	}
+	return c
+}
+
+// versionCheck compares the version that made a backup with the running one
+// by their core X.Y.Z only: suffixes (-selfhost.N, -int.<sha>) do not order
+// reliably, e.g. commit hashes would be compared as text.
+//   - newer core: refused, the database may use a structure this version
+//     does not know;
+//   - older core: allowed, the startup upgrades the database (informational);
+//   - same core, different suffix: allowed after acknowledgement, a fork
+//     patch release may carry small structure changes;
+//   - not comparable (development builds): allowed after acknowledgement.
 func (m *Manager) versionCheck(backupVersion string) (Check, *Warning) {
-	bv, cv := canonicalVersion(backupVersion), canonicalVersion(m.opts.Version)
-	if !semver.IsValid(bv) || !semver.IsValid(cv) {
-		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionUnknown,
+	bc, cc := coreVersion(backupVersion), coreVersion(m.opts.Version)
+	if bc == "" || cc == "" {
+		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionUnknown, RequireAck: true,
 			Message: fmt.Sprintf("Cannot compare the backup version %q with the dashboard version %q.", backupVersion, m.opts.Version)}
 	}
-	switch semver.Compare(bv, cv) {
+	switch semver.Compare(bc, cc) {
 	case 1:
 		return Check{Code: CheckVersion, OK: false, Message: fmt.Sprintf("the backup was made by a newer dashboard (%s); upgrade to at least that version first", backupVersion)}, nil
 	case -1:
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnOlderVersion,
 			Message: fmt.Sprintf("The backup was made by %s; its database is upgraded when the dashboard starts.", backupVersion)}
+	}
+	if semver.Canonical(canonicalVersion(backupVersion)) != semver.Canonical(canonicalVersion(m.opts.Version)) {
+		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionDiffers, RequireAck: true,
+			Message: fmt.Sprintf("The backup was made by %s and this dashboard is %s: same release line, different build.", backupVersion, m.opts.Version)}
 	}
 	return Check{Code: CheckVersion, OK: true}, nil
 }
