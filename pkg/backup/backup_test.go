@@ -844,8 +844,8 @@ func TestVersionCheckByCoreVersion(t *testing.T) {
 		{"2.7.0", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
 		{"2.7.0-selfhost.1", "2.7.0", want{true, WarnVersionDiffers, true}},
 		{"2.7.0-selfhost.2", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
-		{"2.7.0-selfhost.1-int.6631de9c", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
-		{"2.7.0-selfhost.1-int.6631de9c", "2.7.0-selfhost.1-int.1a2b3c4d", want{true, WarnVersionDiffers, true}},
+		{"2.7.0-selfhost.1-int.bbbb2222", "2.7.0-selfhost.1", want{true, WarnVersionDiffers, true}},
+		{"2.7.0-selfhost.1-int.bbbb2222", "2.7.0-selfhost.1-int.aaaa1111", want{true, WarnVersionDiffers, true}},
 		{"v2.7.0-selfhost.1", "2.7.0-selfhost.1", want{true, "", false}},
 		// builds that differ only in +build metadata are different builds
 		{"2.7.0+build-a", "2.7.0+build-b", want{true, WarnVersionDiffers, true}},
@@ -872,10 +872,10 @@ func TestVersionCheckByCoreVersion(t *testing.T) {
 // acknowledged.
 func TestRestoreAcrossBuildsOfTheSameRelease(t *testing.T) {
 	e := newTestEnv(t)
-	e.m = e.newManager("2.7.0-selfhost.1-int.6631de9c")
+	e.m = e.newManager("2.7.0-selfhost.1-int.bbbb2222")
 	e.configure()
 	b := e.backup(TriggerSchedule)
-	e.m = e.newManager("2.7.0-selfhost.1-int.1a2b3c4d")
+	e.m = e.newManager("2.7.0-selfhost.1-int.aaaa1111")
 	res, err := e.prepare(b, testPassword)
 	require.NoError(t, err)
 	require.True(t, res.CanApply)
