@@ -61,13 +61,17 @@ func (m *Manifest) matchesHeader(h Header) bool {
 		m.Trigger == h.Trigger && m.NezhaVersion == h.NezhaVersion && m.KeyID == h.KeyID
 }
 
-// authKeyID is the public fingerprint of a MAC key.
+// authKeyID is the public fingerprint of a MAC key. It is an HMAC keyed by
+// authKey: authKey is 32 random bytes (ensureAuthKey), never a password, but
+// a plain SHA256 over a "key" is flagged by CodeQL as weak password hashing
+// (go/weak-sensitive-data-hashing), so keep it keyed.
 func authKeyID(authKey []byte) string {
 	if len(authKey) == 0 {
 		return ""
 	}
-	sum := sha256.Sum256(append([]byte("nezha-backup-auth-key-id:"), authKey...))
-	return hex.EncodeToString(sum[:8])
+	mac := hmac.New(sha256.New, authKey)
+	mac.Write([]byte("nezha-backup-auth-key-id"))
+	return hex.EncodeToString(mac.Sum(nil)[:8])
 }
 
 func manifestMAC(authKey, raw []byte) string {
