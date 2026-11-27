@@ -58,6 +58,10 @@ func createNAT(c *gin.Context) (uint64, error) {
 		return 0, singleton.Localizer.ErrorT("have invalid server id")
 	}
 	server, ok := singleton.ServerShared.Get(nf.ServerID)
+	if !ok && callerIsAdmin(c) {
+		// Administrators see every server: no IDs to hide from them.
+		return 0, singleton.Localizer.ErrorT("have invalid server id")
+	}
 	// Ownership before the control lease: its transition error only exists
 	// for real servers, so checking it first told members which foreign
 	// server IDs exist. Unknown and foreign IDs share one response.
@@ -123,6 +127,10 @@ func updateNAT(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("have invalid server id")
 	}
 	server, ok := singleton.ServerShared.Get(nf.ServerID)
+	if !ok && callerIsAdmin(c) {
+		// Administrators see every server: no IDs to hide from them.
+		return nil, singleton.Localizer.ErrorT("have invalid server id")
+	}
 	// Ownership before the control lease, as in createNAT.
 	if !ok || !server.HasPermission(c) {
 		return nil, singleton.Localizer.ErrorT("permission denied")

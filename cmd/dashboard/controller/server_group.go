@@ -106,7 +106,7 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 	if ok, err := serversUsableByCaller(c, sgf.Servers); err != nil {
 		return 0, newGormError("%v", err)
 	} else if !ok {
-		return 0, singleton.Localizer.ErrorT("permission denied")
+		return 0, unusableServersError(c)
 	}
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(sgf.Servers)) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
@@ -171,7 +171,7 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	if ok, err := serversUsableByCaller(c, sg.Servers); err != nil {
 		return nil, newGormError("%v", err)
 	} else if !ok {
-		return nil, singleton.Localizer.ErrorT("permission denied")
+		return nil, unusableServersError(c)
 	}
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(sg.Servers)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
@@ -291,4 +291,14 @@ func serversUsableByCaller(c *gin.Context, ids []uint64) (bool, error) {
 		return false, err
 	}
 	return count == int64(len(ids)), nil
+}
+
+// unusableServersError is the answer when serversUsableByCaller fails:
+// administrators see every server, so they get the precise error; members
+// get one answer for unknown and foreign IDs.
+func unusableServersError(c *gin.Context) error {
+	if callerIsAdmin(c) {
+		return singleton.Localizer.ErrorT("have invalid server id")
+	}
+	return singleton.Localizer.ErrorT("permission denied")
 }

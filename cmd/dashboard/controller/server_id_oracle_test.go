@@ -88,3 +88,54 @@ func TestServerIDRoutesDoNotRevealForeignServers(t *testing.T) {
 		require.Equal(t, routes[name](unknown), routes[name](foreignOnline), "%s: offline foreign server answers differently", name)
 	}
 }
+
+// Administrators can see every server, so they keep the precise errors for
+// unknown IDs (and a server batch delete still skips them). Only members get
+// the shared answer that hides which server IDs exist.
+func TestServerIDRoutesKeepPreciseErrorsForAdmins(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	_, reset := setupServerOwnershipFixture(t)
+	defer reset()
+	require.NoError(t, singleton.DB.AutoMigrate(&model.ServerGroup{}, &model.ServerGroupServer{}, &model.NAT{}, &model.APIToken{}))
+	originalDDNS := singleton.DDNSShared
+	singleton.DDNSShared = singleton.NewEmptyDDNSClassForTest()
+	t.Cleanup(func() { singleton.DDNSShared = originalDDNS })
+
+	const unknown = uint64(99)
+	request := func(body any, query string, params gin.Params) *gin.Context {
+		c := ctxAs(1, model.RoleAdmin)
+		b, _ := json.Marshal(body)
+		c.Request = httptest.NewRequest("POST", "/"+query, bytes.NewReader(b))
+		c.Request.Header.Set("Content-Type", "application/json")
+		c.Params = params
+		return c
+	}
+	errorOf := func(_ any, err error) string {
+		if err == nil {
+			return "<nil>"
+		}
+		return err.Error()
+	}
+	nat := map[string]any{"server_id": unknown, "name": "p", "domain": "p.example", "host": "127.0.0.1:1"}
+	want := map[string]string{
+		"POST /terminal":            "server not found or not connected",
+		"POST /file":                "server not found or not connected",
+		"PATCH /server/:id":         "server id 99 does not exist",
+		"POST /batch-delete/server": "<nil>",
+		"POST /nat":                 "have invalid server id",
+		"PATCH /nat/:id":            "have invalid server id",
+		"POST /server-group":        "have invalid server id",
+		"POST /api-tokens":          "server not found",
+	}
+	got := map[string]string{
+		"POST /terminal":            errorOf(createTerminal(request(map[string]any{"server_id": unknown}, "", nil))),
+		"POST /file":                errorOf(createFM(request(nil, "?id=99", nil))),
+		"PATCH /server/:id":         errorOf(updateServer(request(map[string]any{"name": "probe"}, "", gin.Params{{Key: "id", Value: "99"}}))),
+		"POST /batch-delete/server": errorOf(batchDeleteServer(request([]uint64{unknown}, "", nil))),
+		"POST /nat":                 errorOf(createNAT(request(nat, "", nil))),
+		"PATCH /nat/:id":            errorOf(updateNAT(request(nat, "", gin.Params{{Key: "id", Value: "1"}}))),
+		"POST /server-group":        errorOf(createServerGroup(request(map[string]any{"name": "p", "servers": []uint64{unknown}}, "", nil))),
+		"POST /api-tokens":          errorOf(createAPIToken(request(map[string]any{"name": "p", "scopes": []string{model.ScopeServerRead}, "server_ids": []uint64{unknown}}, "", nil))),
+	}
+	require.Equal(t, want, got)
+}

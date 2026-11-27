@@ -37,6 +37,10 @@ func createTerminal(c *gin.Context) (*model.CreateTerminalResponse, error) {
 	}
 
 	server, _ := singleton.ServerShared.Get(createTerminalReq.ServerID)
+	if server == nil && callerIsAdmin(c) {
+		// Administrators see every server: no IDs to hide from them.
+		return nil, singleton.Localizer.ErrorT("server not found or not connected")
+	}
 	// Ownership before anything else: unknown and foreign IDs share one
 	// response, and only the caller's own servers reveal whether the agent is
 	// connected. Checking the stream first told members which foreign server

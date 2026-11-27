@@ -77,9 +77,15 @@ func updateServer(c *gin.Context) (any, error) {
 	}
 
 	var s model.Server
-	// Unknown and foreign IDs share one response so server IDs cannot be
-	// enumerated across tenants.
-	if err := singleton.DB.First(&s, id).Error; err != nil || !s.HasPermission(c) || !serverRecordWritable(c, s.ID) {
+	// For members, unknown and foreign IDs share one response so server IDs
+	// cannot be enumerated across tenants. Administrators see every server.
+	if err := singleton.DB.First(&s, id).Error; err != nil {
+		if callerIsAdmin(c) {
+			return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)
+		}
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
+	if !s.HasPermission(c) || !serverRecordWritable(c, s.ID) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -161,10 +167,11 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 		if deleted, err = deletableRowIDs(tx, c, &model.Server{}, servers); err != nil {
 			return err
 		}
-		// All or nothing: an unknown ID is refused like a foreign one (the
-		// registry check above skips both), so the answer does not reveal
-		// which server IDs exist.
-		if len(deleted) != len(slices.Compact(slices.Sorted(slices.Values(servers)))) {
+		// For members it is all or nothing: an unknown ID is refused like a
+		// foreign one (the registry check above skips both), so the answer
+		// does not reveal which server IDs exist. Administrators see every
+		// server, so unknown IDs are skipped for them as before.
+		if !callerIsAdmin(c) && len(deleted) != len(slices.Compact(slices.Sorted(slices.Values(servers)))) {
 			return errBatchDeleteForeignServer
 		}
 		if len(deleted) == 0 {

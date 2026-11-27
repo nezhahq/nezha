@@ -47,6 +47,10 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 	}
 
 	server, _ := singleton.ServerShared.Get(id)
+	if server == nil && callerIsAdmin(c) {
+		// Administrators see every server: no IDs to hide from them.
+		return nil, singleton.Localizer.ErrorT("server not found or not connected")
+	}
 	// Ownership first, as in createTerminal: unknown and foreign IDs share one
 	// response and a foreign agent's connection state stays hidden.
 	if server == nil || !server.HasPermission(c) {

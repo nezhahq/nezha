@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"bufio"
 	"bytes"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -91,4 +94,36 @@ func TestMCPCallRecheckRefusesTokenRevokedByCredentialChange(t *testing.T) {
 	require.NoError(t, singleton.DB.Model(&model.User{}).Where("id = ?", uid).
 		Update("token_version", gorm.Expr("token_version + 1")).Error)
 	require.ErrorIs(t, revalidateMCPCallCredential(c, tok), errMCPCredentialInvalid)
+}
+
+// Reading the body before authentication must not let a client keep a
+// connection (and up to the body limit of memory) forever: the dashboard has
+// no read timeout once the head is read, so the body read has its own.
+func TestRESTRequestBodyReadHasADeadline(t *testing.T) {
+	env := newBackupTestEnv(t)
+	require.NoError(t, singleton.DB.AutoMigrate(&model.ServerGroup{}, &model.ServerGroupServer{}))
+	original := restRequestBodyReadTimeout
+	restRequestBodyReadTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { restRequestBodyReadTimeout = original })
+
+	server := httptest.NewServer(env.router)
+	defer server.Close()
+	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	require.NoError(t, err)
+	defer conn.Close()
+	body := `{"name":"held-past-the-deadline","servers":[]}`
+	_, err = fmt.Fprintf(conn, "POST /api/v1/server-group HTTP/1.1\r\nHost: example.com\r\nAuthorization: Bearer %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", env.pat, len(body), body[:1])
+	require.NoError(t, err)
+
+	require.NoError(t, conn.SetReadDeadline(time.Now().Add(5*time.Second)))
+	response, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	require.NoError(t, err, "the dashboard kept waiting for the body")
+	defer response.Body.Close()
+	require.Equal(t, http.StatusRequestTimeout, response.StatusCode)
+
+	// The rest of the body arrives too late: nothing is created.
+	_, _ = conn.Write([]byte(body[1:]))
+	var groups int64
+	require.NoError(t, singleton.DB.Model(&model.ServerGroup{}).Count(&groups).Error)
+	require.Zero(t, groups)
 }

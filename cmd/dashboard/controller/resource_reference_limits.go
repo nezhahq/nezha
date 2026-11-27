@@ -2,8 +2,11 @@ package controller
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
+	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/net/idna"
@@ -35,6 +38,9 @@ const (
 	maxRulesPerAlertRule = 64
 )
 
+// restRequestBodyReadTimeout bounds reading an /api/v1 request body.
+var restRequestBodyReadTimeout = 60 * time.Second
+
 // restRequestBodyLimitMiddleware limits the request body and reads it
 // completely before the next middlewares run. It must be mounted on the
 // /api/v1 group, ahead of authentication.
@@ -57,11 +63,28 @@ func restRequestBodyLimitMiddleware(maxBytes int64) gin.HandlerFunc {
 				c.Next()
 				return
 			}
+			// The dashboard clears the connection read deadline once the head
+			// is read (long-lived streams share the port), so bound this read
+			// itself: a client must not hold the connection, and the buffered
+			// body, open forever. Normal bodies are small JSON documents.
+			// Writers without deadline support (tests) simply read without one.
+			deadline := http.NewResponseController(c.Writer)
+			_ = deadline.SetReadDeadline(time.Now().Add(restRequestBodyReadTimeout))
 			body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes))
 			if err != nil {
-				c.AbortWithStatusJSON(http.StatusBadRequest, model.CommonResponse[any]{Error: err.Error()})
+				status := http.StatusBadRequest
+				if errors.Is(err, os.ErrDeadlineExceeded) {
+					status = http.StatusRequestTimeout
+				}
+				// The rest of the body was not read. Close the connection after
+				// the reply: otherwise the server first tries to drain the body
+				// to reuse the connection and, with a client that stopped
+				// sending, never writes this reply at all.
+				c.Header("Connection", "close")
+				c.AbortWithStatusJSON(status, model.CommonResponse[any]{Error: err.Error()})
 				return
 			}
+			_ = deadline.SetReadDeadline(time.Time{})
 			c.Request.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		c.Next()
