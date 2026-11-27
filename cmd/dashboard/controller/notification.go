@@ -188,11 +188,17 @@ func batchDeleteNotification(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// Only the caller's rows: see deletableRowIDs.
+	var deleted []uint64
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Delete(&model.Notification{}, "id in (?)", n).Error; err != nil {
+		var err error
+		if deleted, err = deletableRowIDs(tx, c, &model.Notification{}, n); err != nil || len(deleted) == 0 {
 			return err
 		}
-		if err := tx.Unscoped().Delete(&model.NotificationGroupNotification{}, "notification_id in (?)", n).Error; err != nil {
+		if err := tx.Unscoped().Delete(&model.Notification{}, "id in (?)", deleted).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Delete(&model.NotificationGroupNotification{}, "notification_id in (?)", deleted).Error; err != nil {
 			return err
 		}
 		return nil
@@ -202,6 +208,6 @@ func batchDeleteNotification(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.NotificationShared.Delete(n)
+	singleton.NotificationShared.Delete(deleted)
 	return nil, nil
 }

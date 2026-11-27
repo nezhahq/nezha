@@ -155,11 +155,18 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// Only the caller's rows: see deletableRowIDs. Everything below works on
+	// the deleted IDs, so another user's server is never dropped from memory.
+	var deleted []uint64
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", servers).Error; err != nil {
+		var err error
+		if deleted, err = deletableRowIDs(tx, c, &model.Server{}, servers); err != nil || len(deleted) == 0 {
 			return err
 		}
-		if err := tx.Unscoped().Delete(&model.ServerGroupServer{}, "server_id in (?)", servers).Error; err != nil {
+		if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", deleted).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Delete(&model.ServerGroupServer{}, "server_id in (?)", deleted).Error; err != nil {
 			return err
 		}
 		return nil
@@ -170,7 +177,7 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	}
 
 	singleton.AlertsLock.Lock()
-	for _, sid := range servers {
+	for _, sid := range deleted {
 		for _, alert := range singleton.Alerts {
 			if singleton.AlertsCycleTransferStatsStore[alert.ID] != nil {
 				delete(singleton.AlertsCycleTransferStatsStore[alert.ID].ServerName, sid)
@@ -179,7 +186,9 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 			}
 		}
 	}
-	singleton.DB.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", servers)
+	if len(deleted) > 0 {
+		singleton.DB.Unscoped().Delete(&model.Transfer{}, "server_id in (?)", deleted)
+	}
 	singleton.AlertsLock.Unlock()
 
 	// Cancel any in-flight transfers BEFORE the in-memory ServerShared
@@ -189,8 +198,8 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	// transferID-guarded delete inside OnServersDeleted is the
 	// authoritative protection against that race; the ordering here is
 	// belt and braces.
-	singleton.ServerTransferShared.OnServersDeleted(servers)
-	singleton.ServerShared.Delete(servers)
+	singleton.ServerTransferShared.OnServersDeleted(deleted)
+	singleton.ServerShared.Delete(deleted)
 	return nil, nil
 }
 

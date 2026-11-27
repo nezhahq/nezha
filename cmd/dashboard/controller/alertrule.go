@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jinzhu/copier"
+	"gorm.io/gorm"
 
 	"github.com/nezhahq/nezha/model"
 	"github.com/nezhahq/nezha/service/singleton"
@@ -158,11 +159,20 @@ func batchDeleteAlertRule(c *gin.Context) (any, error) {
 		}
 	}
 
-	if err := singleton.DB.Unscoped().Delete(&model.AlertRule{}, "id in (?)", ar).Error; err != nil {
+	// Only the caller's rows: see deletableRowIDs.
+	var deleted []uint64
+	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		if deleted, err = deletableRowIDs(tx, c, &model.AlertRule{}, ar); err != nil || len(deleted) == 0 {
+			return err
+		}
+		return tx.Unscoped().Delete(&model.AlertRule{}, "id in (?)", deleted).Error
+	})
+	if err != nil {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.OnDeleteAlert(ar)
+	singleton.OnDeleteAlert(deleted)
 	return nil, nil
 }
 

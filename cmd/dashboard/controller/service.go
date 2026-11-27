@@ -643,13 +643,19 @@ func batchDeleteService(c *gin.Context) (any, error) {
 		}
 	}
 
+	// Only the caller's rows: see deletableRowIDs.
+	var deleted []uint64
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		return tx.Unscoped().Delete(&model.Service{}, "id in (?)", ids).Error
+		var err error
+		if deleted, err = deletableRowIDs(tx, c, &model.Service{}, ids); err != nil || len(deleted) == 0 {
+			return err
+		}
+		return tx.Unscoped().Delete(&model.Service{}, "id in (?)", deleted).Error
 	})
 	if err != nil {
 		return nil, err
 	}
-	singleton.ServiceSentinelShared.Delete(ids)
+	singleton.ServiceSentinelShared.Delete(deleted)
 	singleton.ServiceSentinelShared.UpdateServiceList()
 	return nil, nil
 }

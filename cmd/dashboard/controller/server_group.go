@@ -260,11 +260,16 @@ func batchDeleteServerGroup(c *gin.Context) (any, error) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
+	// Only the caller's rows: see deletableRowIDs.
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Delete(&model.ServerGroup{}, "id in (?)", sgs).Error; err != nil {
+		deleted, err := deletableRowIDs(tx, c, &model.ServerGroup{}, sgs)
+		if err != nil || len(deleted) == 0 {
 			return err
 		}
-		if err := tx.Unscoped().Delete(&model.ServerGroupServer{}, "server_group_id in (?)", sgs).Error; err != nil {
+		if err := tx.Unscoped().Delete(&model.ServerGroup{}, "id in (?)", deleted).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Delete(&model.ServerGroupServer{}, "server_group_id in (?)", deleted).Error; err != nil {
 			return err
 		}
 		return nil
