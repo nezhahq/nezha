@@ -139,9 +139,10 @@ func localizeBackupError(err error) error {
 		{backup.ErrCorrupt, func() error { return l.ErrorT("backup file is corrupt or has been modified") }},
 		{backup.ErrNotFound, func() error { return l.ErrorT("backup not found") }},
 		{errBackupUnavailable, func() error { return l.ErrorT("backups are unavailable on this dashboard") }},
-		{errLoginPasswordNeed, func() error { return l.ErrorT("enter your login password to apply the restore") }},
+		{errLoginPasswordNeed, func() error { return l.ErrorT("enter your login password to confirm this action") }},
 		{errLoginPasswordWrong, func() error { return l.ErrorT("wrong login password") }},
-		{errReauthNeeded, func() error { return l.ErrorT("sign in again (within the last 10 minutes) to apply the restore") }},
+		{errReauthNeeded, func() error { return l.ErrorT("sign in again (within the last 10 minutes) to confirm this action") }},
+		{backup.ErrReauthRequired, func() error { return l.ErrorT("re-authentication is required") }},
 		{errUploadMultiple, func() error { return l.ErrorT("only one file can be uploaded") }},
 		{errUploadMissing, func() error { return l.ErrorT("no backup file uploaded") }},
 	} {
@@ -165,14 +166,15 @@ func backupUploadBodyLimit() int64 {
 }
 
 // reauthWindow is how recent the login of an administrator without a
-// password (OAuth only) must be to apply a restore.
+// password (OAuth only) must be to apply a restore or to set or reset the
+// backup password.
 const reauthWindow = 10 * time.Minute
 
 var (
 	errBackupUnavailable  = errors.New("backups are unavailable on this dashboard")
-	errLoginPasswordNeed  = errors.New("enter your login password to apply the restore")
+	errLoginPasswordNeed  = errors.New("enter your login password to confirm this action")
 	errLoginPasswordWrong = errors.New("wrong login password")
-	errReauthNeeded       = errors.New("sign in again (within the last 10 minutes) to apply the restore")
+	errReauthNeeded       = errors.New("sign in again (within the last 10 minutes) to confirm this action")
 	errUploadMultiple     = errors.New("only one file can be uploaded")
 	errUploadMissing      = errors.New("no backup file uploaded")
 )
@@ -264,7 +266,8 @@ func testBackupStorage(c *gin.Context) (any, error) {
 }
 
 type backupPasswordForm struct {
-	Password string `json:"password"`
+	Password      string `json:"password"`
+	LoginPassword string `json:"login_password"`
 }
 
 type backupPasswordChangeForm struct {
@@ -273,8 +276,9 @@ type backupPasswordChangeForm struct {
 }
 
 type backupPasswordResetForm struct {
-	NewPassword string `json:"new_password"`
-	Confirm     string `json:"confirm"`
+	NewPassword   string `json:"new_password"`
+	Confirm       string `json:"confirm"`
+	LoginPassword string `json:"login_password"`
 }
 
 // BackupKeyResponse is returned when a key pair is created. The recovery key
@@ -289,7 +293,7 @@ type BackupKeyResponse struct {
 // @Summary Set backup password
 // @Security BearerAuth
 // @Schemes
-// @Description Creates the backup key pair protected by the password and returns the recovery key once.
+// @Description Creates the backup key pair protected by the password and returns the recovery key once. Requires login_password, or for OAuth-only accounts a login within the last 10 minutes.
 // @Tags admin required
 // @Accept json
 // @param request body backupPasswordForm true "password"
@@ -305,7 +309,10 @@ func setBackupPassword(c *gin.Context) (*BackupKeyResponse, error) {
 	if err := c.ShouldBindJSON(&f); err != nil {
 		return nil, err
 	}
-	recovery, k, err := m.SetPassword(f.Password, backupActor(c))
+	// The holder of the backup password can decrypt every later backup, so
+	// a session alone is not enough: re-verify the administrator as for a
+	// restore.
+	recovery, k, err := m.SetPassword(f.Password, adminReauth(c, f.LoginPassword), backupActor(c))
 	if err != nil {
 		return nil, err
 	}
@@ -344,7 +351,7 @@ func changeBackupPassword(c *gin.Context) (*BackupKeyResponse, error) {
 // @Summary Reset backup password
 // @Security BearerAuth
 // @Schemes
-// @Description Creates a new key pair. Earlier backups then need the old password or the old recovery key. confirm must be "RESET".
+// @Description Creates a new key pair. Earlier backups then need the old password or the old recovery key. confirm must be "RESET". Requires login_password, or for OAuth-only accounts a login within the last 10 minutes.
 // @Tags admin required
 // @Accept json
 // @param request body backupPasswordResetForm true "new password"
@@ -360,7 +367,9 @@ func resetBackupPassword(c *gin.Context) (*BackupKeyResponse, error) {
 	if err := c.ShouldBindJSON(&f); err != nil {
 		return nil, err
 	}
-	recovery, k, err := m.ResetPassword(f.NewPassword, f.Confirm, backupActor(c))
+	// Same re-verification as setPassword: a reset hands every later backup
+	// to whoever chose the new password.
+	recovery, k, err := m.ResetPassword(f.NewPassword, f.Confirm, adminReauth(c, f.LoginPassword), backupActor(c))
 	if err != nil {
 		return nil, err
 	}
@@ -609,10 +618,11 @@ func restoreRequirements(c *gin.Context) (restoreApplyRequires, error) {
 	return restoreApplyRequires{ReauthNeeded: sess == nil || time.Since(sess.CreatedAt) > reauthWindow}, nil
 }
 
-// restoreReauth verifies the administrator again before a restore is
-// applied: the login password, or for accounts that sign in only through
-// OAuth (no usable password), a login within the last reauthWindow.
-func restoreReauth(c *gin.Context, loginPassword string) func() error {
+// adminReauth verifies the administrator again before a restore is applied
+// or the backup password is set or reset: the login password, or for
+// accounts that sign in only through OAuth (no usable password), a login
+// within the last reauthWindow.
+func adminReauth(c *gin.Context, loginPassword string) func() error {
 	return func() error {
 		user, sess, err := currentLoginUser(c)
 		if err != nil {
@@ -670,7 +680,7 @@ func applyRestore(c *gin.Context) (any, error) {
 		RecoveryKey:  f.RecoveryKey,
 		Confirm:      f.Confirm,
 		Acknowledged: f.Acknowledged,
-		Reauth:       restoreReauth(c, f.LoginPassword),
+		Reauth:       adminReauth(c, f.LoginPassword),
 		Actor:        backupActor(c),
 	})
 }

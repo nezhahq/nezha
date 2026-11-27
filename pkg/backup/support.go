@@ -9,6 +9,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -120,7 +121,14 @@ func (l *rateLimiter) allow(userID uint64, action string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	now := l.now()
-	key := action + "\x00" + itoa(userID)
+	key := action + "\x00" + strconv.FormatUint(userID, 10)
+	// Forget users whose attempts all left the window; otherwise every user
+	// and action that ever tried stayed in the map for the process lifetime.
+	for k, hits := range l.hits {
+		if k != key && (len(hits) == 0 || now.Sub(hits[len(hits)-1]) >= rateWindow) {
+			delete(l.hits, k)
+		}
+	}
 	kept := l.hits[key][:0]
 	for _, t := range l.hits[key] {
 		if now.Sub(t) < rateWindow {
@@ -133,18 +141,4 @@ func (l *rateLimiter) allow(userID uint64, action string) error {
 	}
 	l.hits[key] = append(kept, now)
 	return nil
-}
-
-func itoa(v uint64) string {
-	if v == 0 {
-		return "0"
-	}
-	var b [20]byte
-	i := len(b)
-	for v > 0 {
-		i--
-		b[i] = byte('0' + v%10)
-		v /= 10
-	}
-	return string(b[i:])
 }

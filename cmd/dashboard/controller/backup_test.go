@@ -245,7 +245,7 @@ func (env *backupTestEnv) configure(t *testing.T) {
 		"endpoint": "https://s3.example.com", "bucket": "nezha-test", "access_key_id": mockBackupAccessKey, "secret_access_key": mockBackupSecretKey,
 	}})
 	require.True(t, decodeResponse[any](t, rec).Success, rec.Body.String())
-	rec = env.as(env.adminCaller(), "POST", "/api/v1/backup/password", map[string]any{"password": mockBackupPassword})
+	rec = env.as(env.adminCaller(), "POST", "/api/v1/backup/password", map[string]any{"password": mockBackupPassword, "login_password": mockBackupLoginPassword})
 	resp := decodeResponse[BackupKeyResponse](t, rec)
 	require.True(t, resp.Success, rec.Body.String())
 	require.True(t, strings.HasPrefix(resp.Data.RecoveryKey, "AGE-SECRET-KEY-1"))

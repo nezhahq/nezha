@@ -70,6 +70,23 @@ jobs:
       - name: Race and shuffle tests
         run: go test -mod=readonly -race -shuffle=on -count=1 ./...
 
+      # TestS3Integration is skipped without NZ_TEST_S3_ENDPOINT, so without
+      # this step the real S3 client path of backups never ran in CI.
+      - name: Backup S3 integration test
+        env:
+          NZ_TEST_S3_ENDPOINT: http://127.0.0.1:9100
+          NZ_TEST_S3_BUCKET: nezha-backup-ci
+          NZ_TEST_S3_ACCESS_KEY_ID: ci-access-key
+          NZ_TEST_S3_SECRET_ACCESS_KEY: ci-secret-key
+        run: |
+          go install github.com/johannesboyne/gofakes3/cmd/gofakes3@v1.3.0
+          "$(go env GOPATH)/bin/gofakes3" -backend memory -initialbucket "$NZ_TEST_S3_BUCKET" -host 127.0.0.1:9100 &
+          for attempt in $(seq 1 50); do
+            curl -s -o /dev/null http://127.0.0.1:9100/ && break
+            sleep 0.2
+          done
+          go test -mod=readonly -count=1 -run '^TestS3Integration$' -v ./pkg/backup/
+
       - name: Vet
         run: go vet ./...
 

@@ -231,7 +231,7 @@ func (e *testEnv) configure() string {
 		AccessKeyID: str(mockAccessKeyID), SecretAccessKey: str(mockSecretAccessKey),
 	}}, Actor{UserID: 1})
 	require.NoError(e.t, err)
-	recovery, _, err := e.m.SetPassword(testPassword, Actor{UserID: 1})
+	recovery, _, err := e.m.SetPassword(testPassword, okReauth, Actor{UserID: 1})
 	require.NoError(e.t, err)
 	return recovery
 }

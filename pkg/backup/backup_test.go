@@ -492,9 +492,9 @@ func TestPasswordChangeAndReset(t *testing.T) {
 	_, err = e.prepare(old, testPassword)
 	require.NoError(t, err, "the old password still opens the backup itself")
 
-	_, _, err = e.m.ResetPassword("reset password one", "reset", admin)
+	_, _, err = e.m.ResetPassword("reset password one", "reset", okReauth, admin)
 	require.ErrorIs(t, err, ErrResetConfirm)
-	_, _, err = e.m.ResetPassword("reset password one", ResetConfirmWord, admin)
+	_, _, err = e.m.ResetPassword("reset password one", ResetConfirmWord, okReauth, admin)
 	require.NoError(t, err)
 	e.advance(rateWindow)
 	_, err = e.prepare(old, "reset password one")

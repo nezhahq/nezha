@@ -72,6 +72,11 @@ type Warning struct {
 	Code       string `json:"code" enums:"origin_unverified,pre_restore_skipped,older_version,version_unknown,version_differs,tsdb_not_restored,agents_after_backup_offline,revoked_credentials_revived,sessions_cleared,config_not_in_backup"`
 	Message    string `json:"message"`
 	RequireAck bool   `json:"require_ack"`
+	// BackupVersion and DashboardVersion are set on the version warnings, so
+	// that clients can show both versions in translated texts (Message is
+	// English only).
+	BackupVersion    string `json:"backup_version,omitempty"`
+	DashboardVersion string `json:"dashboard_version,omitempty"`
 }
 
 // Check and warning codes.
@@ -388,6 +393,10 @@ func (m *Manager) prepare(ctx context.Context, req PrepareRequest) (*PrepareResu
 		}
 		files[name] = sum
 	}
+	// Close before removing: Windows cannot remove an open file, which left
+	// the whole backup in the staging directory (the deferred Close then
+	// only repeats it).
+	_ = f.Close()
 	_ = os.Remove(backupPath)
 
 	if !originVerified {
@@ -526,6 +535,7 @@ func (m *Manager) versionCheck(backupVersion string) (Check, *Warning) {
 	bc, cc := coreVersion(backupVersion), coreVersion(m.opts.Version)
 	if bc == "" || cc == "" {
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionUnknown, RequireAck: true,
+			BackupVersion: backupVersion, DashboardVersion: m.opts.Version,
 			Message: fmt.Sprintf("Cannot compare the backup version %q with the dashboard version %q.", backupVersion, m.opts.Version)}
 	}
 	switch semver.Compare(bc, cc) {
@@ -533,12 +543,14 @@ func (m *Manager) versionCheck(backupVersion string) (Check, *Warning) {
 		return Check{Code: CheckVersion, OK: false, Message: fmt.Sprintf("the backup was made by a newer dashboard (%s); upgrade to at least that version first", backupVersion)}, nil
 	case -1:
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnOlderVersion,
+			BackupVersion: backupVersion, DashboardVersion: m.opts.Version,
 			Message: fmt.Sprintf("The backup was made by %s; its database is upgraded when the dashboard starts.", backupVersion)}
 	}
 	// Build identity: the whole version, including +build metadata, which
 	// semver.Canonical would drop.
 	if canonicalVersion(backupVersion) != canonicalVersion(m.opts.Version) {
 		return Check{Code: CheckVersion, OK: true}, &Warning{Code: WarnVersionDiffers, RequireAck: true,
+			BackupVersion: backupVersion, DashboardVersion: m.opts.Version,
 			Message: fmt.Sprintf("The backup was made by %s and this dashboard is %s: same release line, different build.", backupVersion, m.opts.Version)}
 	}
 	return Check{Code: CheckVersion, OK: true}, nil
@@ -573,6 +585,60 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 		return ErrBusy
 	}
 	defer m.op.Unlock()
+	stage, s, err := m.takeStageForApply(req)
+	if err != nil {
+		return err
+	}
+
+	if s.S3.Complete() && s.Encryption != nil {
+		// The pre-restore backup must not depend on the request: a reverse
+		// proxy timing out or the browser going away would otherwise abort it
+		// halfway and fail the restore. It runs without restoreMu (the stage
+		// is detached above), so other requests answer at once meanwhile.
+		backupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), backupTimeout)
+		defer cancel()
+		name, err := NewName(m.opts.Now(), TriggerPreRestore)
+		if err != nil {
+			m.reattachStage(stage)
+			return err
+		}
+		info, err := m.runBackup(backupCtx, name, s)
+		m.audit.record(auditEntry{Action: "backup", Actor: req.Actor, Name: name, SHA256: info.SHA256, Result: resultOf(err), Error: errString(err)})
+		if err != nil {
+			m.reattachStage(stage)
+			return fmt.Errorf("%w: %w", ErrPreRestore, err)
+		}
+		m.applyRetention(backupCtx, s, TriggerPreRestore, PreRestoreKeep)
+	}
+
+	m.restoreMu.Lock()
+	defer m.restoreMu.Unlock()
+	marker := pendingRestore{
+		Dir: filepath.Base(stage.dir), Files: stage.files, Name: stage.name, SHA256: stage.sha256,
+		UserID: req.Actor.UserID, PreparedAt: m.opts.Now().UTC(),
+	}
+	data, err := json.Marshal(marker)
+	if err != nil {
+		m.reattachStageLocked(stage)
+		return err
+	}
+	if err := writeFileDurable(filepath.Join(m.opts.DataDir, pendingDirName, pendingFileName), data); err != nil {
+		m.reattachStageLocked(stage)
+		return err
+	}
+	m.restarting = true
+	m.audit.record(auditEntry{Action: "restore_apply", Actor: req.Actor, Name: stage.name, SHA256: stage.sha256, Result: "ok"})
+	if m.opts.Restart != nil {
+		time.AfterFunc(defaultApplyRestartWait, m.opts.Restart)
+	}
+	return nil
+}
+
+// takeStageForApply verifies the apply request against the staged restore
+// and detaches the stage, so that the pre-restore backup can run without
+// holding restoreMu: while detached, Cancel and the expiry timer cannot
+// remove the staged files, and a failed apply puts the stage back.
+func (m *Manager) takeStageForApply(req ApplyRequest) (*restoreStage, Settings, error) {
 	m.restoreMu.Lock()
 	defer m.restoreMu.Unlock()
 
@@ -580,15 +646,15 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 	if stage == nil || subtle.ConstantTimeCompare([]byte(stage.token), []byte(req.Token)) != 1 ||
 		!m.opts.Now().Before(stage.expires) || stage.userID != req.Actor.UserID || stage.sessionID != req.Actor.SessionID {
 		m.audit.record(auditEntry{Action: "restore_apply", Actor: req.Actor, Result: "failed", Error: ErrRestoreToken.Error()})
-		return ErrRestoreToken
+		return nil, Settings{}, ErrRestoreToken
 	}
-	fail := func(err error) error {
+	fail := func(err error) (*restoreStage, Settings, error) {
 		stage.failures++
 		if stage.failures >= maxApplyFailures {
 			m.dropStageLocked()
 		}
 		m.audit.record(auditEntry{Action: "restore_apply", Actor: req.Actor, Name: stage.name, SHA256: stage.sha256, Result: "failed", Error: err.Error()})
-		return err
+		return nil, Settings{}, err
 	}
 	if subtle.ConstantTimeCompare([]byte(strings.TrimSpace(req.Confirm)), []byte(ConfirmWord(stage.name))) != 1 {
 		return fail(ErrConfirmWord)
@@ -599,7 +665,7 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 		}
 	}
 	if req.Reauth == nil {
-		return fail(errors.New("re-authentication is required"))
+		return fail(ErrReauthRequired)
 	}
 	if err := req.Reauth(); err != nil {
 		return fail(err)
@@ -613,41 +679,27 @@ func (m *Manager) Apply(ctx context.Context, req ApplyRequest) error {
 		if err != nil || got != want {
 			m.dropStageLocked()
 			m.audit.record(auditEntry{Action: "restore_apply", Actor: req.Actor, Name: stage.name, SHA256: stage.sha256, Result: "failed", Error: "staged files changed"})
-			return ErrCorrupt
+			return nil, Settings{}, ErrCorrupt
 		}
-	}
-
-	if s.S3.Complete() && s.Encryption != nil {
-		name, err := NewName(m.opts.Now(), TriggerPreRestore)
-		if err != nil {
-			return err
-		}
-		info, err := m.runBackup(ctx, name, s)
-		m.audit.record(auditEntry{Action: "backup", Actor: req.Actor, Name: name, SHA256: info.SHA256, Result: resultOf(err), Error: errString(err)})
-		if err != nil {
-			return fmt.Errorf("%w: %w", ErrPreRestore, err)
-		}
-		m.applyRetention(ctx, s, TriggerPreRestore, PreRestoreKeep)
-	}
-
-	marker := pendingRestore{
-		Dir: filepath.Base(stage.dir), Files: stage.files, Name: stage.name, SHA256: stage.sha256,
-		UserID: req.Actor.UserID, PreparedAt: m.opts.Now().UTC(),
-	}
-	data, err := json.Marshal(marker)
-	if err != nil {
-		return err
-	}
-	if err := writeFileDurable(filepath.Join(m.opts.DataDir, pendingDirName, pendingFileName), data); err != nil {
-		return err
 	}
 	m.stage = nil
-	m.restarting = true
-	m.audit.record(auditEntry{Action: "restore_apply", Actor: req.Actor, Name: stage.name, SHA256: stage.sha256, Result: "ok"})
-	if m.opts.Restart != nil {
-		time.AfterFunc(defaultApplyRestartWait, m.opts.Restart)
+	return stage, s, nil
+}
+
+func (m *Manager) reattachStage(stage *restoreStage) {
+	m.restoreMu.Lock()
+	defer m.restoreMu.Unlock()
+	m.reattachStageLocked(stage)
+}
+
+// reattachStageLocked puts a detached stage back after a failed apply. No
+// other stage can have been staged meanwhile (Prepare needs m.op, which the
+// apply holds); an expired stage is removed instead.
+func (m *Manager) reattachStageLocked(stage *restoreStage) {
+	m.stage = stage
+	if !m.opts.Now().Before(stage.expires) {
+		m.dropStageLocked()
 	}
-	return nil
 }
 
 // Cancel discards the staged restore identified by token.

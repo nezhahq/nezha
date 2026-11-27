@@ -133,7 +133,7 @@ func stagedRestore(t *testing.T, extraSQL ...string) (dir, dbPath, confPath stri
 	_, err = m.UpdateConfig(backup.ConfigUpdate{S3: &backup.S3Update{Endpoint: s("https://s3.example.com"), Bucket: s("nezha-test"),
 		AccessKeyID: s("fake-access-key-for-tests"), SecretAccessKey: s("fake-secret-key-for-tests")}}, actor)
 	require.NoError(t, err)
-	_, _, err = m.SetPassword(mockRestorePassword, actor)
+	_, _, err = m.SetPassword(mockRestorePassword, func() error { return nil }, actor)
 	require.NoError(t, err)
 	job, err := m.StartBackup(backup.TriggerManual, actor)
 	require.NoError(t, err)

@@ -40,7 +40,7 @@ func TestS3Integration(t *testing.T) {
 		UsePathStyle: &pathStyle, AccessKeyID: str(os.Getenv("NZ_TEST_S3_ACCESS_KEY_ID")), SecretAccessKey: str(os.Getenv("NZ_TEST_S3_SECRET_ACCESS_KEY")),
 	}}, admin)
 	require.NoError(t, err)
-	_, _, err = e.m.SetPassword(testPassword, admin)
+	_, _, err = e.m.SetPassword(testPassword, okReauth, admin)
 	require.NoError(t, err)
 	ctx := context.Background()
 	t.Cleanup(func() {

@@ -33,7 +33,7 @@ func TestBackupErrorsAreLocalized(t *testing.T) {
 		backup.ErrKeyMismatch, backup.ErrNoCredential, backup.ErrRateLimited,
 		backup.ErrChecksumMismatch, backup.ErrConfirmWord, backup.ErrAckRequired, backup.ErrNotBackup, backup.ErrBadHeader,
 		backup.ErrUnsupported, backup.ErrCorrupt, backup.ErrNotFound, backup.ErrPreRestore,
-		errBackupUnavailable, errLoginPasswordNeed, errLoginPasswordWrong, errReauthNeeded, errUploadMultiple, errUploadMissing,
+		errBackupUnavailable, errLoginPasswordNeed, errLoginPasswordWrong, errReauthNeeded, errUploadMultiple, errUploadMissing, backup.ErrReauthRequired,
 	}
 	for _, e := range same {
 		got := localizeBackupError(fmt.Errorf("context: %w", e))

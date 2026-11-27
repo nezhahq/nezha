@@ -550,10 +550,39 @@ func (m *Manager) scheduledBackup() {
 
 // ---- password ----
 
+// ErrReauthRequired is returned when a password operation is called without
+// a re-authentication check.
+var ErrReauthRequired = errors.New("re-authentication is required")
+
+// verifyPasswordActor re-authenticates the administrator before the key pair
+// is created or replaced. Whoever sets the password can decrypt every later
+// backup (database and config.yaml with their secrets), so a stolen session
+// alone must not be enough, as for a restore. Attempts are rate limited.
+func (m *Manager) verifyPasswordActor(reauth func() error, actor Actor) error {
+	if err := m.limiter.allow(actor.UserID, "password"); err != nil {
+		return err
+	}
+	if reauth == nil {
+		return ErrReauthRequired
+	}
+	if err := reauth(); err != nil {
+		m.audit.record(auditEntry{Action: "password_reauth", Actor: actor, Result: "failed", Error: err.Error()})
+		return err
+	}
+	return nil
+}
+
 // SetPassword sets the backup password for the first time and returns the
-// recovery key, which is never stored.
-func (m *Manager) SetPassword(password string, actor Actor) (string, EncryptionView, error) {
+// recovery key, which is never stored. reauth verifies the administrator
+// again (see verifyPasswordActor).
+func (m *Manager) SetPassword(password string, reauth func() error, actor Actor) (string, EncryptionView, error) {
 	if err := m.checkRestarting(); err != nil {
+		return "", EncryptionView{}, err
+	}
+	if err := ValidatePassword(password); err != nil {
+		return "", EncryptionView{}, err
+	}
+	if err := m.verifyPasswordActor(reauth, actor); err != nil {
 		return "", EncryptionView{}, err
 	}
 	m.mu.Lock()
@@ -565,13 +594,20 @@ func (m *Manager) SetPassword(password string, actor Actor) (string, EncryptionV
 }
 
 // ResetPassword replaces the key pair. Earlier backups then need the old
-// password or the old recovery key.
-func (m *Manager) ResetPassword(password, confirm string, actor Actor) (string, EncryptionView, error) {
+// password or the old recovery key. reauth verifies the administrator again
+// (see verifyPasswordActor).
+func (m *Manager) ResetPassword(password, confirm string, reauth func() error, actor Actor) (string, EncryptionView, error) {
 	if err := m.checkRestarting(); err != nil {
 		return "", EncryptionView{}, err
 	}
 	if confirm != ResetConfirmWord {
 		return "", EncryptionView{}, ErrResetConfirm
+	}
+	if err := ValidatePassword(password); err != nil {
+		return "", EncryptionView{}, err
+	}
+	if err := m.verifyPasswordActor(reauth, actor); err != nil {
+		return "", EncryptionView{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -961,6 +997,7 @@ func (m *Manager) listStored(ctx context.Context, s Settings) ([]BackupInfo, err
 		return nil, err
 	}
 	var out []BackupInfo
+	listed := map[string]bool{}
 	for _, o := range objs {
 		name, ok := strings.CutPrefix(o.Key, s.S3.Prefix)
 		if !ok {
@@ -974,6 +1011,7 @@ func (m *Manager) listStored(ctx context.Context, s Settings) ([]BackupInfo, err
 		if !ok {
 			continue
 		}
+		listed[o.Key+"\x00"+o.ETag] = true
 		meta, err := m.objectMeta(ctx, st, o)
 		if err != nil {
 			return nil, err
@@ -983,6 +1021,15 @@ func (m *Manager) listStored(ctx context.Context, s Settings) ([]BackupInfo, err
 			CreatedAt: created, NezhaVersion: meta[metaVersion], KeyID: meta[metaKeyID],
 		})
 	}
+	// Drop the metadata of objects that are gone (deleted, expired by
+	// retention or replaced); the cache used to grow for the process lifetime.
+	m.cacheMu.Lock()
+	for k := range m.statCache {
+		if !listed[k] {
+			delete(m.statCache, k)
+		}
+	}
+	m.cacheMu.Unlock()
 	return out, nil
 }
 
