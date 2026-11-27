@@ -451,7 +451,11 @@ func revalidateMCPCallCredential(c *gin.Context, tok *model.APIToken) error {
 		return errMCPCredentialInvalid
 	}
 	var owner model.User
-	if singleton.DB.Select("id").First(&owner, tok.UserID).Error != nil {
+	// The token version must still match: a password/profile change revokes
+	// the user's tokens, and the revocation tombstone that cancels calls in
+	// flight expires after a few minutes. Without this check a call whose
+	// body was held back past that point still ran with the revoked token.
+	if singleton.DB.Select("id", "token_version").First(&owner, tok.UserID).Error != nil || owner.TokenVersion != current.UserVersion {
 		return errMCPCredentialInvalid
 	}
 	return nil

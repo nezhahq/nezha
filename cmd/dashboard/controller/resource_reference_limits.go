@@ -1,6 +1,8 @@
 package controller
 
 import (
+	"bytes"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -33,18 +35,34 @@ const (
 	maxRulesPerAlertRule = 64
 )
 
-// restRequestBodyLimitMiddleware 在 handler 解析请求体前装上 MaxBytesReader。
-// 必须挂在路由组上：gin 的 ShouldBindJSON 会完整读取请求体。
+// restRequestBodyLimitMiddleware limits the request body and reads it
+// completely before the next middlewares run. It must be mounted on the
+// /api/v1 group, ahead of authentication.
+//
+// Reading the body here is what makes authentication see the request as a
+// whole: the credential (PAT or JWT session) used to be checked when the
+// request head arrived, while the handler read the body later. A client
+// could send the head, hold the body back across a password change that
+// revoked its token, and still have the request executed.
 func restRequestBodyLimitMiddleware(maxBytes int64) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if c.Request.Body != nil && c.Request.Body != http.NoBody {
-			limit := maxBytes
 			// The restore upload carries a whole backup file; it streams the
-			// body to disk with its own limit instead of binding it.
+			// body to disk with its own limit instead of binding it, so it
+			// cannot be buffered here. It only accepts administrators' login
+			// sessions (no API tokens), and applying a restore re-verifies the
+			// administrator.
 			if c.Request.Method == http.MethodPost && c.FullPath() == backupUploadPath {
-				limit = backupUploadBodyLimit()
+				c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, backupUploadBodyLimit())
+				c.Next()
+				return
 			}
-			c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, limit)
+			body, err := io.ReadAll(http.MaxBytesReader(c.Writer, c.Request.Body, maxBytes))
+			if err != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, model.CommonResponse[any]{Error: err.Error()})
+				return
+			}
+			c.Request.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		c.Next()
 	}
