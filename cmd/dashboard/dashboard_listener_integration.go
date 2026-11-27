@@ -164,15 +164,13 @@ func dashboardListenerEnvironmentVariable(kind dashboardListenerKind) (string, e
 	}
 }
 
-func serveDashboardHTTPS(server *http.Server, certificatePath, keyPath string) (err error) {
-	listener, err := openDashboardListener("tcp", server.Addr, dashboardHTTPSListener)
-	if err != nil {
-		return err
-	}
+// serveDashboardHTTPS serves on the listener opened by openDashboardHTTPS
+// (inherited or bound) with the certificate in server.TLSConfig.
+func serveDashboardHTTPS(server *http.Server, listener net.Listener) (err error) {
 	defer func() {
 		if closeErr := listener.Close(); closeErr != nil && !errors.Is(closeErr, net.ErrClosed) {
 			err = errors.Join(err, fmt.Errorf("close HTTPS dashboard listener: %w", closeErr))
 		}
 	}()
-	return server.ServeTLS(listener, certificatePath, keyPath)
+	return server.ServeTLS(listener, "", "")
 }

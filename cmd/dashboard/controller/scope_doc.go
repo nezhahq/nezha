@@ -125,4 +125,22 @@
 //	GET    /api/v1/api-tokens
 //	POST   /api/v1/api-tokens
 //	DELETE /api/v1/api-tokens/{id}
+//
+// Backups hold every credential of the dashboard; the backup endpoints are
+// likewise refused to PAT and additionally require an administrator:
+//
+//	GET    /api/v1/backup
+//	POST   /api/v1/backup
+//	GET    /api/v1/backup/config
+//	PATCH  /api/v1/backup/config
+//	POST   /api/v1/backup/config/test
+//	POST   /api/v1/backup/password
+//	PATCH  /api/v1/backup/password
+//	POST   /api/v1/backup/password/reset
+//	GET    /api/v1/backup/{name}/download
+//	POST   /api/v1/batch-delete/backup
+//	POST   /api/v1/backup/restore/prepare
+//	POST   /api/v1/backup/restore/apply
+//	DELETE /api/v1/backup/restore/{token}
+//	GET    /api/v1/backup/restore/status
 package controller
