@@ -219,7 +219,9 @@ func TestCreateAPIToken_MemberCannotIncludeNonexistentServerID(t *testing.T) {
 	})
 	_, err := createAPIToken(c)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "server not found")
+	// Same answer as for a foreign server: members must not learn which
+	// server IDs exist.
+	require.EqualError(t, err, "permission denied on server")
 }
 
 func TestCreateAPIToken_AdminCanIncludeAnyServerID(t *testing.T) {

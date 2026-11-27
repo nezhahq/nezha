@@ -103,6 +103,11 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 	}
 	sgf.Servers = slices.Compact(sgf.Servers)
 
+	if ok, err := serversUsableByCaller(c, sgf.Servers); err != nil {
+		return 0, newGormError("%v", err)
+	} else if !ok {
+		return 0, singleton.Localizer.ErrorT("permission denied")
+	}
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(sgf.Servers)) {
 		return 0, singleton.Localizer.ErrorT("permission denied")
 	}
@@ -112,14 +117,6 @@ func createServerGroup(c *gin.Context) (uint64, error) {
 	var sg model.ServerGroup
 	sg.Name = sgf.Name
 	sg.UserID = uid
-
-	var count int64
-	if err := singleton.DB.Model(&model.Server{}).Where("id in (?)", sgf.Servers).Count(&count).Error; err != nil {
-		return 0, newGormError("%v", err)
-	}
-	if count != int64(len(sgf.Servers)) {
-		return 0, singleton.Localizer.ErrorT("have invalid server id")
-	}
 
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Create(&sg).Error; err != nil {
@@ -171,6 +168,11 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	}
 	sg.Servers = slices.Compact(sg.Servers)
 
+	if ok, err := serversUsableByCaller(c, sg.Servers); err != nil {
+		return nil, newGormError("%v", err)
+	} else if !ok {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
 	if !singleton.ServerShared.CheckPermission(c, slices.Values(sg.Servers)) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
@@ -189,14 +191,6 @@ func updateServerGroup(c *gin.Context) (any, error) {
 	}
 
 	sgDB.Name = sg.Name
-
-	var count int64
-	if err := singleton.DB.Model(&model.Server{}).Where("id in (?)", sg.Servers).Count(&count).Error; err != nil {
-		return nil, err
-	}
-	if count != int64(len(sg.Servers)) {
-		return nil, singleton.Localizer.ErrorT("have invalid server id")
-	}
 
 	uid := getUid(c)
 
@@ -280,4 +274,21 @@ func batchDeleteServerGroup(c *gin.Context) (any, error) {
 	}
 
 	return nil, nil
+}
+
+// serversUsableByCaller reports whether every ID in ids is a server the
+// caller may put into a group: any existing server for an administrator,
+// only their own servers otherwise. Unknown and foreign IDs give the same
+// answer; the registry check skips unknown IDs and the old existence count
+// ran separately, so the two errors told members which server IDs exist.
+func serversUsableByCaller(c *gin.Context, ids []uint64) (bool, error) {
+	query := singleton.DB.Model(&model.Server{}).Where("id in (?)", ids)
+	if !callerIsAdmin(c) {
+		query = query.Where("user_id = ?", getUid(c))
+	}
+	var count int64
+	if err := query.Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count == int64(len(ids)), nil
 }

@@ -77,11 +77,9 @@ func updateServer(c *gin.Context) (any, error) {
 	}
 
 	var s model.Server
-	if err := singleton.DB.First(&s, id).Error; err != nil {
-		return nil, singleton.Localizer.ErrorT("server id %d does not exist", id)
-	}
-
-	if !s.HasPermission(c) || !serverRecordWritable(c, s.ID) {
+	// Unknown and foreign IDs share one response so server IDs cannot be
+	// enumerated across tenants.
+	if err := singleton.DB.First(&s, id).Error; err != nil || !s.HasPermission(c) || !serverRecordWritable(c, s.ID) {
 		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
@@ -160,8 +158,17 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 	var deleted []uint64
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
 		var err error
-		if deleted, err = deletableRowIDs(tx, c, &model.Server{}, servers); err != nil || len(deleted) == 0 {
+		if deleted, err = deletableRowIDs(tx, c, &model.Server{}, servers); err != nil {
 			return err
+		}
+		// All or nothing: an unknown ID is refused like a foreign one (the
+		// registry check above skips both), so the answer does not reveal
+		// which server IDs exist.
+		if len(deleted) != len(slices.Compact(slices.Sorted(slices.Values(servers)))) {
+			return errBatchDeleteForeignServer
+		}
+		if len(deleted) == 0 {
+			return nil
 		}
 		if err := tx.Unscoped().Delete(&model.Server{}, "id in (?)", deleted).Error; err != nil {
 			return err
@@ -172,6 +179,9 @@ func batchDeleteServer(c *gin.Context) (any, error) {
 		return nil
 	})
 
+	if errors.Is(err, errBatchDeleteForeignServer) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
+	}
 	if err != nil {
 		return nil, newGormError("%v", err)
 	}

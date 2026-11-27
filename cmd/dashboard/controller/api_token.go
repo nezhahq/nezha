@@ -122,10 +122,12 @@ func createAPIToken(c *gin.Context) (*model.APITokenCreateResponse, error) {
 			seenSrv[sid] = struct{}{}
 			deduped = append(deduped, sid)
 			server, _ := singleton.ServerShared.Get(sid)
-			if server == nil {
+			if server == nil && callerIsAdmin(c) {
 				return nil, errors.New("server not found")
 			}
-			if !callerIsAdmin(c) && !server.HasPermission(c) {
+			// For members, unknown and foreign IDs share one response so they
+			// cannot enumerate other users' server IDs through token creation.
+			if server == nil || (!callerIsAdmin(c) && !server.HasPermission(c)) {
 				return nil, errors.New("permission denied on server")
 			}
 		}

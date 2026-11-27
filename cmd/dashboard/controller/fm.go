@@ -47,15 +47,13 @@ func createFM(c *gin.Context) (*model.CreateFMResponse, error) {
 	}
 
 	server, _ := singleton.ServerShared.Get(id)
-	if server == nil {
-		return nil, singleton.Localizer.ErrorT("server not found or not connected")
+	// Ownership first, as in createTerminal: unknown and foreign IDs share one
+	// response and a foreign agent's connection state stays hidden.
+	if server == nil || !server.HasPermission(c) {
+		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 	if server.GetTaskStream() == nil {
 		return nil, singleton.Localizer.ErrorT("server not found or not connected")
-	}
-
-	if !server.HasPermission(c) {
-		return nil, singleton.Localizer.ErrorT("permission denied")
 	}
 
 	releaseControl, controlErr := beginServerControl(c, server.ID)

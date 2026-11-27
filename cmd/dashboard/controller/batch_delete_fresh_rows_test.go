@@ -38,28 +38,32 @@ func TestBatchDeleteNeverRemovesOtherUsersFreshRows(t *testing.T) {
 		// checkedBySelect: the handler checks ownership with a SELECT, so the
 		// victim's row is committed right after that query (the race window).
 		checkedBySelect bool
+		// allOrNothing: the handler refuses the whole request when it names a
+		// row the caller cannot delete (servers, so unknown and foreign IDs
+		// look the same); the caller's own row is then deleted on its own.
+		allOrNothing bool
 	}{
 		{"cron", func(id, owner uint64) any {
 			return &model.Cron{Common: model.Common{ID: id, UserID: owner}, Name: "c", Scheduler: "@every 1h"}
-		}, batchDeleteCron, false},
+		}, batchDeleteCron, false, false},
 		{"service", func(id, owner uint64) any {
 			return &model.Service{Common: model.Common{ID: id, UserID: owner}, Name: "s", Type: model.TaskTypeHTTPGet}
-		}, batchDeleteService, false},
+		}, batchDeleteService, false, false},
 		{"notification", func(id, owner uint64) any {
 			return &model.Notification{Common: model.Common{ID: id, UserID: owner}, Name: "n"}
-		}, batchDeleteNotification, false},
+		}, batchDeleteNotification, false, false},
 		{"nat", func(id, owner uint64) any {
 			return &model.NAT{Common: model.Common{ID: id, UserID: owner}, Name: "nat", Domain: "nat-" + strconv.FormatUint(id, 10) + ".example"}
-		}, batchDeleteNAT, false},
+		}, batchDeleteNAT, false, false},
 		{"alert-rule", func(id, owner uint64) any {
 			return &model.AlertRule{Common: model.Common{ID: id, UserID: owner}, Name: "a"}
-		}, batchDeleteAlertRule, true},
+		}, batchDeleteAlertRule, true, false},
 		{"server-group", func(id, owner uint64) any {
 			return &model.ServerGroup{Common: model.Common{ID: id, UserID: owner}, Name: "g"}
-		}, batchDeleteServerGroup, true},
+		}, batchDeleteServerGroup, true, false},
 		{"server", func(id, owner uint64) any {
 			return &model.Server{Common: model.Common{ID: id, UserID: owner}, Name: "srv", UUID: "uuid-" + strconv.FormatUint(id, 10)}
-		}, batchDeleteServer, false},
+		}, batchDeleteServer, false, true},
 	}
 	for index, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -81,6 +85,13 @@ func TestBatchDeleteNeverRemovesOtherUsersFreshRows(t *testing.T) {
 			require.NoError(t, singleton.DB.Create(tc.row(ownID, member)).Error)
 
 			_, err := tc.delete(ctxAsMemberWithBody(member, []uint64{foreignID, ownID}))
+			if tc.allOrNothing {
+				require.EqualError(t, err, "permission denied")
+				var count int64
+				require.NoError(t, singleton.DB.Model(tc.row(0, 0)).Where("id = ?", ownID).Count(&count).Error)
+				require.Equal(t, int64(1), count, "a refused request must not delete anything")
+				_, err = tc.delete(ctxAsMemberWithBody(member, []uint64{ownID}))
+			}
 			require.NoError(t, err)
 
 			var count int64
