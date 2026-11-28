@@ -275,12 +275,12 @@ msgstr "[தாமதம்] %s %2f < %2f, நிருபர்: %s"
 #: service/singleton/servicesentinel.go:1125
 #, c-format
 msgid "[%s] %s Reporter: %s"
-msgstr "[ %s] %s நிருபர்: %s"
+msgstr "[%s] %s நிருபர்: %s"
 
 #: service/singleton/servicesentinel.go:501
 #, c-format
 msgid "[%s] %s Reporter: %s, Error: %s"
-msgstr "[ %s] %s நிருபர்: %s, பிழை: %s"
+msgstr "[%s] %s நிருபர்: %s, பிழை: %s"
 
 #: service/singleton/servicesentinel.go:544
 #, c-format
