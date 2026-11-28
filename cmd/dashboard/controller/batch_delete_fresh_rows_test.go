@@ -22,7 +22,7 @@ func TestBatchDeleteNeverRemovesOtherUsersFreshRows(t *testing.T) {
 	setupCoverPATFixture(t)
 	require.NoError(t, singleton.DB.AutoMigrate(
 		&model.Notification{}, &model.NotificationGroupNotification{}, &model.NAT{},
-		&model.AlertRule{}, &model.ServerGroup{}, &model.ServerGroupServer{}, &model.Transfer{},
+		&model.AlertRule{}, &model.ServerGroup{}, &model.NotificationGroup{}, &model.ServerGroupServer{}, &model.Transfer{},
 	))
 	originalNAT := singleton.NATShared
 	singleton.NATShared = singleton.NewNATClass()
@@ -61,6 +61,9 @@ func TestBatchDeleteNeverRemovesOtherUsersFreshRows(t *testing.T) {
 		{"server-group", func(id, owner uint64) any {
 			return &model.ServerGroup{Common: model.Common{ID: id, UserID: owner}, Name: "g"}
 		}, batchDeleteServerGroup, true, false},
+		{"notification-group", func(id, owner uint64) any {
+			return &model.NotificationGroup{Common: model.Common{ID: id, UserID: owner}, Name: "ng"}
+		}, batchDeleteNotificationGroup, true, false},
 		{"server", func(id, owner uint64) any {
 			return &model.Server{Common: model.Common{ID: id, UserID: owner}, Name: "srv", UUID: "uuid-" + strconv.FormatUint(id, 10)}
 		}, batchDeleteServer, false, true},

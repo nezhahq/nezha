@@ -229,11 +229,20 @@ func batchDeleteNotificationGroup(c *gin.Context) (any, error) {
 		}
 	}
 
+	// Only the caller's rows: see deletableRowIDs. This endpoint was missed
+	// by the fix of GHSA-wx5f-wmgm-ghf4; the SELECT above cannot see a group
+	// committed after it, so an unscoped DELETE removed other users' new
+	// groups (GHSA-rx7f-phgv-7w2g).
+	var deleted []uint64
 	err := singleton.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Unscoped().Delete(&model.NotificationGroup{}, "id in (?)", ngn).Error; err != nil {
+		var err error
+		if deleted, err = deletableRowIDs(tx, c, &model.NotificationGroup{}, ngn); err != nil || len(deleted) == 0 {
 			return err
 		}
-		if err := tx.Unscoped().Delete(&model.NotificationGroupNotification{}, "notification_group_id in (?)", ngn).Error; err != nil {
+		if err := tx.Unscoped().Delete(&model.NotificationGroup{}, "id in (?)", deleted).Error; err != nil {
+			return err
+		}
+		if err := tx.Unscoped().Delete(&model.NotificationGroupNotification{}, "notification_group_id in (?)", deleted).Error; err != nil {
 			return err
 		}
 		return nil
@@ -243,6 +252,6 @@ func batchDeleteNotificationGroup(c *gin.Context) (any, error) {
 		return nil, newGormError("%v", err)
 	}
 
-	singleton.NotificationShared.DeleteGroup(ngn)
+	singleton.NotificationShared.DeleteGroup(deleted)
 	return nil, nil
 }
