@@ -274,6 +274,11 @@ msgstr "[Задержка] %s %2f > %2f, Источник: %s"
 msgid "[Latency] %s %2f < %2f, Reporter: %s"
 msgstr "[Задержка] %s %2f < %2f, Источник: %s"
 
+#: service/singleton/servicesentinel.go:1125
+#, c-format
+msgid "[%s] %s Reporter: %s"
+msgstr "[%s] %s Источник: %s"
+
 #: service/singleton/servicesentinel.go:501
 #, c-format
 msgid "[%s] %s Reporter: %s, Error: %s"

@@ -1119,7 +1119,13 @@ func notifyCheck(r *ReportData, m map[uint64]*model.Server,
 	isNeedSendNotification := ss.Notify && (lastStatus != 0 || stateCode == StatusDown)
 	if isNeedSendNotification && reporterServer != nil {
 		notificationGroupID := ss.NotificationGroupID
-		notificationMsg := Localizer.Tf("[%s] %s Reporter: %s, Error: %s", StatusCodeToString(stateCode), ss.Name, reporterServer.Name, mh.Data)
+		status := StatusCodeToString(stateCode)
+		var notificationMsg string
+		if mh.Data == "" {
+			notificationMsg = Localizer.Tf("[%s] %s Reporter: %s", status, ss.Name, reporterServer.Name)
+		} else {
+			notificationMsg = Localizer.Tf("[%s] %s Reporter: %s, Error: %s", status, ss.Name, reporterServer.Name, mh.Data)
+		}
 		muteLabel := fmt.Sprintf("%s:%d:%d", NotificationMuteLabel.ServiceStateChanged(mh.GetId()), stateCode, stateEpoch)
 
 		NotificationShared.SendServiceState(mh.GetId(), notificationGroupID, notificationMsg, muteLabel)
