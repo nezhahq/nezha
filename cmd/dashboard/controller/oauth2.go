@@ -123,7 +123,7 @@ func oauth2redirect(c *gin.Context) (*model.Oauth2LoginResponse, error) {
 // cookie, only the dashboard's callback handler does, so HTTP-only access
 // is strictly an XSS-hardening win.
 func writeOauth2StateCookie(c *gin.Context, stateKey string) {
-	secure := c.Request.URL.Scheme == "https" || c.Request.TLS != nil
+	secure := requestIsHTTPS(c)
 	c.SetCookie("nz-o2s", stateKey, 60*5, "", "", secure, true)
 }
 
@@ -272,7 +272,7 @@ func oauth2callback(jwtConfig *jwt.GinJWTMiddleware) func(c *gin.Context) (any, 
 			return nil, err
 		}
 
-		jwtConfig.SetCookie(c, tokenString)
+		setSessionCookie(c, tokenString)
 		setCSRFCookie(c)
 		c.Redirect(http.StatusFound, utils.IfOr(state.Action == model.RTypeBind, "/dashboard/profile?oauth2=true", "/dashboard/login?oauth2=true"))
 

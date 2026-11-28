@@ -65,16 +65,15 @@ func initParams() *jwt.GinJWTMiddleware {
 	return &jwt.GinJWTMiddleware{
 		Realm:      singleton.Conf.SiteName,
 		Key:        []byte(singleton.Conf.JWTSecretKey),
-		CookieName: "nz-jwt",
-		SendCookie: true,
+		CookieName: sessionCookieName,
+		// The cookie is written by setSessionCookie (per-request Secure,
+		// HttpOnly); gin-jwt only supports a fixed Secure flag.
+		SendCookie: false,
 		// Pin the signing algorithm so a future library default change (or an
 		// `alg: none` confusion attempt) cannot weaken token validation.
 		SigningAlgorithm: "HS256",
 		// Lax keeps OAuth callback redirects (top-level GET navigations from
 		// the provider domain) working while blocking cross-site POST CSRF.
-		// HttpOnly/Secure are intentionally left default: the frontend reads
-		// `!!document.cookie` for login-state display and many deployments
-		// terminate TLS at a proxy upstream — both warrant a separate change.
 		CookieSameSite: http.SameSiteLaxMode,
 		Timeout:        time.Hour * time.Duration(singleton.Conf.JWTTimeout),
 		MaxRefresh:     time.Hour * time.Duration(singleton.Conf.JWTTimeout),
@@ -93,6 +92,7 @@ func initParams() *jwt.GinJWTMiddleware {
 		TimeFunc:      time.Now,
 
 		LoginResponse: func(c *gin.Context, code int, token string, expire time.Time) {
+			setSessionCookie(c, token)
 			setCSRFCookie(c)
 			c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
 				Success: true,
@@ -287,6 +287,7 @@ func refreshResponse(c *gin.Context, code int, token string, expire time.Time) {
 				"last_used_at": time.Now(),
 			}).Error
 	}
+	setSessionCookie(c, token)
 	setCSRFCookie(c)
 	c.JSON(http.StatusOK, model.CommonResponse[model.LoginResponse]{
 		Success: true,
@@ -319,13 +320,7 @@ func logout(c *gin.Context) (any, error) {
 			return nil, newGormError("%v", err)
 		}
 	}
-	// Mirror the attributes gin-jwt used when it set the cookie (host-only,
-	// Path=/, SameSite=Lax), otherwise the browser keeps the original.
-	// Secure follows the request, like nz-csrf and nz-o2s: forcing it on a
-	// plain-HTTP deployment would make the browser ignore this deletion.
-	secure := c.Request.URL.Scheme == "https" || c.Request.TLS != nil
-	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("nz-jwt", "", -1, "/", "", secure, false)
+	clearSessionCookie(c)
 	return nil, nil
 }
 

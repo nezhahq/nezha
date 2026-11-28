@@ -76,7 +76,7 @@ func setCSRFCookie(c *gin.Context) {
 	// writeOauth2StateCookie. On plain HTTP (e.g. intranet deployments) a
 	// Secure cookie would be dropped by the browser, breaking the
 	// double-submit pair, so we must not force it unconditionally.
-	secure := c.Request.URL.Scheme == "https" || c.Request.TLS != nil
+	secure := requestIsHTTPS(c)
 	c.SetSameSite(http.SameSiteStrictMode)
 	c.SetCookie(csrfCookieName, token, 0, "/", "", secure, false)
 }
