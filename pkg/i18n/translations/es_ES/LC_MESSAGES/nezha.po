@@ -276,6 +276,11 @@ msgstr "[Latencia] %s %2f > %2f, Reportado por: %s"
 msgid "[Latency] %s %2f < %2f, Reporter: %s"
 msgstr "[Latencia] %s %2f < %2f, Reportado por: %s"
 
+#: service/singleton/servicesentinel.go:1125
+#, c-format
+msgid "[%s] %s Reporter: %s"
+msgstr "[%s] %s Reportado por: %s"
+
 #: service/singleton/servicesentinel.go:501
 #, c-format
 msgid "[%s] %s Reporter: %s, Error: %s"
