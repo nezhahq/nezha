@@ -321,8 +321,11 @@ func logout(c *gin.Context) (any, error) {
 	}
 	// Mirror the attributes gin-jwt used when it set the cookie (host-only,
 	// Path=/, SameSite=Lax), otherwise the browser keeps the original.
+	// Secure follows the request, like nz-csrf and nz-o2s: forcing it on a
+	// plain-HTTP deployment would make the browser ignore this deletion.
+	secure := c.Request.URL.Scheme == "https" || c.Request.TLS != nil
 	c.SetSameSite(http.SameSiteLaxMode)
-	c.SetCookie("nz-jwt", "", -1, "/", "", false, false)
+	c.SetCookie("nz-jwt", "", -1, "/", "", secure, false)
 	return nil, nil
 }
 
